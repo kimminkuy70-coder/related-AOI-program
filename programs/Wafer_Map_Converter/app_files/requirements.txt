@@ -4,3 +4,5 @@ pythonnet; sys_platform == "win32"
 openpyxl
 numpy
 matplotlib
+# result thumbnails in the completion screen (matplotlib already depends on it)
+Pillow

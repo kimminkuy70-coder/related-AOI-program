@@ -1,5 +1,5 @@
 Option Explicit
-' Wafer Map Converter WebView2 v5 launcher
+' Wafer Map Converter WebView2 v6 launcher
 ' Fast path : the ready file written by app_files\setup_env.py points to the shared
 '             venv, so the program starts directly (no install check, one Python start).
 ' Slow path : first run, Python changed or environment broken -> setup_env.py
@@ -8,8 +8,8 @@ Option Explicit
 ' reject a UTF-8 BOM (error 800A0408 at line 1, char 1).
 
 Const APP_ID = "Wafer_Map_Converter"
-Const APP_TITLE = "Wafer Map Converter WebView2 v5"
-Const ENV_REVISION = 1
+Const APP_TITLE = "Wafer Map Converter WebView2 v6"
+Const ENV_REVISION = 2
 Const MIN_MINOR = 6
 Const PYTHON_WINGET_ID = "Python.Python.3.12"
 Const PYTHON_URL = "https://www.python.org/downloads/windows/"

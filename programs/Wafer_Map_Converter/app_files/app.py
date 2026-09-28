@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 from collections import Counter
+import base64
+import io
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -17,6 +20,20 @@ UI_DIR = Path(__file__).parent / 'ui'
 # non-callable ones recursively. Everything that is not a JS-callable method is
 # therefore private ('_'), above all the window: walking window.native (the WinForms
 # form and its .NET object tree) stalls the "Python API 연결 준비 중" stage.
+
+
+def _key(path):
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _open(path):
+    if not path or not Path(path).exists():
+        return False
+    if os.name == 'nt':
+        os.startfile(path)
+    else:
+        subprocess.Popen(['xdg-open', str(path)])
+    return True
 
 
 class API:
@@ -34,6 +51,8 @@ class API:
         self._lock = threading.RLock()
         self._workers = []
         self._state = {'scan': 'idle', 'run': 'idle', 'percent': 0, 'logs': []}
+        self._allowed = set()
+        self._images = {}
 
     def _thread(self, target, *args):
         t = threading.Thread(target=target, args=args, daemon=True)
@@ -85,19 +104,44 @@ class API:
         with self._lock:
             return json.loads(json.dumps(self._state, default=str))
 
-    def start(self, ids):
+    def choose_output(self):
+        if self._shutdown_event.is_set():
+            return ''
+        r = self._window.create_file_dialog(self._webview.FileDialog.FOLDER, allow_multiple=False)
+        return str(r[0]) if r else ''
+
+    def start(self, ids, output=''):
         if self._shutdown_event.is_set():
             return {'ok': False, 'error': '프로그램 종료 중입니다.'}
         selected = [self._items[int(i)] for i in ids if self._items[int(i)]['valid']]
         if not selected:
             return {'ok': False, 'error': '정상 파일을 선택하세요.'}
+        output_root = Path(output) if output else None
+        if output_root is not None:
+            try:
+                output_root.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                return {'ok': False, 'error': '저장 위치를 만들 수 없습니다: %s' % exc}
         self._cancel.clear()
         with self._lock:
-            self._state.update({'run': 'running', 'percent': 0, 'results': [], 'errors': [], 'total': len(selected)})
-        self._thread(self._work, selected)
+            self._allowed = set()
+            self._images = {}
+            self._state.update({'run': 'running', 'percent': 0, 'results': [], 'errors': [], 'total': len(selected),
+                                'output_root': str(output_root) if output_root else '', 'source_root': str(self._root)})
+        self._thread(self._work, selected, output_root)
         return {'ok': True}
 
-    def _work(self, items):
+    def _target(self, source, output_root):
+        """Result path. With a custom location the source sub-folders are kept, so
+        maps with the same name in different folders never overwrite each other."""
+        name = source.stem + ('_Map_Edit.xlsx' if self._mode == 'txt' else '_Converted.txt')
+        if output_root is None:
+            return source.with_name(name)
+        folder = output_root / source.parent.relative_to(self._root)
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / name
+
+    def _work(self, items, output_root=None):
         results, errors = [], []
         for i, x in enumerate(items, 1):
             if self._cancel.is_set() or self._shutdown_event.is_set():
@@ -106,13 +150,21 @@ class API:
             with self._lock:
                 self._state.update({'message': p.name + ' 변환 중', 'current': str(p), 'processed': i - 1})
             try:
-                if self._mode == 'txt':
-                    out = p.with_name(p.stem + '_Map_Edit.xlsx'); self._engine.txt_to_excel(p, out)
-                else:
-                    out = p.with_name(p.stem + '_Converted.txt'); self._engine.excel_to_txt(p, out)
-                results.append(str(out))
+                out = self._target(p, output_root)
+                convert = self._engine.txt_to_excel if self._mode == 'txt' else self._engine.excel_to_txt
+                made = convert(p, out)
+                result = {'wafer': x['wafer'], 'lot': x.get('lot', ''), 'device': x.get('device', ''),
+                          'source': str(p), 'source_relative': x['relative'],
+                          'source_type': 'TXT' if self._mode == 'txt' else 'Excel',
+                          'output': made['output'], 'output_name': Path(made['output']).name,
+                          'output_type': 'Excel' if self._mode == 'txt' else 'TXT',
+                          'folder': str(Path(made['output']).parent), 'images': made['images']}
+                with self._lock:
+                    self._allowed.update([_key(p), _key(made['output'])] + [_key(img['path']) for img in made['images']])
+                results.append(result)
             except Exception as exc:
-                errors.append({'path': str(p), 'error': str(exc)})
+                logging.exception('convert failed: %s', p)
+                errors.append({'path': str(p), 'relative': x['relative'], 'error': str(exc)})
             with self._lock:
                 self._state.update({'percent': round(i / len(items) * 100, 1), 'processed': i, 'results': results, 'errors': errors})
         with self._lock:
@@ -123,9 +175,42 @@ class API:
         self._cancel.set(); return True
 
     def open_root(self):
-        if self._root and os.name == 'nt':
-            os.startfile(self._root); return True
-        return False
+        target = self._state.get('output_root') or (str(self._root) if self._root else '')
+        return _open(target) if target else False
+
+    def _allowed_path(self, path):
+        # JS may only open files this job read or produced.
+        with self._lock:
+            return bool(path) and _key(path) in self._allowed and Path(path).exists()
+
+    def open_file(self, path):
+        return _open(path) if self._allowed_path(path) else False
+
+    def show_in_folder(self, path):
+        if not self._allowed_path(path):
+            return False
+        if os.name == 'nt':
+            subprocess.Popen(['explorer', '/select,', os.path.normpath(path)])
+            return True
+        return _open(str(Path(path).parent))
+
+    def get_image(self, path, thumb=False):
+        """PNG as a data URL; the inline page cannot load file:// images itself."""
+        if not self._allowed_path(path):
+            return ''
+        cache_key = (_key(path), bool(thumb))
+        if cache_key not in self._images:
+            if thumb:
+                from PIL import Image
+                with Image.open(path) as image:
+                    image.thumbnail((720, 720))
+                    buffer = io.BytesIO()
+                    image.convert('RGB').save(buffer, 'JPEG', quality=85)
+                data = 'data:image/jpeg;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')
+            else:
+                data = 'data:image/png;base64,' + base64.b64encode(Path(path).read_bytes()).decode('ascii')
+            self._images[cache_key] = data
+        return self._images[cache_key]
 
     def new_job(self):
         """Reload the inline page through pywebview (location.reload() cannot reload an HTML string)."""
@@ -136,6 +221,8 @@ class API:
                 return False
             self._root = None
             self._items = []
+            self._allowed = set()
+            self._images = {}
             self._state = {'scan': 'idle', 'run': 'idle', 'percent': 0, 'logs': []}
         self._window.load_html(self._html)
         return True
