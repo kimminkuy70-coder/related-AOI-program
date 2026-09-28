@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 import os,re,csv
-from PIL import Image,ImageDraw,ImageOps
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment,Font,PatternFill
+# Pillow/openpyxl are imported inside the functions that use them, so program start
+# (folder scan and UI) does not pay for loading them.
 RESULT_FOLDER='AOI_Color_Gray_Matching_Result';MAX_WAFERS=25;TW,TH=360,270;GW,GH,GP=3168,1024,0.769644115336745
 def transform_file(p):
  files=sorted(p.glob('frameToChuckPlane.*.ini'));return files[0] if files else None
@@ -67,6 +65,7 @@ def choose_frame(color,frames,inverse,offset):
  if not candidates:return None,None,None,0
  candidates.sort(key=lambda x:x[0],reverse=True);_,frame,px,py=candidates[0];return frame,px,py,len(candidates)
 def save_thumb(source,destination,marker=None):
+ from PIL import Image,ImageDraw,ImageOps
  with Image.open(source) as image:
   image=ImageOps.exif_transpose(image).convert('RGB');image.thumbnail((TW,TH),Image.Resampling.LANCZOS);canvas=Image.new('RGB',(TW,TH),'white');ox=(TW-image.width)//2;oy=(TH-image.height)//2;canvas.paste(image,(ox,oy))
   if marker:
@@ -77,9 +76,13 @@ def excel_link(base,target):
  try:return '.\\'+str(target.relative_to(base)).replace('/','\\')
  except ValueError:return str(target)
 def crop_gray(gray_path,crop_path,px,py,crop_w,crop_h,out_w,out_h):
+ from PIL import Image,ImageOps
  with Image.open(gray_path) as image:
   image=ImageOps.exif_transpose(image).convert('L');aw,ah=image.size;x=px*aw/GW;y=py*ah/GH;left=round(x-crop_w/2);top=round(y-crop_h/2);canvas=Image.new('L',(crop_w,crop_h),0);sl=max(0,left);st=max(0,top);sr=min(aw,left+crop_w);sb=min(ah,top+crop_h);canvas.paste(image.crop((sl,st,sr,sb)),(sl-left,st-top));canvas.resize((out_w,out_h),Image.Resampling.LANCZOS).save(crop_path,'JPEG',quality=95);return(left,top,left+crop_w,top+crop_h)
 def build_workbook(wafer,result,records,callback):
+ from openpyxl import Workbook
+ from openpyxl.drawing.image import Image as XLImage
+ from openpyxl.styles import Alignment,Font,PatternFill
  output=result/f'{wafer.name}_Color_Gray_Crop.xlsx';wb=Workbook();ws=wb.active;ws.title='Image_Comparison';ws.sheet_view.showGridLines=False;ws.freeze_panes='A2';ws.append(['Color image','Gray image','Cropped gray image','Coordinates / matching details'])
  for cell in ws[1]:cell.fill=PatternFill('solid',fgColor='111827');cell.font=Font(color='FFFFFF',bold=True);cell.alignment=Alignment(horizontal='center')
  for col in 'ABC':ws.column_dimensions[col].width=52

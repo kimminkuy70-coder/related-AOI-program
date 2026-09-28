@@ -1,4 +1,5 @@
-pywebview>=6.0,<7
-Pillow>=10,<13
-openpyxl>=3.1,<4
-pythonnet>=3,<4
+# Version ranges live in constraints.txt (shared by every AOI tool).
+pywebview
+pythonnet; sys_platform == "win32"
+Pillow
+openpyxl

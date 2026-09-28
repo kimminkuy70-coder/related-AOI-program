@@ -1,250 +1,224 @@
+# -*- coding: utf-8 -*-
 from pathlib import Path
 from collections import Counter
-import ctypes
 import json
+import logging
 import os
+import sys
 import threading
 import time
-import webview
-import engine
+import runtime
 
-APP_TITLE = 'Wafer Map Converter WebView2 v4'
+MANIFEST = runtime.load_manifest()
+APP_TITLE = MANIFEST['title']
+UI_DIR = Path(__file__).parent / 'ui'
 
-
-class WindowsJob:
-    """Own only this app instance and its child processes.
-
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ensures WebView2 child processes created
-    by this app are terminated when the Python host exits, without killing
-    WebView2 processes that belong to Teams, Outlook, or another application.
-    """
-    def __init__(self):
-        self.handle = None
-        if os.name != 'nt':
-            return
-        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-        CreateJobObjectW = kernel32.CreateJobObjectW
-        CreateJobObjectW.restype = ctypes.c_void_p
-        SetInformationJobObject = kernel32.SetInformationJobObject
-        AssignProcessToJobObject = kernel32.AssignProcessToJobObject
-        GetCurrentProcess = kernel32.GetCurrentProcess
-
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ('PerProcessUserTimeLimit', ctypes.c_int64),
-                ('PerJobUserTimeLimit', ctypes.c_int64),
-                ('LimitFlags', ctypes.c_uint32),
-                ('MinimumWorkingSetSize', ctypes.c_size_t),
-                ('MaximumWorkingSetSize', ctypes.c_size_t),
-                ('ActiveProcessLimit', ctypes.c_uint32),
-                ('Affinity', ctypes.c_size_t),
-                ('PriorityClass', ctypes.c_uint32),
-                ('SchedulingClass', ctypes.c_uint32),
-            ]
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ('ReadOperationCount', ctypes.c_uint64),
-                ('WriteOperationCount', ctypes.c_uint64),
-                ('OtherOperationCount', ctypes.c_uint64),
-                ('ReadTransferCount', ctypes.c_uint64),
-                ('WriteTransferCount', ctypes.c_uint64),
-                ('OtherTransferCount', ctypes.c_uint64),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ('IoInfo', IO_COUNTERS),
-                ('ProcessMemoryLimit', ctypes.c_size_t),
-                ('JobMemoryLimit', ctypes.c_size_t),
-                ('PeakProcessMemoryUsed', ctypes.c_size_t),
-                ('PeakJobMemoryUsed', ctypes.c_size_t),
-            ]
-
-        JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-        handle = CreateJobObjectW(None, None)
-        if not handle:
-            return
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not SetInformationJobObject(handle, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info)):
-            kernel32.CloseHandle(handle)
-            return
-        if not AssignProcessToJobObject(handle, GetCurrentProcess()):
-            # A corporate launcher may already place Python in a Job Object.
-            # Normal shutdown still works; do not fail program startup.
-            kernel32.CloseHandle(handle)
-            return
-        self.handle = handle
-
-    def close(self):
-        if self.handle and os.name == 'nt':
-            ctypes.WinDLL('kernel32').CloseHandle(self.handle)
-            self.handle = None
+# pywebview exposes every public attribute of the js_api object to JS and walks
+# non-callable ones recursively. Everything that is not a JS-callable method is
+# therefore private ('_'), above all the window: walking window.native (the WinForms
+# form and its .NET object tree) stalls the "Python API 연결 준비 중" stage.
 
 
 class API:
-    def __init__(self):
-        self.window = None
-        self.root = None
-        self.items = []
-        self.mode = 'txt'
-        self.cancel = threading.Event()
-        self.scan_cancel = threading.Event()
-        self.shutdown_event = threading.Event()
-        self.lock = threading.RLock()
-        self.workers = []
-        self.state = {'scan': 'idle', 'run': 'idle', 'percent': 0, 'logs': []}
+    def __init__(self, webview, engine):
+        self._webview = webview
+        self._engine = engine
+        self._html = ''
+        self._window = None
+        self._root = None
+        self._items = []
+        self._mode = 'txt'
+        self._cancel = threading.Event()
+        self._scan_cancel = threading.Event()
+        self._shutdown_event = threading.Event()
+        self._lock = threading.RLock()
+        self._workers = []
+        self._state = {'scan': 'idle', 'run': 'idle', 'percent': 0, 'logs': []}
 
     def _thread(self, target, *args):
         t = threading.Thread(target=target, args=args, daemon=True)
-        self.workers.append(t)
+        self._workers.append(t)
         t.start()
         return t
 
     def choose_folder(self, mode):
-        if self.shutdown_event.is_set():
+        if self._shutdown_event.is_set():
             return {'cancelled': True}
-        r = self.window.create_file_dialog(webview.FileDialog.FOLDER, allow_multiple=False)
+        r = self._window.create_file_dialog(self._webview.FileDialog.FOLDER, allow_multiple=False)
         if not r:
             return {'cancelled': True}
-        self.root = Path(r[0]); self.mode = mode
-        self.scan_cancel.clear()
-        with self.lock:
-            self.state.update({'scan': 'running', 'scan_message': '폴더 검색 준비', 'scan_current': str(self.root), 'found': 0})
+        self._root = Path(r[0]); self._mode = mode
+        self._scan_cancel.clear()
+        with self._lock:
+            self._state.update({'scan': 'running', 'scan_message': '폴더 검색 준비', 'scan_current': str(self._root), 'found': 0})
         self._thread(self._scan)
-        return {'cancelled': False, 'root': str(self.root)}
+        return {'cancelled': False, 'root': str(self._root)}
 
     def _scan(self):
         try:
-            files = engine.discover(self.root, ('.txt',) if self.mode == 'txt' else ('.xlsx', '.xlsm'))
+            files = self._engine.discover(self._root, ('.txt',) if self._mode == 'txt' else ('.xlsx', '.xlsm'))
             items = []
             for i, p in enumerate(files, 1):
-                if self.scan_cancel.is_set() or self.shutdown_event.is_set():
+                if self._scan_cancel.is_set() or self._shutdown_event.is_set():
                     break
-                with self.lock:
-                    self.state.update({'scan_message': f'{i}/{len(files)} 분석 중', 'scan_current': str(p), 'found': i})
+                with self._lock:
+                    self._state.update({'scan_message': f'{i}/{len(files)} 분석 중', 'scan_current': str(p), 'found': i})
                 try:
-                    if self.mode == 'txt':
-                        d = engine.parse_txt(p); m = d['meta']
+                    if self._mode == 'txt':
+                        d = self._engine.parse_txt(p); m = d['meta']
                         cnt = Counter(x for r in d['rows'] for x in r)
                         bins = {k: v for k, v in sorted(cnt.items()) if k not in ('000', '___')}
-                        item = {'id': len(items), 'valid': True, 'path': str(p), 'relative': str(p.relative_to(self.root)), 'wafer': m.get('WAFER', p.stem), 'device': m.get('DEVICE', ''), 'lot': m.get('LOT', ''), 'size': f"{d['row_count']}x{d['col_count']}", 'bins': bins, 'error': ''}
+                        item = {'id': len(items), 'valid': True, 'path': str(p), 'relative': str(p.relative_to(self._root)), 'wafer': m.get('WAFER', p.stem), 'device': m.get('DEVICE', ''), 'lot': m.get('LOT', ''), 'size': f"{d['row_count']}x{d['col_count']}", 'bins': bins, 'error': ''}
                     else:
-                        item = {'id': len(items), 'valid': True, 'path': str(p), 'relative': str(p.relative_to(self.root)), 'wafer': p.stem, 'device': '', 'lot': '', 'size': 'Excel', 'bins': {}, 'error': ''}
+                        item = {'id': len(items), 'valid': True, 'path': str(p), 'relative': str(p.relative_to(self._root)), 'wafer': p.stem, 'device': '', 'lot': '', 'size': 'Excel', 'bins': {}, 'error': ''}
                 except Exception as exc:
-                    item = {'id': len(items), 'valid': False, 'path': str(p), 'relative': str(p.relative_to(self.root)), 'wafer': p.stem, 'device': '', 'lot': '', 'size': '-', 'bins': {}, 'error': str(exc)}
+                    item = {'id': len(items), 'valid': False, 'path': str(p), 'relative': str(p.relative_to(self._root)), 'wafer': p.stem, 'device': '', 'lot': '', 'size': '-', 'bins': {}, 'error': str(exc)}
                 items.append(item)
-            self.items = items
-            with self.lock:
-                self.state.update({'scan': 'cancelled' if self.scan_cancel.is_set() else 'complete', 'items': items, 'found': len(items), 'scan_message': '검색 완료'})
+            self._items = items
+            with self._lock:
+                self._state.update({'scan': 'cancelled' if self._scan_cancel.is_set() else 'complete', 'items': items, 'found': len(items), 'scan_message': '검색 완료'})
         except Exception as exc:
-            with self.lock:
-                self.state.update({'scan': 'error', 'scan_message': str(exc)})
+            with self._lock:
+                self._state.update({'scan': 'error', 'scan_message': str(exc)})
 
     def get_state(self):
-        with self.lock:
-            return json.loads(json.dumps(self.state, default=str))
+        with self._lock:
+            return json.loads(json.dumps(self._state, default=str))
 
     def start(self, ids):
-        if self.shutdown_event.is_set():
+        if self._shutdown_event.is_set():
             return {'ok': False, 'error': '프로그램 종료 중입니다.'}
-        selected = [self.items[int(i)] for i in ids if self.items[int(i)]['valid']]
+        selected = [self._items[int(i)] for i in ids if self._items[int(i)]['valid']]
         if not selected:
             return {'ok': False, 'error': '정상 파일을 선택하세요.'}
-        self.cancel.clear()
-        with self.lock:
-            self.state.update({'run': 'running', 'percent': 0, 'results': [], 'errors': [], 'total': len(selected)})
+        self._cancel.clear()
+        with self._lock:
+            self._state.update({'run': 'running', 'percent': 0, 'results': [], 'errors': [], 'total': len(selected)})
         self._thread(self._work, selected)
         return {'ok': True}
 
     def _work(self, items):
         results, errors = [], []
         for i, x in enumerate(items, 1):
-            if self.cancel.is_set() or self.shutdown_event.is_set():
+            if self._cancel.is_set() or self._shutdown_event.is_set():
                 break
             p = Path(x['path'])
-            with self.lock:
-                self.state.update({'message': p.name + ' 변환 중', 'current': str(p), 'processed': i - 1})
+            with self._lock:
+                self._state.update({'message': p.name + ' 변환 중', 'current': str(p), 'processed': i - 1})
             try:
-                if self.mode == 'txt':
-                    out = p.with_name(p.stem + '_Map_Edit.xlsx'); engine.txt_to_excel(p, out)
+                if self._mode == 'txt':
+                    out = p.with_name(p.stem + '_Map_Edit.xlsx'); self._engine.txt_to_excel(p, out)
                 else:
-                    out = p.with_name(p.stem + '_Converted.txt'); engine.excel_to_txt(p, out)
+                    out = p.with_name(p.stem + '_Converted.txt'); self._engine.excel_to_txt(p, out)
                 results.append(str(out))
             except Exception as exc:
                 errors.append({'path': str(p), 'error': str(exc)})
-            with self.lock:
-                self.state.update({'percent': round(i / len(items) * 100, 1), 'processed': i, 'results': results, 'errors': errors})
-        with self.lock:
-            stopped = self.cancel.is_set() or self.shutdown_event.is_set()
-            self.state.update({'run': 'cancelled' if stopped else 'complete', 'percent': self.state.get('percent', 0) if stopped else 100})
+            with self._lock:
+                self._state.update({'percent': round(i / len(items) * 100, 1), 'processed': i, 'results': results, 'errors': errors})
+        with self._lock:
+            stopped = self._cancel.is_set() or self._shutdown_event.is_set()
+            self._state.update({'run': 'cancelled' if stopped else 'complete', 'percent': self._state.get('percent', 0) if stopped else 100})
 
     def cancel_job(self):
-        self.cancel.set(); return True
+        self._cancel.set(); return True
 
     def open_root(self):
-        if self.root and os.name == 'nt':
-            os.startfile(self.root); return True
+        if self._root and os.name == 'nt':
+            os.startfile(self._root); return True
         return False
 
-    def begin_shutdown(self):
-        """Called from JS before window.close when possible."""
-        self.shutdown_event.set(); self.cancel.set(); self.scan_cancel.set()
-        with self.lock:
-            self.state.update({'run': 'closing', 'scan': 'closing'})
+    def new_job(self):
+        """Reload the inline page through pywebview (location.reload() cannot reload an HTML string)."""
+        if self._shutdown_event.is_set():
+            return False
+        with self._lock:
+            if self._state.get('run') == 'running' or self._state.get('scan') == 'running':
+                return False
+            self._root = None
+            self._items = []
+            self._state = {'scan': 'idle', 'run': 'idle', 'percent': 0, 'logs': []}
+        self._window.load_html(self._html)
         return True
 
-    def shutdown(self):
-        self.begin_shutdown()
+    def _begin_shutdown(self):
+        self._shutdown_event.set(); self._cancel.set(); self._scan_cancel.set()
+        with self._lock:
+            self._state.update({'run': 'closing', 'scan': 'closing'})
+        return True
+
+    def _shutdown(self):
+        self._begin_shutdown()
         # Give cooperative workers a short chance to observe the flags.
         deadline = time.time() + 0.8
-        for worker in list(self.workers):
+        for worker in list(self._workers):
             remain = deadline - time.time()
             if remain <= 0:
                 break
             if worker.is_alive():
                 worker.join(timeout=min(0.15, remain))
-        try:
-            import matplotlib.pyplot as plt
-            plt.close('all')
-        except Exception:
-            pass
+        plt = sys.modules.get('matplotlib.pyplot')  # never import matplotlib just to close it
+        if plt is not None:
+            try:
+                plt.close('all')
+            except Exception:
+                pass
 
 
 def main():
-    job = WindowsJob()
-    api = API()
-    ui = Path(__file__).parent / 'ui' / 'index.html'
-    window = webview.create_window(APP_TITLE, str(ui), js_api=api, width=1180, height=820, min_size=(980, 700), background_color='#0b1220')
-    api.window = window
+    runtime.setup_logging(MANIFEST['app_id'])
+    instance = runtime.SingleInstance(MANIFEST['app_id'])
+    if not instance.acquired():
+        if not runtime.focus_window(APP_TITLE):
+            runtime.message_box(APP_TITLE, '프로그램이 이미 실행 중(또는 시작 중)입니다.', error=False)
+        return
+    missing = runtime.missing_modules(MANIFEST)
+    if missing and runtime.request_repair(MANIFEST, 'missing: ' + ', '.join(missing)):
+        return
+    try:
+        import webview
+        import engine
+    except ImportError as exc:
+        if runtime.is_dependency_error(exc, MANIFEST) and runtime.request_repair(MANIFEST, exc):
+            return
+        raise
+    job = runtime.WindowsJob()
+    api = API(webview, engine)
+    # Inline HTML: no local HTTP server thread and no port to collide with.
+    api._html = runtime.inline_ui(UI_DIR)
+    window = webview.create_window(APP_TITLE, html=api._html, js_api=api, width=1180, height=820, min_size=(980, 700), background_color='#0b1220')
+    api._window = window
     closing_once = threading.Event()
 
     def on_closing():
         if closing_once.is_set():
             return True
         closing_once.set()
-        api.begin_shutdown()
+        api._begin_shutdown()
         return True
 
     def on_closed():
-        api.shutdown()
+        api._shutdown()
         job.close()
-        # os._exit guarantees that the local HTTP server and lingering daemon
-        # threads cannot keep pythonw.exe alive after the window is closed.
+        instance.close()
+        # os._exit guarantees lingering daemon threads cannot keep pythonw.exe alive.
         os._exit(0)
 
     window.events.closing += on_closing
     window.events.closed += on_closed
     try:
-        webview.start(gui='edgechromium', debug=False, http_server=True)
+        webview.start(gui='edgechromium', debug=os.environ.get('AOI_TOOLS_DEBUG') == '1',
+                      private_mode=False, storage_path=runtime.webview_storage(MANIFEST['app_id']))
     finally:
-        api.shutdown()
+        api._shutdown()
         job.close()
+        instance.close()
         os._exit(0)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as exc:
+        logging.exception('startup failed')
+        runtime.message_box(APP_TITLE, '프로그램 시작 중 오류가 발생했습니다.\n%s\n\n로그: %s' % (exc, runtime.TOOLS_ROOT / 'logs'))
+        os._exit(1)

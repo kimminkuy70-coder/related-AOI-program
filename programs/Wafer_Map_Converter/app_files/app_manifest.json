@@ -1,0 +1,16 @@
+{
+  "app_id": "Wafer_Map_Converter",
+  "title": "Wafer Map Converter WebView2 v5",
+  "release": "Wafer_Map_Converter_WebView2_v5",
+  "env_revision": 1,
+  "entry": "app.py",
+  "modules": [
+    "webview",
+    "openpyxl",
+    "numpy",
+    "matplotlib"
+  ],
+  "windows_modules": [
+    "clr"
+  ]
+}

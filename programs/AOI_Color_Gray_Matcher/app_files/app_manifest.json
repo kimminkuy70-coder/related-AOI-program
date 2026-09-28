@@ -1,0 +1,15 @@
+{
+  "app_id": "AOI_Color_Gray_Matcher",
+  "title": "AOI Color-Gray Matcher v16",
+  "release": "AOI_Color_Gray_Matcher_Final_v16",
+  "env_revision": 1,
+  "entry": "app.py",
+  "modules": [
+    "webview",
+    "PIL",
+    "openpyxl"
+  ],
+  "windows_modules": [
+    "clr"
+  ]
+}

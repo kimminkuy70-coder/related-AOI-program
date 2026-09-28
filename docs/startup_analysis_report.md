@@ -176,3 +176,69 @@ api._window = window                 # main()
 | 2 | 두 번째 실행부터 WebView2 기동 단축 |
 | 3, 11 | 창이 뜨기까지의 시간 단축 (수백 ms ~ 1 s 이상, 콜드/백신 환경일수록 큼) |
 | 5–8, 10 | 최초 설치 시간 및 실패율 감소, 동시 설치 경합 제거 |
+
+---
+
+## 5. 구현 결과 (AOI v16 / Wafer v5)
+
+설계 변경: 오프라인 wheel 파일은 넣지 않습니다. 코드로 온라인 설치하되, **설치와 실행을 분리**하고 **사용자별 Python 버전 차이**를 흡수합니다.
+
+### 실행 흐름
+
+```
+{프로그램}.vbs
+ ├─ 빠른 경로: %LOCALAPPDATA%\AOI_Tools\ready\<APP>.txt 가 유효하면
+ │     (환경 리비전 OK, venv pythonw 존재, 기반 Python 존재)
+ │     → venv\Scripts\pythonw.exe app.py 직접 실행 (Python 1회 기동, 설치 검사 없음)
+ └─ 설치 경로: pyw -3 (없으면 레지스트리의 Python 3.6+) 로 app_files\setup_env.py 실행
+       Python이 하나도 없으면 winget 으로 Python 3.12 사용자 설치 또는 다운로드 페이지 안내
+```
+
+`setup_env.py`는 두 프로그램에 동일하게 들어가며 다음 순서로 동작합니다.
+1. `py -0p`, 레지스트리(PEP 514), PATH에서 Python을 찾고 병렬로 버전과 비트를 확인합니다. 지원 범위는 3.9~3.14입니다. 이미 만들어진 환경을 우선 재사용하고, 그다음 64bit, 최신 버전 순으로 고릅니다.
+2. `%LOCALAPPDATA%\AOI_Tools\env\py3XX-x64`에 공용 venv를 만듭니다. 임시 폴더에 먼저 만든 뒤 이름을 바꾸므로, 중간에 끊겨도 깨진 환경이 남지 않습니다.
+3. `pip install -r requirements.txt -c constraints.txt`를 실행합니다. C 확장이 있는 패키지는 wheel로만 설치해서 소스 빌드에 빠지지 않게 합니다. 버전이 맞지 않으면 다음 Python으로 자동 전환하고, 네트워크·프록시·인증서 오류는 원인별로 안내합니다.
+4. import 검증을 통과하면 ready 파일(UTF-16)을 기록하고 프로그램을 실행합니다.
+- 두 프로그램이 동시에 처음 실행되면 설치 Mutex가 순서를 정리합니다.
+- 설치 실패 창에서 재시도하거나 로그를 열 수 있습니다.
+- 사내 미러는 `%LOCALAPPDATA%\AOI_Tools\pip.ini`로 지정합니다.
+- 실행 중 패키지 누락이나 손상을 발견하면 `--repair`로 자동 복구하고 다시 실행합니다(1회만 시도해 무한 반복을 막음).
+
+### Python 버전별 설치 가능성 (pip 해석 결과, Windows wheel 기준)
+
+| Python | 64bit | 32bit |
+|---|---|---|
+| 3.8 | 설치는 가능하지만 pywebview 6 지원 범위 밖이라 제외 | 제외 |
+| 3.9 | ✅ (numpy 2.0, pythonnet 3.0.5) | ✅ |
+| 3.10 ~ 3.11 | ✅ | ✅ |
+| 3.12 ~ 3.14 | ✅ | AOI ✅ / Wafer ❌ (matplotlib 32bit wheel 없음 → 다른 Python 자동 시도 후 안내) |
+
+### 적용한 코드 수정
+
+| 항목 | AOI v16 | Wafer v5 |
+|---|---|---|
+| JS API의 창 참조를 비공개(`_window`)로 변경하고 내부 속성도 모두 비공개로 전환 | ✅ | ✅ |
+| 영구 WebView2 프로필 (프로그램별 분리) | ✅ | ✅ |
+| 무거운 패키지 지연 로드 | ✅ Pillow·openpyxl (`import engine` 287 ms → 15 ms) | 기존과 동일, 종료 시 matplotlib import 제거 |
+| 로컬 HTTP 서버 제거 (인라인 UI) | 기존과 동일 | ✅ |
+| 단일 인스턴스 Mutex (`use_last_error`) + 기존 창 활성화 | ✅ (bootstrap에서 app으로 이동) | ✅ 신규 |
+| Job Object (이 인스턴스의 WebView2만 정리) | ✅ | ✅ |
+| "새 작업" 버튼 수정 (`location.reload` → `load_html`) | ✅ | ✅ (reload 시 종료 신호가 가던 버그도 제거) |
+| 실행 로그 파일, 시작 실패 메시지 박스, `AOI_TOOLS_DEBUG=1` | ✅ | ✅ |
+| VBS를 CP949 + CRLF(BOM 없음)로 저장 | 유지 | ✅ (v4는 UTF-8이라 한글 메시지가 깨질 수 있었음) |
+
+### 검증 (Linux 컨테이너, Windows 실기는 미실시)
+
+- `tests/test_startup.py` 9개 통과
+  - 구버전 구조에서 창 객체 재귀 탐색(1,000회 이상)과 창 메서드가 JS에 노출되는 것을 재현했고, 새 구조에서는 탐색 0회이며 JS 호출 목록만 노출되는 것을 확인
+  - 두 프로그램 모두 `import engine` 시 무거운 패키지를 불러오지 않음
+  - 인라인 UI, 공유 파일 동일성, VBS 인코딩 확인
+- 새 PC 상태에서 AOI 설치: venv 생성 + pip + 검증 **4~7초** (이 환경의 네트워크 기준)
+- AOI 설치 후 Wafer 설치: 공용 환경을 재사용하고 추가 패키지만 설치(9초)
+- 두 프로그램 동시 첫 실행: 한쪽이 대기한 뒤 환경 재사용, `pip check` 이상 없음
+- openpyxl을 지운 뒤 실행: 시작 단계에서 감지 → 자동 복구(1.1초) → 재실행
+- Windows에서 확인이 필요한 항목: VBS 빠른/설치 경로, winget 설치, WebView2 확인, Job Object·Mutex·창 활성화, 실제 기동 시간
+
+### 배포
+
+`python tools/build_release.py --zip` 을 실행하면 `dist/AOI_Color_Gray_Matcher_Final_v16.zip`과 `dist/Wafer_Map_Converter_WebView2_v5.zip`이 만들어집니다. 이 과정에서 VBS 생성과 공유 파일 동일성 검사도 함께 수행됩니다.
