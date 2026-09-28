@@ -174,6 +174,14 @@ class API:
     def cancel_job(self):
         self._cancel.set(); return True
 
+    def open_source(self, index):
+        """Open a map found by the folder scan (by list index, so JS cannot name arbitrary paths)."""
+        try:
+            path = self._items[int(index)]['path']
+        except (IndexError, ValueError, TypeError):
+            return False
+        return _open(path)
+
     def open_root(self):
         target = self._state.get('output_root') or (str(self._root) if self._root else '')
         return _open(target) if target else False

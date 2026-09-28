@@ -58,7 +58,7 @@ function render() {
     const hay = (x.wafer + x.device + x.lot + x.relative).toLowerCase();
     if (q && !hay.includes(q)) return '';
     const tags = Object.entries(x.bins || {}).map(([k, v]) => `${k}:${v}`).join(' · ');
-    return `<label class="file"><input type="checkbox" data-id="${i}" ${x.valid ? 'checked' : 'disabled'} onchange="counts()"><div><b>${esc(x.wafer)}</b><small>${esc(x.relative)}</small></div><div><b>${esc(x.device || '-')}</b><small>${esc(x.lot || x.error || '')}</small></div><span class="tags">${esc(tags || x.size)}</span></label>`;
+    return `<label class="file"><input type="checkbox" data-id="${i}" ${x.valid ? 'checked' : 'disabled'} onchange="counts()"><div class="src" data-src="${i}" title="클릭하면 원본 파일을 엽니다&#10;${esc(x.path)}"><b>${esc(x.wafer)}</b><small>${esc(x.relative)}</small></div><div><b>${esc(x.device || '-')}</b><small>${esc(x.lot || x.error || '')}</small></div><span class="tags">${esc(tags || x.size)}</span><button type="button" class="ghost open" data-src="${i}">열기</button></label>`;
   }).join('');
   $('total').textContent = items.length;
   counts();
@@ -66,6 +66,13 @@ function render() {
 function counts() { $('selected').textContent = document.querySelectorAll('.file input:checked').length; }
 function selectAll(v) { document.querySelectorAll('.file input:not(:disabled)').forEach(x => x.checked = v); counts(); }
 $('filter').oninput = render;
+// Clicking the file name/path or [열기] opens the original map; the rest of the row still toggles the checkbox.
+$('list').addEventListener('click', e => {
+  const src = e.target.closest('[data-src]');
+  if (!src) return;
+  e.preventDefault();
+  pywebview.api.open_source(+src.dataset.src);
+});
 $('chooseOutput').onclick = async () => {
   const dir = await pywebview.api.choose_output();
   if (!dir) return;

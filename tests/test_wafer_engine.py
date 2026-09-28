@@ -139,6 +139,12 @@ class ApiOutputTest(unittest.TestCase):
         self.assertTrue(api.get_image(image).startswith('data:image/png;base64,'))
         self.assertEqual(api.get_image(str(tmp / 'src' / 'L1' / 'W01.txt') + '.nope'), '')
         self.assertFalse(api.open_file(__file__))  # not produced or read by this job
+        opened = []
+        app._open = lambda path: opened.append(path) or True
+        self.assertTrue(api.open_source(1))
+        self.assertEqual(opened, [api.get_state()['items'][1]['path']])
+        self.assertFalse(api.open_source(99))
+        self.assertFalse(api.open_source('x'))
 
     @staticmethod
     def _wait(done, timeout=120):
