@@ -1,0 +1,48 @@
+name: Fire Claude routine
+
+# 이슈가 새로 열리거나, 소유자가 "@claude"를 포함한 댓글을 달면 Claude 루틴을 즉시 실행한다.
+# 공개 저장소이므로 반드시 소유자(kimminkuy70-coder)가 쓴 글에만 반응한다.
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fire-routine
+  cancel-in-progress: false
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'issues' &&
+       github.event.issue.user.login == 'kimminkuy70-coder') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request == null &&
+       github.event.comment.user.login == 'kimminkuy70-coder' &&
+       contains(github.event.comment.body, '@claude'))
+    steps:
+      - name: Fire routine
+        env:
+          FIRE_URL: ${{ secrets.ROUTINE_FIRE_URL }}
+          FIRE_TOKEN: ${{ secrets.ROUTINE_FIRE_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NO: ${{ github.event.issue.number }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIRE_URL:-}" ] || [ -z "${FIRE_TOKEN:-}" ]; then
+            echo "ROUTINE_FIRE_URL / ROUTINE_FIRE_TOKEN secret is missing" >&2
+            exit 1
+          fi
+          body=$(jq -n --arg t "GitHub event ${EVENT} on ${REPO} issue #${ISSUE_NO}. Run the normal issue-handling procedure now." '{text:$t}')
+          curl -sS --fail-with-body -X POST "$FIRE_URL" \
+            -H "Authorization: Bearer ${FIRE_TOKEN}" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" \
+            -d "$body"
