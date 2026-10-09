@@ -101,7 +101,7 @@ class Controller:
                 recent.append(dict(item, summary=summary))
         cfg = self.settings.data
         return {'output_dir': cfg['output_dir'], 'recent': recent,
-                'config': {key: cfg[key] for key in ('arrow_repeat', 'space_debounce_ms', 'decode_ahead', 'decode_behind')}}
+                'config': {key: cfg[key] for key in ('arrow_repeat', 'space_min_view_ms', 'decode_ahead', 'decode_behind')}}
 
     def check(self, folder, output_dir):
         folder = (folder or '').strip()

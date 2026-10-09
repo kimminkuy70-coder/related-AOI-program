@@ -32,7 +32,7 @@ DEFAULT_SETTINGS = {
     'retry_delays': [0.2, 0.5, 1.0],
     'thumb_size': 192,
     'arrow_repeat': False,
-    'space_debounce_ms': 150,
+    'space_min_view_ms': 120,  # Space counts only after the photo was on screen this long
     'decode_ahead': 5,
     'decode_behind': 3,
 }
