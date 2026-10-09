@@ -156,7 +156,8 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(self.js(CUR), 35)
 
     def test_rapid_random_keys(self):
-        """1,000 random actions 5 ms apart: taps, held keys (auto-repeat), → + Space chords."""
+        """1,000 random actions 5 ms apart: taps, held keys (auto-repeat), → + Space chords,
+        and now and then a short look at the photo before Space."""
         self.start()
         keyboard = self.page.keyboard
         rnd = random.Random(20261009)
@@ -168,6 +169,8 @@ class RapidInputTest(unittest.TestCase):
             elif roll < 0.68:
                 keys = [('ArrowLeft', 1)]
             elif roll < 0.88:
+                if rnd.random() < 0.4:
+                    time.sleep(0.15)  # looked at the photo, then GOOD
                 keys = [('Space', 1)]
             elif roll < 0.93:
                 keys = [('Space', rnd.randint(2, 6))]  # held: 1 keydown + repeats
@@ -200,17 +203,25 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(sent['ArrowRight'], count('right', 'move') + count('right', 'ignored'))
         self.assertEqual(sent['ArrowLeft'], count('left', 'move') + count('left', 'ignored'))
 
-        # Space only ever hit the photo that was on screen; → never left an unpainted photo
-        screen = None
-        for t in trace:
+        # Space only ever hit the photo that was on screen, and only after it had been there
+        # space_min_view_ms; moving forward (→ or Space) never left an unpainted photo;
+        # every applied Space went straight on to the next photo
+        min_view = self.js('window.__sorter.cfg.space_min_view_ms')
+        screen = shown_at = None
+        for k, t in enumerate(trace):
             if t['type'] == 'paint':
-                screen = t['i']
+                screen, shown_at = t['i'], t['t']
             elif t['type'] in ('move', 'jump'):
-                if t.get('key') == 'right':
+                if t.get('key') in ('right', 'space'):
                     self.assertEqual(screen, t['from'], 'moved forward from a photo that was not on screen')
                 screen = None
             elif t['type'] == 'toggle':
                 self.assertEqual(screen, t['i'], 'Space applied to a photo that was not on screen')
+                self.assertGreaterEqual(t['t'] - shown_at, min_view - 1)
+                if t['i'] < self.N - 1:  # on the last photo Space marks it and stays
+                    nxt = trace[k + 1]
+                    self.assertEqual((nxt['type'], nxt.get('key'), nxt.get('from')), ('move', 'space', t['i']))
+        self.assertGreater(sum(1 for t in trace if t['type'] == 'toggle'), 20)
 
         # held Space toggled once per press, never by auto-repeat
         self.assertGreater(sum(1 for t in trace if t['type'] == 'ignored' and t.get('reason') == 'repeat' and t['key'] == 'space'), 0)
@@ -243,39 +254,45 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(result['reject_count'], self.N - len(expected))
 
     def test_twenty_keys_per_second_drops_nothing(self):
-        """The plan's target: → and Space mixed at 20 presses/s over a slow share, none dropped."""
+        """The plan's target: → at 20 presses/s over a slow share, with a GOOD (Space after a
+        150 ms look at the photo) every fourth photo. Nothing may be dropped."""
         self.start()
         keyboard = self.page.keyboard
         presses = (['ArrowRight'] * 3 + ['Space']) * 75
         next_at = time.monotonic()
         for key in presses:
-            next_at += 0.05
-            keyboard.press(key)
+            next_at += 0.05 + (0.15 if key == 'Space' else 0)
             time.sleep(max(0, next_at - time.monotonic()))
+            keyboard.press(key)
         self.wait_painted()
         trace = self.trace()
         ignored = [t for t in trace if t['type'] == 'ignored']
         self.assertEqual(ignored, [])
-        self.assertEqual(self.js(CUR), 225)
-        self.assertEqual(len(self.ui_good()), 75)
+        self.assertEqual(self.js(CUR), 300)  # Space moved on as well
+        self.assertEqual(self.ui_good(), set(range(3, 300, 4)))
 
-    def test_space_hold_and_bounce(self):
+    def test_space_goods_and_moves_on_hold_and_double_press(self):
         self.start()
         keyboard = self.page.keyboard
+        time.sleep(0.2)
         for _ in range(6):  # held: one keydown and five auto-repeats
             keyboard.down('Space')
         keyboard.up('Space')
-        self.assertEqual(self.ui_good(), {0})
+        self.assertEqual((self.ui_good(), self.js(CUR)), ({0}, 1))  # GOOD, and on to the next photo
+        self.wait_painted()
         time.sleep(0.2)
         keyboard.press('Space')
-        time.sleep(0.05)
-        keyboard.press('Space')  # second press 50 ms later: key bounce, ignored
-        self.assertEqual(self.ui_good(), set())
+        time.sleep(0.04)
+        keyboard.press('Space')  # 40 ms later the next photo is barely up: bounce/double press, ignored
+        self.assertEqual((self.ui_good(), self.js(CUR)), ({0, 1}, 2))
+        keyboard.press('ArrowLeft')  # back to a GOOD photo: Space takes it back to REJECT, and moves on
+        self.wait_painted()
+        self.page.wait_for_function("document.getElementById('fTag').textContent === 'GOOD'")
         time.sleep(0.2)
         keyboard.press('Space')
-        self.assertEqual(self.ui_good(), {0})
+        self.assertEqual((self.ui_good(), self.js(CUR)), ({0}, 2))
         reasons = [t.get('reason') for t in self.trace() if t['type'] == 'ignored']
-        self.assertEqual((reasons.count('repeat'), reasons.count('debounce')), (5, 1))
+        self.assertEqual((reasons.count('repeat'), reasons.count('too-soon')), (5, 1))
 
     def test_forward_waits_for_a_loading_photo(self):
         gate = threading.Event()
@@ -302,18 +319,18 @@ class RapidInputTest(unittest.TestCase):
     def test_review_and_resume_after_restart(self):
         self.start()
         for _ in range(3):
-            self.page.keyboard.press('Space')
-            time.sleep(0.2)  # outside the bounce window
-            self.page.keyboard.press('ArrowRight')
+            time.sleep(0.2)  # a look at the photo
+            self.page.keyboard.press('Space')  # GOOD and next
             self.wait_painted()
-        self.assertEqual(self.ui_good(), {0, 1, 2})
+        self.assertEqual((self.ui_good(), self.js(CUR)), ({0, 1, 2}, 3))
         self.page.keyboard.press('Escape')
         self.page.keyboard.press('Enter')  # menu → review
         self.page.wait_for_selector('#review.show')
         self.page.wait_for_function("document.querySelectorAll('.cell').length === 3")
         self.page.keyboard.press('ArrowRight')
-        self.page.keyboard.press('Space')  # un-GOOD the 2nd one in the grid
+        self.page.keyboard.press('Space')  # un-GOOD the 2nd one in the grid, selection moves on
         self.assertEqual(self.ui_good(), {0, 2})
+        self.assertEqual(self.js('document.querySelector(".cell.sel .cname").textContent'), 'IMG_0002.jpg')
         self.assertEqual(self.page.inner_text('#rGood'), '2')
         self.assertTrue(self.js('window.__sorter.flush()'))
         # "restart": a new controller and page on the same settings/session folder

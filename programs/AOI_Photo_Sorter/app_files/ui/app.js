@@ -8,8 +8,10 @@
 //    the compositor), so Space never marks, and → never skips, a photo not on screen;
 //  - → to a photo that is still loading moves and shows "불러오는 중"; further keys
 //    wait until it is painted (keys are dropped, never queued);
-//  - Space auto-repeat is ignored and a second Space on the same photo within
-//    space_debounce_ms is ignored; arrow auto-repeat is ignored unless arrow_repeat;
+//  - Space = GOOD (or back to REJECT if it already was GOOD) and the next photo; it counts
+//    only after the photo has been on screen space_min_view_ms, so a bouncing or doubled
+//    Space never marks the photo that just appeared; auto-repeat of Space is ignored,
+//    arrow auto-repeat too unless arrow_repeat;
 //  - keys are read by physical position (event.code): Korean IME / CapsLock do not matter.
 
 const $ = id => document.getElementById(id);
@@ -20,7 +22,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => performance.now();
 const labelOf = p => (String(p).split(/[\\/]+/).filter(Boolean).pop() || p);
 
-let cfg = {arrow_repeat: false, space_debounce_ms: 150, decode_ahead: 5, decode_behind: 3};
+let cfg = {arrow_repeat: false, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3};
 
 async function api(name, body) {
   const init = body === undefined ? {cache: 'no-store'}
@@ -174,7 +176,7 @@ const S = {
   job: null, names: [], n: 0, good: new Uint8Array(0), seen: new Uint8Array(0), failed: new Uint8Array(0),
   goodCount: 0, seenCount: 0, folder: '', output: '', files: ['', ''],
   list: null, listName: '', pos: 0, allPos: 0, painted: -1, drawToken: 0,
-  lastToggle: {i: -1, t: 0}, lastMoveAt: 0, last: '', note: '', noteTimer: null, zoom: null,
+  paintedAt: 0, lastMoveAt: 0, last: '', note: '', noteTimer: null, zoom: null,
 };
 const trace = [];  // recent accepted/ignored inputs and paints (also read by the E2E test)
 function record(entry) { entry.t = now(); trace.push(entry); if (trace.length > 20000) trace.splice(0, 5000); }
@@ -352,6 +354,7 @@ function present(keyT) {
   requestAnimationFrame(t1 => {
     if (token !== S.drawToken) return;
     S.painted = i;
+    S.paintedAt = now();
     record({type: 'paint', i, keyT, frame: t1, ok: e.state === 'ready'});
     if (e.state === 'ready') {
       if (!S.seen[i]) { S.seen[i] = 1; S.seenCount++; pendingSeen.add(i); scheduleSync(); }
@@ -363,11 +366,6 @@ function present(keyT) {
   });
 }
 
-function flash(good) {
-  $('flash').style.background = good ? 'rgba(34,197,94,.28)' : 'rgba(239,68,68,.22)';
-  $('flash').animate([{opacity: 1}, {opacity: 0}], {duration: 160, easing: 'ease-out'});
-}
-
 // ------------------------------------------------------------------ HUD (one update per frame)
 let hudQueued = false;
 function hud() {
@@ -375,30 +373,39 @@ function hud() {
   hudQueued = true;
   requestAnimationFrame(() => { hudQueued = false; renderHud(); });
 }
+// Only values that changed are written, so a key press costs a few text nodes at most.
+const shown = new Map();
+function put(id, prop, value) {
+  const key = id + '.' + prop;
+  if (shown.get(key) === value) return;
+  shown.set(key, value);
+  const el = $(id);
+  if (prop === 'text') el.textContent = value;
+  else if (prop === 'class') el.className = value;
+  else el.style[prop] = value;
+}
 function renderHud() {
   if (page !== 'sort' || !S.job) return;
   const i = cur(), good = !!S.good[i];
-  $('hPos').textContent = `${fmt(S.pos + 1)} / ${fmt(len())}`;
-  $('hSeen').textContent = S.list ? '' : `확인 ${(S.seenCount / S.n * 100).toFixed(1)}%`;
-  $('hGood').textContent = fmt(S.goodCount);
-  $('hBar').style.transform = `scaleX(${S.list ? (S.pos + 1) / len() : S.seenCount / S.n})`;
-  $('hMode').classList.toggle('hidden', !S.list);
-  $('hMode').textContent = S.listName + ' — Esc: 메뉴';
-  $('stage').classList.toggle('good', good);
-  $('stage').classList.toggle('zoomed', !!S.zoom);
-  $('fName').textContent = S.names[i] || '';
-  $('fTag').textContent = good ? 'GOOD' : 'REJECT';
-  $('fTag').classList.toggle('good', good);
-  $('fNote').textContent = S.note;
-  $('fLast').textContent = S.last ? '직전: ' + S.last : '';
-  const dot = $('hDot');
-  dot.className = 'dot';
+  put('hPos', 'text', `${fmt(S.pos + 1)} / ${fmt(len())}`);
+  put('hSeen', 'text', S.list ? '' : `확인 ${(S.seenCount / S.n * 100).toFixed(1)}%`);
+  put('hGood', 'text', fmt(S.goodCount));
+  put('hBar', 'transform', `scaleX(${(S.list ? (S.pos + 1) / len() : S.seenCount / S.n).toFixed(3)})`);
+  put('hMode', 'class', S.list ? 'mode' : 'mode hidden');
+  put('hMode', 'text', S.listName + ' — Esc: 메뉴');
+  put('stage', 'class', 'stage' + (good ? ' good' : '') + (S.zoom ? ' zoomed' : ''));
+  put('fName', 'text', S.names[i] || '');
+  put('fTag', 'text', good ? 'GOOD' : 'REJECT');
+  put('fTag', 'class', good ? 'tag good' : 'tag');
+  put('fNote', 'text', S.note);
+  put('fLast', 'text', S.last ? '직전: ' + S.last : '');
+  let dot = 'dot';
   if (!S.list && lastStats) {
     const remain = S.n - 1 - lastStats.cursor;
     const need = Math.min(20, remain);
-    dot.classList.add(lastStats.ready_ahead >= need ? 'green' : lastStats.ready_ahead >= Math.min(3, remain) ? 'yellow' : 'red');
-    dot.title = `미리 읽기 +${lastStats.ready_ahead}장 준비됨`;
+    dot += lastStats.ready_ahead >= need ? ' green' : lastStats.ready_ahead >= Math.min(3, remain) ? ' yellow' : ' red';
   }
+  put('hDot', 'class', dot);
 }
 
 function note(text, ms = 1500) {
@@ -422,16 +429,36 @@ function move(d, e) {
   if (np < 0 || np >= len()) {
     record({type: 'ignored', key, reason: 'edge', i: from});
     if (np < 0) note('첫 사진입니다');
-    else note(S.list ? '마지막 사진입니다 — Esc: 메뉴' : '마지막 사진입니다 — Enter: 확인 화면으로', 3000);
+    else lastPhotoNote();
     return;
   }
-  S.pos = np;
+  step(d, key, e ? e.timeStamp : undefined);
+}
+
+function step(d, key, keyT) {
+  const from = cur();
+  S.pos += d;
   S.lastMoveAt = now();
   S.zoom = null;
   record({type: 'move', key, from, to: cur()});
-  present(e ? e.timeStamp : undefined);
+  present(keyT);
   pump();
   cursorChanged();
+}
+
+function lastPhotoNote() {
+  note(S.list ? '마지막 사진입니다 — Esc: 메뉴' : '마지막 사진입니다 — Enter: 확인 화면으로', 3000);
+}
+
+// Space: GOOD (REJECT again if it already was GOOD), then straight to the next photo.
+function goodAndNext(e) {
+  const i = cur();
+  if (e.repeat) { record({type: 'ignored', key: 'space', reason: 'repeat', i}); return; }
+  if (S.painted !== i) { record({type: 'ignored', key: 'space', reason: 'not-painted', i}); note('불러오는 중…'); return; }
+  if (now() - S.paintedAt < cfg.space_min_view_ms) { record({type: 'ignored', key: 'space', reason: 'too-soon', i}); return; }
+  toggle(i);
+  if (S.pos + 1 < len()) step(1, 'space', e.timeStamp);
+  else { hud(); lastPhotoNote(); }
 }
 
 function jump(p) {
@@ -450,20 +477,13 @@ function workPos() {
   return i < 0 ? S.n - 1 : i;
 }
 
-function toggle(i, fromReview) {
-  const t = now();
-  if (!fromReview) {
-    if (S.painted !== i) { record({type: 'ignored', key: 'space', reason: 'not-painted', i}); note('사진이 표시된 뒤에 지정할 수 있습니다'); return; }
-    if (S.lastToggle.i === i && t - S.lastToggle.t < cfg.space_debounce_ms) { record({type: 'ignored', key: 'space', reason: 'debounce', i}); return; }
-    S.lastToggle = {i, t};
-  }
+function toggle(i) {
   S.good[i] ^= 1;
   S.goodCount += S.good[i] ? 1 : -1;
   pendingGood.set(i, S.good[i]);
   scheduleSync();
-  S.last = `${S.names[i]} → ${S.good[i] ? 'GOOD 지정' : 'GOOD 해제'}`;
+  S.last = `${S.names[i]} → ${S.good[i] ? 'GOOD' : 'GOOD 해제'}`;
   record({type: 'toggle', i, value: S.good[i], painted: S.painted});
-  if (!fromReview) { flash(S.good[i]); hud(); }
 }
 
 async function retryCurrent() {
@@ -652,7 +672,7 @@ function renderGrid(scrollToSel) {
       el.className = 'cell';
       el.style.transform = `translate(${(p % cols) * CELL_W}px, ${Math.floor(p / cols) * CELL_H}px)`;
       el.innerHTML = `<img alt="" decoding="async" src="thumb/${S.job}/${i}"><span class="cname">${esc(S.names[i])}</span><span class="ctag"></span>`;
-      el.onclick = () => { R.sel = p; toggle(R.items[p], true); updateCells(); renderReview(); };
+      el.onclick = () => { R.sel = p; toggle(R.items[p]); updateCells(); renderReview(); };
       el.ondblclick = () => { R.sel = p; enterList(R.items, p, 'GOOD만 보기'); };
       $('gridInner').appendChild(el);
       R.cells.set(p, el);
@@ -684,7 +704,12 @@ function reviewKey(e) {
   if (c in moves) { R.sel = Math.max(0, Math.min(last, R.sel + moves[c])); renderGrid(true); }
   else if (c === 'Home') { R.sel = 0; renderGrid(true); }
   else if (c === 'End') { R.sel = last; renderGrid(true); }
-  else if (c === 'Space' && !e.repeat) { toggle(R.items[R.sel], true); updateCells(); renderReview(); }
+  else if (c === 'Space' && !e.repeat) {  // same as the sorting screen: change, then the next one
+    toggle(R.items[R.sel]);
+    R.sel = Math.min(last, R.sel + 1);
+    renderGrid(true);
+    renderReview();
+  }
   else if ((c === 'Enter' || c === 'NumpadEnter') && !e.repeat) enterList(R.items, R.sel, 'GOOD만 보기');
 }
 
@@ -736,7 +761,7 @@ function sortKey(e) {
   if (SORT_KEYS.has(c) || e.ctrlKey || e.altKey) e.preventDefault();
   if (!S.job) return;
   switch (c) {
-    case 'Space': if (!e.repeat) toggle(cur(), false); else record({type: 'ignored', key: 'space', reason: 'repeat', i: cur()}); break;
+    case 'Space': goodAndNext(e); break;
     case 'ArrowRight': move(1, e); break;
     case 'ArrowLeft': move(-1, e); break;
     case 'Home': if (!e.repeat) jump(0); break;

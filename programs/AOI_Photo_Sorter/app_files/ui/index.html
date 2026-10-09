@@ -3,7 +3,7 @@
 <section id="start" class="screen show">
   <div class="card-box">
     <h1>AOI Photo Sorter <small>v1</small></h1>
-    <p class="lead">Reject 사진을 <kbd>←</kbd> <kbd>→</kbd>로 넘겨 보면서, GOOD 처리할 사진만 <kbd>Space</kbd>로 골라냅니다.</p>
+    <p class="lead">Reject 사진을 <kbd>→</kbd>로 넘겨 보다가, GOOD 처리할 사진에서 <kbd>Space</kbd>를 누르면 GOOD으로 바뀌고 다음 사진으로 넘어갑니다.</p>
     <div class="field">
       <span class="label">① 사진 폴더</span>
       <div class="row"><input id="folder" spellcheck="false" autocomplete="off" placeholder="\\서버\공유\LOT123  또는  D:\사진\LOT123"><button id="pickFolder" class="ghost bridge-only">찾아보기</button></div>
@@ -32,9 +32,9 @@
     <span class="spacer"></span><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
   </header>
   <div class="bar"><i id="hBar"></i></div>
-  <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card hidden"><b id="cardTitle"></b><small id="cardText"></small></div><div id="badge" class="badge">GOOD ✓</div><div id="flash" class="flash"></div></div>
+  <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card hidden"><b id="cardTitle"></b><small id="cardText"></small></div><div id="badge" class="badge">GOOD</div></div>
   <footer class="foot"><span id="fName" class="fname"></span><span id="fTag" class="tag">REJECT</span><span id="fNote" class="note"></span><span class="spacer"></span><span id="fLast" class="muted"></span></footer>
-  <div class="keys"><kbd>←</kbd> 이전 <kbd>→</kbd> 다음 <kbd>Space</kbd> GOOD 지정/해제 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>Esc</kbd> 메뉴</div>
+  <div class="keys"><kbd>→</kbd> 다음 <kbd>Space</kbd> GOOD + 다음 <kbd>←</kbd> 이전 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>Esc</kbd> 메뉴</div>
 </section>
 
 <section id="review" class="screen">
@@ -45,7 +45,7 @@
   </header>
   <div id="rWarn" class="warn hidden"><span id="rWarnText"></span><button id="rUnseenBtn" class="ghost">미확인 사진 보기</button></div>
   <div id="grid" class="grid"><div id="gridInner" class="grid-inner"></div><div id="gridEmpty" class="empty hidden">GOOD으로 고른 사진이 없습니다. 저장하면 전부 REJECT 목록에 들어갑니다.</div></div>
-  <footer class="rfoot"><span class="muted">클릭 / <kbd>Space</kbd> GOOD ↔ 해제 · <kbd>Enter</kbd> 크게 보기 · 방향키 이동</span><span class="spacer"></span><span id="rDest" class="dest"></span><button id="rSave" class="primary">저장 (Ctrl+S)</button></footer>
+  <footer class="rfoot"><span class="muted">클릭 / <kbd>Space</kbd> GOOD ↔ 해제 (Space는 다음 칸으로 이동) · <kbd>Enter</kbd> 크게 보기 · 방향키 이동</span><span class="spacer"></span><span id="rDest" class="dest"></span><button id="rSave" class="primary">저장 (Ctrl+S)</button></footer>
 </section>
 
 <section id="done" class="screen">
