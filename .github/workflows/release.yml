@@ -3,15 +3,26 @@ name: Release
 # 프로그램의 릴리스 이름(app_manifest.json의 "release", 예: AOI_Photo_Sorter_v1)으로
 # 태그를 푸시하면, 테스트를 통과한 경우에만 그 프로그램의 ZIP을 만들어 GitHub 릴리스로 게시한다.
 #   git tag AOI_Photo_Sorter_v1 && git push origin AOI_Photo_Sorter_v1
+# 태그를 직접 푸시할 수 없으면 Actions 탭에서 이 워크플로를 실행(Run workflow)한다:
+# 실행한 브랜치의 현재 커밋에 태그를 만들어 게시한다(이미 있는 태그는 거부).
 on:
   push:
     tags: ['*_v*']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '릴리스 이름 (app_manifest.json의 "release", 예: AOI_Photo_Sorter_v1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ inputs.release || github.ref_name }}
+
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.release || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -25,12 +36,20 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Refuse an existing tag (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null; then
+            echo "::error::태그 ${TAG} 가 이미 있습니다. 새 릴리스 이름(버전)을 쓰세요."
+            exit 1
+          fi
+
       - name: Find the program for this tag
         id: program
         run: |
           python - <<'EOF'
           import json, os, pathlib, sys
-          tag = os.environ['GITHUB_REF_NAME']
+          tag = os.environ['TAG']
           for manifest in sorted(pathlib.Path('programs').glob('*/app_files/app_manifest.json')):
               data = json.loads(manifest.read_text(encoding='utf-8'))
               if data['release'] == tag:
@@ -59,7 +78,7 @@ jobs:
           python tools/build_release.py --zip
           # the committed .vbs launchers must be exactly what the template generates
           git diff --exit-code -- programs
-          test -f "dist/${GITHUB_REF_NAME}.zip"
+          test -f "dist/${TAG}.zip"
 
       - name: Publish release
         env:
@@ -67,7 +86,10 @@ jobs:
           TITLE: ${{ steps.program.outputs.title }}
           DIR: ${{ steps.program.outputs.dir }}
         run: |
-          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          notes="docs/releases/${TAG}.md"
           [ -f "$notes" ] || notes="programs/${DIR}/README_KO.txt"
-          gh release create "$GITHUB_REF_NAME" "dist/${GITHUB_REF_NAME}.zip" \
-            --verify-tag --title "$TITLE" --notes-file "$notes"
+          verify=()
+          [ "$GITHUB_EVENT_NAME" = push ] && verify=(--verify-tag)
+          # manual run: gh creates the tag on the commit that was tested and built
+          gh release create "$TAG" "dist/${TAG}.zip" "${verify[@]}" --target "$GITHUB_SHA" \
+            --title "$TITLE" --notes-file "$notes"
