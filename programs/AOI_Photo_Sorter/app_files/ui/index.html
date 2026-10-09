@@ -1,0 +1,60 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AOI Photo Sorter v1</title><link rel="stylesheet" href="styles.css"></head><body>
+
+<section id="start" class="screen show">
+  <div class="card-box">
+    <h1>AOI Photo Sorter <small>v1</small></h1>
+    <p class="lead">Reject 사진을 <kbd>←</kbd> <kbd>→</kbd>로 넘겨 보면서, GOOD 처리할 사진만 <kbd>Space</kbd>로 골라냅니다.</p>
+    <div class="field">
+      <span class="label">① 사진 폴더</span>
+      <div class="row"><input id="folder" spellcheck="false" autocomplete="off" placeholder="\\서버\공유\LOT123  또는  D:\사진\LOT123"><button id="pickFolder" class="ghost bridge-only">찾아보기</button></div>
+      <small id="folderMsg" class="msg"></small>
+    </div>
+    <div class="field">
+      <span class="label">② 결과 저장 위치</span>
+      <div class="row"><input id="output" spellcheck="false" autocomplete="off" placeholder="결과 txt 2개를 저장할 폴더"><button id="pickOutput" class="ghost bridge-only">찾아보기</button></div>
+      <small id="outputMsg" class="msg"></small>
+    </div>
+    <div id="files" class="files"></div>
+    <div id="resume" class="resume hidden"><span id="resumeText"></span><span class="spacer"></span><button id="freshBtn" class="ghost">새로 시작</button></div>
+    <button id="startBtn" class="primary wide" disabled>시작 (Enter)</button>
+    <h3>최근 작업</h3>
+    <div id="recent" class="recent"><small class="muted">없음</small></div>
+  </div>
+</section>
+
+<section id="loading" class="screen">
+  <div class="center"><div class="spinner"></div><b id="loadMsg">사진 목록 읽는 중…</b><small id="loadDetail" class="muted"></small><button id="loadCancel" class="ghost">취소</button></div>
+</section>
+
+<section id="sort" class="screen">
+  <header class="hud">
+    <b id="hFolder"></b><span id="hPos"></span><span id="hSeen" class="muted"></span><span class="goodcount">GOOD <b id="hGood">0</b></span><span id="hMode" class="mode hidden"></span>
+    <span class="spacer"></span><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
+  </header>
+  <div class="bar"><i id="hBar"></i></div>
+  <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card hidden"><b id="cardTitle"></b><small id="cardText"></small></div><div id="badge" class="badge">GOOD ✓</div><div id="flash" class="flash"></div></div>
+  <footer class="foot"><span id="fName" class="fname"></span><span id="fTag" class="tag">REJECT</span><span id="fNote" class="note"></span><span class="spacer"></span><span id="fLast" class="muted"></span></footer>
+  <div class="keys"><kbd>←</kbd> 이전 <kbd>→</kbd> 다음 <kbd>Space</kbd> GOOD 지정/해제 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>Esc</kbd> 메뉴</div>
+</section>
+
+<section id="review" class="screen">
+  <header class="rhead">
+    <h2>확인</h2>
+    <div class="counts">전체 <b id="rTotal">0</b> · <span class="g">GOOD <b id="rGood">0</b></span> · <span class="r">REJECT <b id="rReject">0</b></span> · 미확인 <b id="rUnseen">0</b></div>
+    <span class="spacer"></span><button id="rBrowse" class="ghost">GOOD만 다시 넘겨보기</button><button id="rBack" class="ghost">선별 화면으로 (Esc)</button>
+  </header>
+  <div id="rWarn" class="warn hidden"><span id="rWarnText"></span><button id="rUnseenBtn" class="ghost">미확인 사진 보기</button></div>
+  <div id="grid" class="grid"><div id="gridInner" class="grid-inner"></div><div id="gridEmpty" class="empty hidden">GOOD으로 고른 사진이 없습니다. 저장하면 전부 REJECT 목록에 들어갑니다.</div></div>
+  <footer class="rfoot"><span class="muted">클릭 / <kbd>Space</kbd> GOOD ↔ 해제 · <kbd>Enter</kbd> 크게 보기 · 방향키 이동</span><span class="spacer"></span><span id="rDest" class="dest"></span><button id="rSave" class="primary">저장 (Ctrl+S)</button></footer>
+</section>
+
+<section id="done" class="screen">
+  <div class="card-box">
+    <h2>저장 완료</h2>
+    <div id="doneFiles" class="donefiles"></div>
+    <div class="row"><button id="doneOpen" class="primary bridge-only">결과 폴더 열기</button><button id="doneReview" class="ghost">확인 화면으로</button><button id="doneNew" class="ghost">새 작업</button></div>
+  </div>
+</section>
+
+<div id="modal" class="modal hidden"><div class="box"><h3 id="mTitle"></h3><p id="mText"></p><div id="mButtons" class="row end"></div></div></div>
+<script src="app.js"></script></body></html>

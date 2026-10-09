@@ -188,13 +188,18 @@ class SetupEnvUnitTest(unittest.TestCase):
         self.assertEqual(runtime.missing_modules({'modules': ['json', 'surely_not_installed_pkg']}), ['surely_not_installed_pkg'])
 
 
+# Every program in the release, including ones without the API(webview, engine) layout above.
+ALL_PROGRAMS = list(PROGRAMS.values()) + [REPO / 'programs' / 'AOI_Photo_Sorter' / 'app_files']
+
+
 class SharedFilesTest(unittest.TestCase):
     def test_shared_files_identical(self):
         for name in ('setup_env.py', 'runtime.py', 'constraints.txt'):
-            self.assertEqual((PROGRAMS['aoi'] / name).read_bytes(), (PROGRAMS['wafer'] / name).read_bytes(), name)
+            for folder in ALL_PROGRAMS[1:]:
+                self.assertEqual((ALL_PROGRAMS[0] / name).read_bytes(), (folder / name).read_bytes(), '%s: %s' % (folder.parent.name, name))
 
     def test_launchers_are_cp949_without_bom_and_crlf(self):
-        for folder in PROGRAMS.values():
+        for folder in ALL_PROGRAMS:
             manifest = json.loads((folder / 'app_manifest.json').read_text(encoding='utf-8'))
             launcher = folder.parent / (manifest['release'] + '.vbs')
             raw = launcher.read_bytes()

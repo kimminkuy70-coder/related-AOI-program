@@ -1,0 +1,5 @@
+# Version ranges live in constraints.txt (shared by every AOI tool).
+pywebview
+pythonnet; sys_platform == "win32"
+# GOOD thumbnails and TIFF display
+Pillow

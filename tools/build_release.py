@@ -11,7 +11,8 @@ import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PROGRAMS = [REPO / 'programs' / 'AOI_Color_Gray_Matcher', REPO / 'programs' / 'Wafer_Map_Converter']
+PROGRAMS = [REPO / 'programs' / 'AOI_Color_Gray_Matcher', REPO / 'programs' / 'Wafer_Map_Converter',
+            REPO / 'programs' / 'AOI_Photo_Sorter']
 SHARED = ['setup_env.py', 'runtime.py', 'constraints.txt']
 TEMPLATE = REPO / 'tools' / 'launcher_template.vbs'
 SKIP = {'__pycache__'}
