@@ -459,7 +459,8 @@ class RapidInputTest(unittest.TestCase):
 
 
     def test_extra_good_review(self):
-        """v4: a saved result, then 추가 GOOD 검토 over the photos still REJECT."""
+        """추가 GOOD 검토 over the photos still REJECT in a v4-style result: saved as 2차리뷰
+        (추가GOOD / GOOD / REJECT), the earlier files left as they were."""
         label = os.path.basename(self.photos)
         good_txt, reject_txt = Path(self.out, label + '_GOOD.txt'), Path(self.out, label + '_REJECT.txt')
         good_txt.write_bytes(b'IMG_0001.jpg\r\nIMG_0003.jpg\r\n')
@@ -470,6 +471,8 @@ class RapidInputTest(unittest.TestCase):
         page.fill('#output', self.out)
         page.wait_for_selector('#extra:not(.hidden)')
         self.assertIn('GOOD 2 / REJECT %d' % (self.N - 2), page.inner_text('#extra'))
+        self.assertIn('1차리뷰', page.inner_text('#extra'))
+        self.assertIn('2차리뷰', page.inner_text('#extraBtn'))
         page.click('#extraBtn')
         page.wait_for_function('window.__sorter.S.painted === 0', timeout=30000)
         names = self.js('window.__sorter.S.names')
@@ -492,14 +495,66 @@ class RapidInputTest(unittest.TestCase):
         page.keyboard.press('Control+s')
         page.keyboard.press('Enter')  # unseen photos stay REJECT: save anyway
         page.wait_for_selector('#done.show')
-        self.assertEqual(good_txt.read_bytes(), b'IMG_0001.jpg\r\nIMG_0002.jpg\r\nIMG_0003.jpg\r\n')
-        self.assertNotIn(b'IMG_0002.jpg', reject_txt.read_bytes())
-        self.assertEqual(len(reject_txt.read_bytes().split(b'\r\n')) - 1, self.N - 3)
-        files = os.listdir(self.out)
-        self.assertEqual(len([f for f in files if '_이전_' in f]), 2)
-        added = [f for f in files if '_GOOD_추가_' in f]
-        self.assertEqual(Path(self.out, added[0]).read_bytes(), b'IMG_0002.jpg\r\n')
-        self.assertIn('추가 GOOD', page.inner_text('#doneFiles'))
+        self.assertIn('2차리뷰 저장 완료', page.inner_text('#doneTitle'))
+        self.assertIn('추가GOOD', page.inner_text('#doneFiles'))
+        files = sorted(os.listdir(self.out))
+        second = {f.rsplit('_', 1)[1]: Path(self.out, f) for f in files if '_2차리뷰_' in f}
+        self.assertEqual(sorted(second), ['GOOD.txt', 'REJECT.txt', '추가GOOD.txt'])
+        self.assertEqual(len(files), 2 + 3)  # the v4 files are left as they were, no backups
+        self.assertEqual(second['추가GOOD.txt'].read_bytes(), b'IMG_0002.jpg\r\n')
+        self.assertEqual(second['GOOD.txt'].read_bytes(), b'IMG_0001.jpg\r\nIMG_0002.jpg\r\nIMG_0003.jpg\r\n')
+        self.assertNotIn(b'IMG_0002.jpg', second['REJECT.txt'].read_bytes())
+        self.assertEqual(len(second['REJECT.txt'].read_bytes().split(b'\r\n')) - 1, self.N - 3)
+        self.assertEqual(good_txt.read_bytes(), b'IMG_0001.jpg\r\nIMG_0003.jpg\r\n')
+
+    def test_rounds_through_the_screens(self):
+        """1차 full review (2 files) → 추가 GOOD 검토 2차 (3 files) → back to the review screen,
+        change and save again: the same 2차 files are rewritten, no 3차."""
+        page, keyboard = self.page, self.page.keyboard
+
+        def save_from_review():
+            keyboard.press('Escape')
+            keyboard.press('Enter')  # menu → review
+            page.wait_for_selector('#review.show')
+            keyboard.press('Control+s')
+            keyboard.press('Enter')  # unseen photos stay REJECT
+            page.wait_for_selector('#done.show')
+
+        self.start()
+        time.sleep(0.2)
+        keyboard.press('Space')  # IMG_0000 GOOD
+        self.wait_painted()
+        save_from_review()
+        self.assertIn('1차리뷰 저장 완료', page.inner_text('#doneTitle'))
+        self.assertEqual(len(os.listdir(self.out)), 2)
+
+        page.click('#doneNew')
+        page.wait_for_selector('#extra:not(.hidden)')
+        self.assertIn('1차리뷰', page.inner_text('#extra'))
+        page.click('#extraBtn')
+        page.wait_for_function('window.__sorter.S.painted === 0', timeout=30000)
+        self.assertEqual(self.js('window.__sorter.S.names[0]'), 'IMG_0001.jpg')
+        time.sleep(0.2)
+        keyboard.press('Space')  # IMG_0001 added
+        self.wait_painted()
+        save_from_review()
+        self.assertIn('2차리뷰 저장 완료', page.inner_text('#doneTitle'))
+        second = sorted(f for f in os.listdir(self.out) if '_2차리뷰_' in f)
+        self.assertEqual([f.rsplit('_', 1)[1] for f in second], ['GOOD.txt', 'REJECT.txt', '추가GOOD.txt'])
+        self.assertEqual(Path(self.out, second[0]).read_bytes(), b'IMG_0000.jpg\r\nIMG_0001.jpg\r\n')
+
+        page.click('#doneReview')  # change the 2차 pick and save again
+        page.wait_for_selector('#review.show')
+        page.wait_for_function("document.querySelectorAll('.cell').length === 1")
+        keyboard.press('Space')  # IMG_0001 back to REJECT
+        keyboard.press('Control+s')
+        keyboard.press('Enter')
+        page.wait_for_selector('#done.show')
+        page.wait_for_function("document.getElementById('doneTitle').textContent.includes('2차리뷰')")
+        self.assertEqual(sorted(f for f in os.listdir(self.out) if '_2차리뷰_' in f), second)  # rewritten, not a 3차
+        self.assertEqual(len(os.listdir(self.out)), 2 + 3)
+        self.assertEqual(Path(self.out, second[0]).read_bytes(), b'IMG_0000.jpg\r\n')
+        self.assertEqual(Path(self.out, second[2]).read_bytes(), b'')
 
 @unittest.skipIf(sync_playwright is None, 'playwright / Pillow not installed')
 class TenThousandTest(unittest.TestCase):

@@ -332,24 +332,35 @@ class OutputTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.out, ignore_errors=True)
 
-    def test_two_files_crlf_utf8(self):
+    def test_full_review_rounds(self):
+        """A full review: <folder>_<n>차리뷰_<date>_<time>_GOOD/REJECT.txt, UTF-8, CRLF, folder order.
+        Saving the same review again rewrites its round; a new review is the next round."""
+        folder = r'\\srv\aoi\LOT123'
         names = ['불량_01.jpg', 'B.png', 'C.bmp', 'D.jpg']
-        result = engine.write_outputs(self.out, r'\\srv\aoi\LOT123', names, {0, 2})
-        self.assertTrue(result['ok'])
-        self.assertEqual((result['good_count'], result['reject_count']), (2, 2))
-        self.assertEqual(Path(self.out, 'LOT123_GOOD.txt').read_bytes(), '불량_01.jpg\r\nC.bmp\r\n'.encode('utf-8'))
-        self.assertEqual(Path(self.out, 'LOT123_REJECT.txt').read_bytes(), b'B.png\r\nD.jpg\r\n')
-        again = engine.write_outputs(self.out, r'\\srv\aoi\LOT123', names, set())
-        self.assertEqual(again, {'ok': False, 'conflict': ['LOT123_GOOD.txt', 'LOT123_REJECT.txt']})
-        engine.write_outputs(self.out, r'\\srv\aoi\LOT123', names, set(), overwrite=True)
-        self.assertEqual(Path(self.out, 'LOT123_GOOD.txt').read_bytes(), b'')
-        self.assertEqual(sorted(os.listdir(self.out)), ['LOT123_GOOD.txt', 'LOT123_REJECT.txt'])
+        first = engine.save_round(self.out, folder, names, ['C.bmp', '불량_01.jpg'])
+        self.assertTrue(first['ok'])
+        self.assertEqual((first['round'], first['good_count'], first['reject_count'], first['added_path']), (1, 2, 2, None))
+        self.assertRegex(first['when'], r'^\d{8}_\d{4}$')
+        stem = 'LOT123_1차리뷰_%s_' % first['when']
+        self.assertEqual(sorted(os.listdir(self.out)), [stem + 'GOOD.txt', stem + 'REJECT.txt'])
+        self.assertEqual(Path(self.out, stem + 'GOOD.txt').read_bytes(), '불량_01.jpg\r\nC.bmp\r\n'.encode('utf-8'))
+        self.assertEqual(Path(self.out, stem + 'REJECT.txt').read_bytes(), b'B.png\r\nD.jpg\r\n')
+        again = engine.save_round(self.out, folder, names, [], own=(1, first['when']))  # same review saved again
+        self.assertEqual((again['round'], again['good_path']), (1, first['good_path']))
+        self.assertEqual(Path(self.out, stem + 'GOOD.txt').read_bytes(), b'')
+        second = engine.save_round(self.out, folder, names, ['B.png'])  # another full review
+        self.assertEqual((second['round'], len(os.listdir(self.out))), (2, 4))
+        self.assertEqual(Path(self.out, stem + 'REJECT.txt').read_bytes(), '불량_01.jpg\r\nB.png\r\nC.bmp\r\nD.jpg\r\n'.encode('utf-8'))
+        latest = engine.read_results(self.out, folder)
+        self.assertEqual((latest['round'], latest['good'], latest['legacy']), (2, ['B.png'], False))
 
     def test_folder_labels(self):
         self.assertEqual(engine.folder_label(r'\\server\share'), 'share')
         self.assertEqual(engine.folder_label('D:\\AOI\\LOT 7\\'), 'LOT 7')
         self.assertEqual(engine.folder_label('/data/a:b'), 'a_b')
-        self.assertEqual(engine.output_names('/x/LOT9'), ('LOT9_GOOD.txt', 'LOT9_REJECT.txt'))
+        self.assertEqual(engine.round_names('/x/LOT9', 3, '20261010_1029'),
+                         {'추가GOOD': 'LOT9_3차리뷰_20261010_1029_추가GOOD.txt', 'GOOD': 'LOT9_3차리뷰_20261010_1029_GOOD.txt',
+                          'REJECT': 'LOT9_3차리뷰_20261010_1029_REJECT.txt'})
 
     def test_writable_check(self):
         self.assertEqual(engine.check_writable(self.out), (True, ''))
@@ -377,9 +388,13 @@ class ExtraReviewTest(unittest.TestCase):
         self.assertIsNone(engine.read_results(self.out, self.folder))
         self.write('LOT5_GOOD.txt', '\ufeffb.jpg\nD.JPG\n')  # Notepad BOM; other case on Windows only
         self.write('LOT5_REJECT.txt', 'a.jpg\nc.jpg\n불량_e.jpg\ngone.jpg\n\n', 'cp949')  # saved as ANSI
-        results = engine.read_results(self.out, self.folder)
+        results = engine.read_results(self.out, self.folder)  # v4 file names: read as the previous result
         self.assertEqual((results['good'], results['reject']), (['b.jpg', 'D.JPG'], ['a.jpg', 'c.jpg', '불량_e.jpg', 'gone.jpg']))
         self.assertEqual(engine.results_summary(results)['reject'], 4)
+        self.assertEqual((results['round'], results['legacy']), (1, True))
+        self.write('LOT5_GOOD_추가_20261010_1029.txt', 'b.jpg\n')  # one v4 extra review saved on it
+        self.assertEqual(engine.read_results(self.out, self.folder)['round'], 2)
+        self.assertEqual(engine.last_round(self.out, self.folder), 2)
         names = ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg', '불량_e.jpg', 'new.jpg']
         base, targets, fresh, missing = engine.plan_extra(names, results)
         if os.name == 'nt':
@@ -390,29 +405,52 @@ class ExtraReviewTest(unittest.TestCase):
             base, targets, fresh, missing = engine.plan_extra(names, results)
         self.assertEqual((targets, fresh, missing), (['a.jpg', 'c.jpg', '불량_e.jpg', 'new.jpg'], ['new.jpg'], 2))
 
-    def test_write_merges_backs_up_and_lists_added(self):
-        self.write('LOT5_GOOD.txt', 'b.jpg\n')
+    def test_latest_round_wins(self):
+        for n, when, kinds in ((1, '20261001_0900', ('GOOD', 'REJECT')), (9, '20261002_0900', ('GOOD', 'REJECT')),
+                               (10, '20261003_0900', ('추가GOOD', 'GOOD', 'REJECT')), (11, '20261004_0900', ('GOOD',))):
+            for kind in kinds:
+                self.write('LOT5_%d차리뷰_%s_%s.txt' % (n, when, kind), '%d-%s.jpg\n' % (n, kind))
+        self.write('LOT5_GOOD.txt', 'old.jpg\n')  # v4 files are ignored once rounds exist
+        self.write('OTHER_12차리뷰_20261005_0900_GOOD.txt', 'x.jpg\n')  # another photo folder's result
+        latest = engine.read_results(self.out, self.folder)
+        self.assertEqual((latest['round'], latest['good'], latest['time']), (10, ['10-GOOD.jpg'], '2026-10-03 09:00'))
+        self.assertEqual(engine.last_round(self.out, self.folder), 11)  # 11 is incomplete: not a result, but the number is taken
+
+    def test_extra_review_writes_three_files_and_never_touches_earlier_ones(self):
+        self.write('LOT5_GOOD.txt', 'b.jpg\n')  # v4 result
         self.write('LOT5_REJECT.txt', 'a.jpg\nc.jpg\nd.jpg\n')
+        legacy = {n: Path(self.out, n).read_bytes() for n in os.listdir(self.out)}
         results = engine.read_results(self.out, self.folder)
         names = ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg']
         base, targets, _, _ = engine.plan_extra(names, results)
-        result = engine.write_extra_outputs(self.out, self.folder, names, base, targets, {2}, results['stamp'])
+        kw = dict(base_good=base, base_key=results['key'], min_round=results['round'] + 1)
+        result = engine.save_round(self.out, self.folder, names, ['d.jpg'], **kw)
         self.assertTrue(result['ok'])
-        self.assertEqual((result['good_count'], result['reject_count'], result['added_count'], result['base_count']), (2, 2, 1, 1))
-        self.assertEqual(Path(self.out, 'LOT5_GOOD.txt').read_bytes(), b'b.jpg\r\nd.jpg\r\n')
-        self.assertEqual(Path(self.out, 'LOT5_REJECT.txt').read_bytes(), b'a.jpg\r\nc.jpg\r\n')
-        self.assertEqual(Path(result['added_path']).read_bytes(), b'd.jpg\r\n')
-        self.assertTrue(os.path.basename(result['added_path']).startswith('LOT5_GOOD_추가_'))
-        self.assertEqual(sorted(Path(p).read_bytes() for p in result['backups']), [b'a.jpg\r\nc.jpg\r\nd.jpg\r\n', b'b.jpg\r\n'])
-        self.assertEqual(sorted(os.path.basename(p).rsplit('_', 2)[0] for p in result['backups']), ['LOT5_GOOD_이전', 'LOT5_REJECT_이전'])
-        # the result changed since the review started (old stamp): nothing written unless confirmed
-        again = engine.write_extra_outputs(self.out, self.folder, names, base, targets, {0}, results['stamp'])
-        self.assertEqual((again['ok'], again['changed']), (False, True))
-        self.assertEqual(Path(self.out, 'LOT5_GOOD.txt').read_bytes(), b'b.jpg\r\nd.jpg\r\n')
-        forced = engine.write_extra_outputs(self.out, self.folder, names, base, targets, {0}, results['stamp'], overwrite=True)
-        self.assertTrue(forced['ok'])
-        self.assertEqual(Path(self.out, 'LOT5_GOOD.txt').read_bytes(), b'a.jpg\r\nb.jpg\r\n')
-        self.assertEqual(len(set(os.listdir(self.out))), 2 + 3 * 2)  # same-minute backups / lists get _2, never overwritten
+        self.assertEqual((result['round'], result['good_count'], result['reject_count'], result['added_count'], result['base_count']),
+                         (2, 2, 2, 1, 1))
+        stem = 'LOT5_2차리뷰_%s_' % result['when']
+        self.assertEqual(Path(self.out, stem + '추가GOOD.txt').read_bytes(), b'd.jpg\r\n')
+        self.assertEqual(Path(self.out, stem + 'GOOD.txt').read_bytes(), b'b.jpg\r\nd.jpg\r\n')
+        self.assertEqual(Path(self.out, stem + 'REJECT.txt').read_bytes(), b'a.jpg\r\nc.jpg\r\n')
+        # saved again from the review screen with another pick: the same round is rewritten
+        again = engine.save_round(self.out, self.folder, names, ['a.jpg'], own=(2, result['when']), **kw)
+        self.assertEqual((again['round'], again['when']), (2, result['when']))
+        self.assertEqual(Path(self.out, stem + 'GOOD.txt').read_bytes(), b'a.jpg\r\nb.jpg\r\n')
+        self.assertEqual(Path(self.out, stem + '추가GOOD.txt').read_bytes(), b'a.jpg\r\n')
+        self.assertEqual(len(os.listdir(self.out)), 2 + 3)
+        self.assertEqual({n: Path(self.out, n).read_bytes() for n in legacy}, legacy)  # v4 files untouched
+        # meanwhile another PC saved round 3 (c.jpg added): nothing written unless merged
+        self.write('LOT5_3차리뷰_20991231_2359_GOOD.txt', 'b.jpg\nc.jpg\n')
+        self.write('LOT5_3차리뷰_20991231_2359_REJECT.txt', 'a.jpg\nd.jpg\n')
+        changed = engine.save_round(self.out, self.folder, names, ['a.jpg'], own=(2, result['when']), **kw)
+        self.assertEqual((changed['ok'], changed['changed'], changed['latest_round']), (False, True, 3))
+        merged = engine.save_round(self.out, self.folder, names, ['a.jpg'], own=(2, result['when']), merge_newer=True, **kw)
+        self.assertEqual((merged['round'], merged['merged'], merged['base']), (4, True, ['b.jpg', 'c.jpg']))
+        stem4 = 'LOT5_4차리뷰_%s_' % merged['when']
+        self.assertEqual(Path(self.out, stem4 + 'GOOD.txt').read_bytes(), b'a.jpg\r\nb.jpg\r\nc.jpg\r\n')
+        self.assertEqual(Path(self.out, stem4 + 'REJECT.txt').read_bytes(), b'd.jpg\r\n')
+        self.assertEqual(Path(self.out, stem4 + '추가GOOD.txt').read_bytes(), b'a.jpg\r\n')
+        self.assertEqual(Path(self.out, stem + 'GOOD.txt').read_bytes(), b'a.jpg\r\nb.jpg\r\n')  # round 2 kept as it was
 
     def test_extra_session_is_separate(self):
         normal = engine.Session(self.base, '/photos', '/out', ['a.jpg', 'b.jpg'])
@@ -492,8 +530,8 @@ class ServerTest(unittest.TestCase):
 
     def test_check_start_images_sync_save(self):
         status, checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})
-        self.assertEqual((checked['folder_ok'], checked['output_ok'], checked['existing']), (True, True, []))
-        self.assertEqual(checked['files'], [os.path.basename(self.photos) + '_GOOD.txt', os.path.basename(self.photos) + '_REJECT.txt'])
+        self.assertEqual((checked['folder_ok'], checked['output_ok'], checked['results']), (True, True, None))
+        self.assertEqual((checked['label'], checked['next_round']), (os.path.basename(self.photos), 1))
         self.assertFalse(self.api('check', {'folder': self.photos + '_nope', 'output_dir': ''})[1]['folder_ok'])
 
         state = self.start_job()
@@ -520,13 +558,19 @@ class ServerTest(unittest.TestCase):
         status, saved = self.api('save', {'job': job, 'good': [2, 4, 7]})
         self.assertTrue(saved['ok'])
         label = os.path.basename(self.photos)
-        self.assertEqual(Path(self.out, label + '_GOOD.txt').read_bytes(), b'IMG_2.jpg\r\nIMG_4.jpg\r\nIMG_7.jpg\r\n')
-        self.assertEqual(saved['reject_count'], 27)
+        self.assertEqual(os.path.basename(saved['good_path']), '%s_1차리뷰_%s_GOOD.txt' % (label, saved['when']))
+        self.assertEqual(Path(saved['good_path']).read_bytes(), b'IMG_2.jpg\r\nIMG_4.jpg\r\nIMG_7.jpg\r\n')
+        self.assertEqual((saved['round'], saved['reject_count'], saved['added_path']), (1, 27, None))
+        self.assertNotIn('base', saved)
         self.assertTrue(self.controller.can_open(saved['good_path']))
         self.assertFalse(self.controller.can_open(os.path.join(self.photos, 'IMG_1.jpg')))
-        self.assertEqual(self.api('save', {'job': job, 'good': [2]})[1]['conflict'], [label + '_GOOD.txt', label + '_REJECT.txt'])
-        self.assertTrue(self.api('save', {'job': job, 'good': [2], 'overwrite': True})[1]['ok'])
+        again = self.api('save', {'job': job, 'good': [2]})[1]  # same review saved again: same round rewritten
+        self.assertEqual((again['ok'], again['round'], again['good_path']), (True, 1, saved['good_path']))
+        self.assertEqual(Path(saved['good_path']).read_bytes(), b'IMG_2.jpg\r\n')
+        self.assertEqual(len(os.listdir(self.out)), 2)
         self.assertEqual(engine.read_session(self.base, self.photos)['saved']['good'], 1)
+        checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]
+        self.assertEqual((checked['results']['round'], checked['results']['good'], checked['next_round']), (1, 1, 2))
 
         home = self.api('home')[1]
         self.assertEqual((home['output_dir'], home['recent'][0]['folder'], home['recent'][0]['summary']['good']), (self.out, self.photos, 1))
@@ -552,6 +596,7 @@ class ServerTest(unittest.TestCase):
         Image.new('RGB', (64, 48)).save(os.path.join(self.photos, 'IMG_30.jpg'))
         checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]
         self.assertEqual((checked['results']['good'], checked['results']['reject'], checked['extra_session']), (2, 28, None))
+        self.assertEqual((checked['results']['round'], checked['next_round']), (1, 2))
 
         self.api('start', {'folder': self.photos, 'output_dir': self.out, 'resume': True, 'mode': 'extra'})
         self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
@@ -562,6 +607,7 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn('IMG_1.jpg', state['names'])
         self.assertEqual(state['names'][state['extra']['fresh'][0]], 'IMG_30.jpg')
         self.assertEqual((state['extra']['base_good'], state['extra']['missing'], state['extra']['total']), (2, 1, 30))
+        self.assertEqual((state['round'], state['extra']['results_round']), (2, 1))
         target = state['names'].index('IMG_7.jpg')
         response, body = self.request('GET', '/%s/img/%s/%d' % (self.web.token, job, target), raw=True)
         self.assertEqual(body, Path(self.photos, 'IMG_7.jpg').read_bytes())
@@ -576,12 +622,16 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((state['good'], state['cursor']), ([target], target))
         status, saved = self.api('save', {'job': state['job'], 'good': state['good']})
         self.assertTrue(saved['ok'])
-        self.assertEqual(Path(self.out, label + '_GOOD.txt').read_bytes(), b'IMG_1.jpg\r\nIMG_3.jpg\r\nIMG_7.jpg\r\n')
-        self.assertEqual((saved['reject_count'], saved['added_count'], len(saved['backups'])), (27, 1, 2))
+        self.assertEqual(saved['round'], 2)
+        self.assertEqual(Path(saved['good_path']).read_bytes(), b'IMG_1.jpg\r\nIMG_3.jpg\r\nIMG_7.jpg\r\n')
+        self.assertEqual(Path(saved['added_path']).read_bytes(), b'IMG_7.jpg\r\n')
+        self.assertEqual(os.path.basename(saved['added_path']), '%s_2차리뷰_%s_추가GOOD.txt' % (label, saved['when']))
+        self.assertEqual((saved['reject_count'], saved['added_count'], saved['base_count']), (27, 1, 2))
         self.assertTrue(self.controller.can_open(saved['added_path']))
-        self.assertTrue(self.api('save', {'job': state['job'], 'good': state['good']})[1]['ok'])  # saving again is fine
+        self.assertEqual(self.api('save', {'job': state['job'], 'good': state['good']})[1]['round'], 2)  # saving again: same round
+        self.assertEqual(len(os.listdir(self.out)), 2 + 3)  # round 1 (2 files) + round 2 (3 files)
         checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]
-        self.assertEqual((checked['results']['good'], checked['extra_session']), (3, None))  # saved: next review starts over
+        self.assertEqual((checked['results']['round'], checked['results']['good'], checked['extra_session']), (2, 3, None))
 
     def test_empty_folder(self):
         empty = tempfile.mkdtemp()
