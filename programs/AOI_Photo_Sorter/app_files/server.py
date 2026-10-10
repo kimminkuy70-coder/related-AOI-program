@@ -54,8 +54,9 @@ class Job:
 class Controller:
     """Everything the page can do. Called from the HTTP handler threads."""
 
-    def __init__(self, base_dir, reader=engine.read_file):
+    def __init__(self, base_dir, reader=engine.read_file, probe=None):
         self.base_dir = str(base_dir)
+        self._probe = probe  # tests: stand-in for checking that the network folder answers
         os.makedirs(self.base_dir, exist_ok=True)
         self.settings = engine.Settings(os.path.join(self.base_dir, 'settings.json'))
         self._reader = reader
@@ -142,7 +143,8 @@ class Controller:
             previous = engine.read_session(self.base_dir, job.folder) if resume else None
             session = engine.Session(self.base_dir, job.folder, job.output_dir, names, previous)
             cfg = self.settings.tuned()
-            cache = engine.ImageCache(job.folder, names, sizes, cfg, reader=self._reader, cursor=session.cursor)
+            cache = engine.ImageCache(job.folder, names, sizes, cfg, reader=self._reader, cursor=session.cursor,
+                                      probe=self._probe)
             with self._lock:
                 if job.cancel.is_set():
                     cache.close()
@@ -186,9 +188,11 @@ class Controller:
     def thumbnail(self, job_id, index):
         return self._current(job_id).thumbs.get(index), 'image/jpeg'
 
-    def retry(self, job_id, index):
-        self._current(job_id).cache.retry(index)
-        return {'ok': True}
+    def refresh(self, job_id):
+        """F5 on the screen: reconnect and read every failed photo again."""
+        cache = self._current(job_id).cache
+        cache.refresh()
+        return {'ok': True, 'stats': cache.stats()}
 
     def save(self, payload):
         job = self._current(payload.get('job'))
@@ -316,7 +320,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self._text(404, 'not found')
         except engine.ReadError as exc:
-            self._text(503, str(exc))
+            # the page tells a dead network folder (reloads by itself) from a bad file
+            self._send(503, str(exc).encode('utf-8'), 'text/plain; charset=utf-8',
+                       (('X-Photo-Error', 'offline' if exc.offline else 'read'),))
         except (LookupError, ValueError) as exc:
             self._text(404, str(exc))
         except Exception as exc:
@@ -340,8 +346,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(controller.start(payload.get('folder'), payload.get('output_dir'), payload.get('resume')))
             elif name == 'sync':
                 self._json(controller.sync(payload))
-            elif name == 'retry':
-                self._json(controller.retry(payload.get('job'), int(payload.get('index', -1))))
+            elif name == 'refresh':
+                self._json(controller.refresh(payload.get('job')))
             elif name == 'save':
                 self._json(controller.save(payload))
             elif name == 'new':
