@@ -13,6 +13,8 @@
 //    Space never marks the photo that just appeared; auto-repeat of Space is ignored,
 //    arrow auto-repeat too unless arrow_repeat;
 //  - keys are read by physical position (event.code): Korean IME / CapsLock do not matter.
+// Network folder outages: Python reports offline/stalled and an epoch that grows whenever
+// failures are forgotten (reconnect, F5). A new epoch reloads every failed photo here.
 
 const $ = id => document.getElementById(id);
 const fmt = n => Number(n || 0).toLocaleString('ko-KR');
@@ -42,6 +44,7 @@ function show(name) {
   if (document.activeElement && document.activeElement !== document.body && name !== 'start') document.activeElement.blur();
   if (name === 'sort') resize();
   if (name === 'review') { renderReview(); renderGrid(true); }
+  renderNet();
 }
 
 let modal = null;
@@ -176,7 +179,7 @@ const S = {
   job: null, names: [], n: 0, good: new Uint8Array(0), seen: new Uint8Array(0), failed: new Uint8Array(0),
   goodCount: 0, seenCount: 0, folder: '', output: '', files: ['', ''],
   list: null, listName: '', pos: 0, allPos: 0, painted: -1, drawToken: 0,
-  paintedAt: 0, lastMoveAt: 0, last: '', note: '', noteTimer: null, zoom: null,
+  paintedAt: 0, lastMoveAt: 0, last: '', note: '', noteTimer: null, zoom: null, epoch: 0,
 };
 const trace = [];  // recent accepted/ignored inputs and paints (also read by the E2E test)
 function record(entry) { entry.t = now(); trace.push(entry); if (trace.length > 20000) trace.splice(0, 5000); }
@@ -198,6 +201,7 @@ function beginSort(s) {
   S.list = null; S.listName = ''; S.pos = Math.min(Math.max(0, s.cursor || 0), S.n - 1); S.allPos = S.pos;
   S.painted = -1; S.zoom = null; S.last = '';
   syncSeq = s.seq || 0; pendingGood.clear(); pendingSeen.clear(); lastStats = s.stats || null;
+  S.epoch = lastStats ? lastStats.epoch : 0;
   R.items = null;
   $('hFolder').textContent = labelOf(S.folder);
   $('hOut').textContent = '저장: ' + S.output;
@@ -263,7 +267,9 @@ async function load(i) {
   try {
     const r = await fetch(`img/${S.job}/${i}`, {signal: e.ctrl.signal, cache: 'no-store'});
     if (!r.ok) {
-      e.state = 'error'; e.kind = 'read'; e.msg = (await r.text()) || ('HTTP ' + r.status);
+      e.state = 'error';
+      e.kind = r.headers.get('X-Photo-Error') === 'offline' ? 'offline' : 'read';
+      e.msg = (await r.text()) || ('HTTP ' + r.status);
     } else {
       const blob = await r.blob();
       try {
@@ -345,7 +351,9 @@ function present(keyT) {
   }
   if (e.state === 'error') {
     draw(null);
-    setCard(e.kind === 'read' ? '읽기 실패' : '표시할 수 없는 사진', e.msg + (e.kind === 'read' ? '\nR: 다시 시도' : ''), true);
+    if (e.kind === 'offline') setCard('네트워크 폴더 연결 끊김', S.names[i] + '\n연결되면 자동으로 다시 불러옵니다. F5: 지금 다시 시도', true);
+    else if (e.kind === 'read') setCard('읽기 실패', e.msg + '\nF5 (또는 R): 새로고침', true);
+    else setCard('표시할 수 없는 사진', e.msg, true);
   } else {
     $('card').classList.add('hidden');
     draw(e);
@@ -359,7 +367,7 @@ function present(keyT) {
     if (e.state === 'ready') {
       if (!S.seen[i]) { S.seen[i] = 1; S.seenCount++; pendingSeen.add(i); scheduleSync(); }
       S.failed[i] = 0;
-    } else if (e.kind === 'read') {
+    } else if (e.kind === 'read' || e.kind === 'offline') {
       S.failed[i] = 1;
     }
     hud();
@@ -405,7 +413,53 @@ function renderHud() {
     const need = Math.min(20, remain);
     dot += lastStats.ready_ahead >= need ? ' green' : lastStats.ready_ahead >= Math.min(3, remain) ? ' yellow' : ' red';
   }
+  if (lastStats && (lastStats.offline || lastStats.stalled)) dot = lastStats.offline ? 'dot red' : 'dot yellow';
   put('hDot', 'class', dot);
+}
+
+// ------------------------------------------------------------------ network folder state
+function applyStats(st) {
+  if (!st) return;
+  lastStats = st;
+  if (st.epoch !== S.epoch) { S.epoch = st.epoch; reloadFailed(); }
+  renderNet();
+  hud();
+}
+
+// After a reconnect or F5: photos that failed are fetched again, the one on screen first.
+function reloadFailed() {
+  let current = false;
+  for (const [i, e] of [...buf]) {
+    if (e.state !== 'error') continue;
+    drop(i, e);
+    if (i === cur()) current = true;
+  }
+  if (page === 'sort' && current) present();
+  pump();
+  if (page === 'review') { R.cells.forEach(el => el.remove()); R.cells.clear(); renderGrid(false); }
+}
+
+function renderNet() {
+  const st = lastStats;
+  const on = !!(st && S.job && (page === 'sort' || page === 'review') && (st.offline || st.stalled));
+  put('net', 'class', !on ? 'netbar hidden' : st.offline ? 'netbar off' : 'netbar slow');
+  put('net', 'text', !on ? '' : st.offline ? '네트워크 폴더 연결 끊김 — 연결되면 자동으로 이어집니다 (F5: 지금 다시 시도)'
+    : '네트워크 폴더 응답 대기 중…');
+}
+
+let refreshing = false;
+async function refreshNow() {
+  if (!S.job || refreshing) return;
+  refreshing = true;
+  note('새로고침: 네트워크 폴더에 다시 연결합니다…');
+  try {
+    const r = await api('refresh', {job: S.job});
+    if (r.ok) applyStats(r.stats);
+  } catch (err) {
+    note('새로고침 실패: ' + (err.message || err));
+  } finally {
+    refreshing = false;
+  }
 }
 
 function note(text, ms = 1500) {
@@ -486,15 +540,6 @@ function toggle(i) {
   record({type: 'toggle', i, value: S.good[i], painted: S.painted});
 }
 
-async function retryCurrent() {
-  const i = cur(), e = buf.get(i);
-  if (!e || e.state !== 'error' || e.kind !== 'read') return;
-  await api('retry', {job: S.job, index: i});
-  drop(i, e);
-  present();
-  pump();
-}
-
 // ---- zoom: F toggles 100% / fit, wheel zooms at the pointer, drag pans
 async function ensureFull(e) {
   if (!e.reduced || e.full || e.loadingFull) return;
@@ -567,15 +612,17 @@ function leaveList() {
 }
 
 async function openMenu() {
+  const refresh = {label: '새로고침 (F5)', value: 'refresh', keys: ['F5']};
   const buttons = S.list
-    ? [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '계속 (Esc)', value: 'stay', keys: ['Escape']}]
-    : [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true},
+    ? [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true}, refresh, {label: '계속 (Esc)', value: 'stay', keys: ['Escape']}]
+    : [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true}, refresh,
        {label: '처음 화면으로', value: 'home'}, {label: '계속 (Esc)', value: 'stay', keys: ['Escape']}];
   const text = S.list ? `${S.listName}: ${fmt(S.pos + 1)} / ${fmt(len())}`
     : `확인 ${fmt(S.seenCount)} / ${fmt(S.n)} · GOOD ${fmt(S.goodCount)}\n진행 상황은 자동 저장됩니다.`;
   const a = await ask('메뉴', text, buttons);
   if (a === 'review') { const keep = !!S.list; if (S.list) leaveList(); openReview(keep); }
   else if (a === 'home') { await flushSync(); await api('new', {}); S.job = null; dropAll(); show('start'); loadHome(); }
+  else if (a === 'refresh') refreshNow();
 }
 
 // ------------------------------------------------------------------ sync with Python (batched)
@@ -597,7 +644,7 @@ async function doSync() {
   const job = S.job;
   try {
     const r = await api('sync', {job, seq: ++syncSeq, cursor: S.list ? cur() : S.pos, good, seen});
-    if (r.ok) { lastStats = r.stats; hud(); }
+    if (r.ok) applyStats(r.stats);
     else if (r.status !== 409) throw new Error(r.error || 'sync failed');
   } catch (err) {
     if (S.job === job) {  // put the batch back (newer values win), retry soon
@@ -619,7 +666,8 @@ async function flushSync() {
   }
   return false;
 }
-setInterval(() => { if (page === 'sort' && S.job && !S.list) cursorChanged(); }, 1000);  // refresh the prefetch dot
+// once a second: prefetch dot, network folder state (offline / back again)
+setInterval(() => { if (S.job && (page === 'sort' || page === 'review')) cursorChanged(); }, 1000);
 
 // ------------------------------------------------------------------ review
 const R = {items: null, sel: 0, cols: 1, cells: new Map()};
@@ -698,6 +746,7 @@ function reviewKey(e) {
   if (e.ctrlKey && c === 'KeyS') { e.preventDefault(); if (!e.repeat) save(); return; }
   if (['Space', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'NumpadEnter', 'Escape', 'Home', 'End', 'PageUp', 'PageDown'].includes(c)) e.preventDefault();
   if (c === 'Escape') { if (!e.repeat) { S.list = null; show('sort'); present(); pump(); } return; }
+  if (c === 'KeyR') { if (!e.repeat) refreshNow(); return; }
   if (!R.items.length) return;
   const last = R.items.length - 1;
   const moves = {ArrowRight: 1, ArrowLeft: -1, ArrowDown: R.cols, ArrowUp: -R.cols, PageDown: R.cols * 3, PageUp: -R.cols * 3};
@@ -767,7 +816,7 @@ function sortKey(e) {
     case 'Home': if (!e.repeat) jump(0); break;
     case 'End': if (!e.repeat) jump(workPos()); break;
     case 'KeyF': if (!e.repeat) toggleZoom(); break;
-    case 'KeyR': if (!e.repeat) retryCurrent(); break;
+    case 'KeyR': if (!e.repeat) refreshNow(); break;
     case 'Enter': case 'NumpadEnter':
       if (!e.repeat && !S.list && S.pos === len() - 1 && S.painted === cur()) openReview(false);
       break;
@@ -777,7 +826,13 @@ function sortKey(e) {
 
 window.addEventListener('keydown', e => {
   if (modal) { modalKey(e); return; }
-  if (e.code === 'F5' || (e.ctrlKey && e.code === 'KeyR')) { e.preventDefault(); return; }  // a reload would drop the screen state
+  if (e.code === 'F5' || (e.ctrlKey && e.code === 'KeyR')) {  // 새로고침: reconnect, never a page reload
+    e.preventDefault();
+    if (e.repeat) return;
+    if (page === 'sort' || page === 'review') refreshNow();
+    else if (page === 'start') scheduleCheck();
+    return;
+  }
   if (page === 'sort') sortKey(e);
   else if (page === 'review') reviewKey(e);
   else if (page === 'start') {

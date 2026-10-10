@@ -8,6 +8,7 @@ Playwright with a Chromium build, otherwise skipped:
     AOI_TOOLS_HOME=/tmp/aoi_test python -m unittest tests.e2e_photo_sorter -v
 """
 import importlib
+import json
 import os
 import random
 import shutil
@@ -55,22 +56,42 @@ def index_of(rgb):
 
 
 class SlowShare:
-    """Network share stand-in: latency per file, and gates that hold chosen files back."""
+    """Network share stand-in: latency per file, gates that hold chosen files back,
+    an outage switch (reads and the folder probe fail) and per-file read failures."""
 
     def __init__(self, latency):
         self.latency = latency
         self.gates = {}
+        self.online = True
+        self.fail = set()
 
     def __call__(self, path):
         gate = self.gates.get(os.path.basename(path))
         if gate is not None:
             gate.wait(30)
         time.sleep(self.latency)
+        if not self.online:
+            raise OSError(64, 'The specified network name is no longer available')
+        if os.path.basename(path) in self.fail:
+            raise OSError(5, 'Access is denied')
         with open(path, 'rb') as handle:
             return handle.read()
 
+    def probe(self):
+        if not self.online:
+            raise OSError(64, 'The specified network name is no longer available')
+
 
 CUR = 'window.__sorter.current()'
+
+
+def wait(predicate, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
 
 
 @unittest.skipIf(sync_playwright is None, 'playwright / Pillow not installed')
@@ -95,10 +116,11 @@ class RapidInputTest(unittest.TestCase):
         self.out = tempfile.mkdtemp()
         self.base = tempfile.mkdtemp()
         self.share = SlowShare(0.015)
-        self.controller = server.Controller(self.base, reader=self.share)
+        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe)
         self.web = server.Server(self.controller, runtime.inline_ui(APP_DIR / 'ui'))
         self.page = self.browser.new_page(viewport={'width': 1400, 'height': 900})
         self.errors = []
+        self.allow_503 = False  # outage tests: failed photo requests are expected
         self.page.on('pageerror', lambda exc: self.errors.append(str(exc)))
         self.page.on('console', lambda msg: self.errors.append(msg.text) if msg.type == 'error' else None)
 
@@ -108,9 +130,23 @@ class RapidInputTest(unittest.TestCase):
         self.controller.close()
         for gate in self.share.gates.values():
             gate.set()
+        self.share.online = True
         shutil.rmtree(self.out, ignore_errors=True)
         shutil.rmtree(self.base, ignore_errors=True)
+        if self.allow_503:
+            self.errors = [e for e in self.errors if 'status of 503' not in e]
         self.assertEqual(self.errors, [])
+
+    def small_window(self, **settings):
+        """Restart the Python side with a small read-ahead window (settings.json)."""
+        self.web.close()
+        self.controller.close()
+        Path(self.base, 'settings.json').write_text(json.dumps(settings), encoding='utf-8')
+        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe)
+        self.web = server.Server(self.controller, runtime.inline_ui(APP_DIR / 'ui'))
+
+    def card(self):
+        return self.page.inner_text('#card') if self.page.is_visible('#card') else ''
 
     # helpers
     def start(self, folder=None):
@@ -308,6 +344,8 @@ class RapidInputTest(unittest.TestCase):
         time.sleep(0.3)
         self.assertEqual((self.js(CUR), self.js('window.__sorter.S.painted')), (3, -1))
         self.assertIn('불러오는 중', self.page.inner_text('#card'))
+        # a read that hangs (a dead Windows share does that) is reported after a few seconds
+        self.page.wait_for_function("document.getElementById('net').textContent.includes('응답 대기')", timeout=15000)
         gate.set()
         self.wait_painted()
         self.assertEqual(self.js(CUR), 3)  # the dropped → presses were not replayed
@@ -315,6 +353,69 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(self.ui_good(), set())  # the early Space did not mark it
         reasons = [(t['key'], t['reason']) for t in self.trace() if t['type'] == 'ignored']
         self.assertEqual(reasons, [('space', 'not-painted'), ('right', 'not-painted'), ('right', 'not-painted')])
+        self.page.wait_for_function("document.getElementById('net').classList.contains('hidden')")
+
+    def test_network_outage_recovers_by_itself(self):
+        """The network folder drops mid-session: photos already read keep coming, the rest
+        show "연결 끊김" at once, and when the folder is back everything continues without
+        any key press. Photos skipped during the outage stay unseen (End finds them)."""
+        self.allow_503 = True
+        self.small_window(ahead_count=30, behind_count=10)
+        self.start()
+        self.assertTrue(wait(lambda: self.controller.state()['stats']['ready_ahead'] == 30))
+        self.share.online = False
+        page, keyboard = self.page, self.page.keyboard
+        for _ in range(30):  # the read-ahead photos still show
+            keyboard.press('ArrowRight')
+            self.wait_painted()
+            self.assertEqual((self.card(), self.shown_index()), ('', self.js(CUR)))
+        keyboard.press('ArrowRight')  # photo 31 was never read
+        page.wait_for_function("document.getElementById('cardTitle').textContent === '네트워크 폴더 연결 끊김'", timeout=15000)
+        page.wait_for_function("document.getElementById('net').textContent.includes('연결 끊김')")
+        for _ in range(3):  # further photos fail at once (no long wait)
+            started = time.monotonic()
+            keyboard.press('ArrowRight')
+            self.wait_painted()
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertIn('연결 끊김', self.card())
+        self.assertEqual(self.js(CUR), 34)
+        self.share.online = True  # the folder is back: no key press from here on
+        page.wait_for_function("window.__sorter.S.painted === window.__sorter.current() && "
+                               "document.getElementById('card').classList.contains('hidden')", timeout=10000)
+        self.assertEqual(self.shown_index(), 34)
+        page.wait_for_function("document.getElementById('net').classList.contains('hidden')")
+        for _ in range(10):
+            keyboard.press('ArrowRight')
+            self.wait_painted()
+            self.assertEqual((self.card(), self.shown_index()), ('', self.js(CUR)))
+        keyboard.press('End')  # first photo never seen: 31, skipped during the outage
+        self.wait_painted()
+        self.assertEqual((self.js(CUR), self.card(), self.shown_index()), (31, '', 31))
+        self.assertEqual(self.controller.state()['stats']['errors'], 0)
+
+    def test_refresh_key_reloads_failed_photos(self):
+        """Some files fail while the folder itself answers (not an outage): they stay
+        failed until F5, which reads them again."""
+        self.allow_503 = True
+        self.small_window(ahead_count=30, behind_count=10)
+        self.share.fail = {'IMG_%04d.jpg' % i for i in range(5, 15)}
+        self.start()
+        page, keyboard = self.page, self.page.keyboard
+        for _ in range(5):
+            keyboard.press('ArrowRight')
+            self.wait_painted()
+        self.assertIn('읽기 실패', self.card())
+        self.share.fail = set()
+        time.sleep(3)
+        self.assertIn('읽기 실패', self.card())  # a file error is not retried by itself
+        keyboard.press('F5')
+        page.wait_for_function("window.__sorter.S.painted === window.__sorter.current() && "
+                               "document.getElementById('card').classList.contains('hidden')", timeout=10000)
+        self.assertEqual(self.shown_index(), 5)
+        for _ in range(10):
+            keyboard.press('ArrowRight')
+            self.wait_painted()
+            self.assertEqual((self.card(), self.shown_index()), ('', self.js(CUR)))
 
     def test_review_and_resume_after_restart(self):
         self.start()
@@ -337,7 +438,7 @@ class RapidInputTest(unittest.TestCase):
         self.page.close()
         self.web.close()
         self.controller.close()
-        self.controller = server.Controller(self.base, reader=self.share)
+        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe)
         self.web = server.Server(self.controller, runtime.inline_ui(APP_DIR / 'ui'))
         self.page = self.browser.new_page(viewport={'width': 1400, 'height': 900})
         self.page.goto(self.web.url)

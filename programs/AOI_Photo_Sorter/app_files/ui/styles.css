@@ -87,6 +87,11 @@ h2{margin:0}h3{margin:26px 0 8px;font-size:14px;color:var(--muted)}
 .rfoot{display:flex;align-items:center;gap:14px;padding:12px 18px;border-top:1px solid var(--line);background:#0f172a;flex:none}
 .dest{color:var(--muted);max-width:55vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* network folder state: fixed overlay, no layout change */
+.netbar{position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:5;padding:8px 18px;border-radius:8px;font-weight:700;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.45);white-space:nowrap}
+.netbar.off{background:#7f1d1d;color:#fecaca}
+.netbar.slow{background:#3b2f0b;color:#fde68a}
+
 /* modal */
 .modal{position:fixed;inset:0;background:rgba(2,6,15,.72);display:flex;align-items:center;justify-content:center;z-index:10}
 .modal .box{width:min(560px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px}

@@ -232,7 +232,16 @@ def scan(folder, progress=None, cancel=None, exts=IMAGE_EXTS):
 # ---------------------------------------------------------------- image cache
 
 class ReadError(Exception):
-    pass
+    """A photo could not be read. offline: the network folder itself is unreachable
+    (the photo will be read again by itself once the connection is back)."""
+
+    def __init__(self, message, offline=False):
+        super().__init__(message)
+        self.offline = offline
+
+
+class _ShareReadError(ReadError):
+    """Reading the file failed (not a decode problem): the folder may be gone."""
 
 
 def read_file(path):
@@ -272,10 +281,18 @@ class ImageCache:
     Everything outside the window is dropped, so memory stays flat over 10,000 photos.
     A photo asked for outside the window (review screen, sub-list browsing) jumps the
     queue as "urgent".
+
+    Network folder outages: when a read fails, the folder itself is probed. If the
+    folder is unreachable the cache goes offline instead of marking photos as failed:
+    prefetching pauses, requests for photos not in RAM fail at once, and a monitor
+    probes the folder every probe_interval seconds. When it answers again, every
+    failure is forgotten and reading resumes by itself. refresh() does the same on
+    demand (F5). epoch counts these resets so the screen knows to reload failed photos.
     """
     URGENT_MAX = 16
 
-    def __init__(self, folder, names, sizes, cfg, reader=read_file, cursor=0):
+    def __init__(self, folder, names, sizes, cfg, reader=read_file, cursor=0, probe=None,
+                 probe_interval=2.0, stall_seconds=5.0):
         self._paths = [os.path.join(folder, name) for name in names]
         self._exts = [os.path.splitext(name)[1].lower() for name in names]
         self._sizes = list(sizes)
@@ -292,6 +309,13 @@ class ImageCache:
         self._window = set()
         self._ahead = []
         self._closed = False
+        self._probe = probe or functools.partial(os.stat, folder)  # raises OSError when the folder is gone
+        self._probe_interval = probe_interval
+        self._stall_seconds = stall_seconds
+        self._offline = False
+        self._epoch = 0
+        self._started = {}  # index -> start time of a read in flight (stalled share detection)
+        self._stop = threading.Event()
         self.read_counts = [0] * self._n  # network reads per photo (tests: each photo read once)
         self._plan()
         self._threads = []
@@ -299,6 +323,7 @@ class ImageCache:
             thread = threading.Thread(target=self._work, name='photo-reader-%d' % number, daemon=True)
             thread.start()
             self._threads.append(thread)
+        threading.Thread(target=self._watch, name='share-monitor', daemon=True).start()
 
     def __len__(self):
         return self._n
@@ -359,6 +384,8 @@ class ImageCache:
                     raise ReadError(self._errors[index])
                 if self._closed:
                     raise ReadError('작업이 종료되었습니다.')
+                if self._offline:  # do not keep the screen waiting on a dead share
+                    raise ReadError('네트워크 폴더 연결이 끊겼습니다.', offline=True)
                 if index not in self._window:
                     if index in self._urgent:
                         self._urgent.remove(index)
@@ -375,10 +402,11 @@ class ImageCache:
         with self._cond:
             return self._data.get(index)
 
-    def retry(self, index):
+    def refresh(self):
+        """F5: forget every failure and the offline state, read again now."""
         with self._cond:
-            self._errors.pop(index, None)
-            self._cond.notify_all()
+            self._offline = False
+            self._reset()
 
     def stats(self):
         with self._cond:
@@ -387,15 +415,39 @@ class ImageCache:
                 if i not in self._data:
                     break
                 ready += 1
+            oldest = min(self._started.values(), default=None)
             return {'cursor': self._cursor, 'ready_ahead': ready, 'ahead_target': len(self._ahead),
                     'cached': len(self._data), 'cached_bytes': sum(len(v[0]) for v in self._data.values()),
-                    'errors': len(self._errors)}
+                    'errors': len(self._errors), 'offline': self._offline, 'epoch': self._epoch,
+                    'stalled': oldest is not None and time.monotonic() - oldest > self._stall_seconds}
 
     def close(self):
+        self._stop.set()
         with self._cond:
             self._closed = True
             self._data.clear()
             self._cond.notify_all()
+
+    # network folder state
+    def _reset(self):  # lock held
+        self._errors.clear()
+        self._epoch += 1
+        self._cond.notify_all()
+
+    def _share_ok(self):
+        try:
+            self._probe()
+            return True
+        except OSError:
+            return False
+
+    def _watch(self):
+        while not self._stop.wait(self._probe_interval):
+            if self._offline and self._share_ok():
+                with self._cond:
+                    if self._offline:
+                        self._offline = False
+                        self._reset()
 
     # workers
     def _load(self, index):
@@ -413,7 +465,7 @@ class ImageCache:
             except OSError as exc:
                 last = exc
         else:
-            raise ReadError('읽기 실패: %s' % (getattr(last, 'strerror', None) or last))
+            raise _ShareReadError('읽기 실패: %s' % (getattr(last, 'strerror', None) or last))
         ext = self._exts[index]
         if ext in CONVERT_EXTS:
             try:
@@ -425,24 +477,33 @@ class ImageCache:
     def _work(self):
         while True:
             with self._cond:
-                while not self._closed and self._next() is None:
+                while not self._closed and (self._offline or self._next() is None):
                     self._cond.wait()
                 if self._closed:
                     return
                 index = self._next()
                 self._inflight.add(index)
+                self._started[index] = time.monotonic()
+            offline = False
             try:
                 result, error = self._load(index), None
+            except _ShareReadError as exc:
+                result, error = None, str(exc)
+                offline = not self._share_ok()  # the whole folder gone, or only this file?
             except ReadError as exc:
                 result, error = None, str(exc)
             except Exception as exc:  # never let a worker die
                 result, error = None, '읽기 실패: %s' % exc
             with self._cond:
                 self._inflight.discard(index)
-                if error is not None:
-                    if not self._closed:
-                        self._errors[index] = error
-                elif index in self._window and not self._closed:
+                self._started.pop(index, None)
+                if self._closed:
+                    pass
+                elif offline:
+                    self._offline = True  # not a failure of this photo: read again after reconnect
+                elif error is not None:
+                    self._errors[index] = error
+                elif index in self._window:
                     self._data[index] = result
                 self._cond.notify_all()
 

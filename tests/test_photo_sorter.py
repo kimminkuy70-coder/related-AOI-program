@@ -75,6 +75,20 @@ class FakeReader:
                 self.active -= 1
 
 
+class Share(FakeReader):
+    """FakeReader whose whole folder can go away: reads and the folder probe both fail."""
+    online = True
+
+    def __call__(self, path):
+        if not self.online:
+            raise OSError(64, 'The specified network name is no longer available')
+        return super().__call__(path)
+
+    def probe(self):
+        if not self.online:
+            raise OSError(64, 'The specified network name is no longer available')
+
+
 def wait_until(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -116,7 +130,8 @@ class CacheTest(unittest.TestCase):
     def make(self, n=300, sizes=None, reader=None, **overrides):
         names = ['%04d.jpg' % i for i in range(n)]
         reader = reader or FakeReader()
-        cache = engine.ImageCache('/share', names, sizes or [100] * n, cfg(**overrides), reader=reader)
+        # '/share' does not exist here: the folder probe says it is reachable
+        cache = engine.ImageCache('/share', names, sizes or [100] * n, cfg(**overrides), reader=reader, probe=lambda: None)
         self.addCleanup(cache.close)
         return cache, reader
 
@@ -152,15 +167,72 @@ class CacheTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 0.2)  # not behind the 200 queued photos
         self.assertEqual((data[:14], mime), (b'photo:0290.jpg', 'image/jpeg'))
 
-    def test_read_error_retry(self):
+    def test_file_error_is_kept_until_refresh(self):
+        """One unreadable file while the folder answers: a real failure of that photo."""
         reader = FakeReader(fail={'0003.jpg'})
         cache, _ = self.make(reader=reader)
-        with self.assertRaises(engine.ReadError):
+        with self.assertRaises(engine.ReadError) as caught:
             cache.get(3)
+        self.assertFalse(caught.exception.offline)
         self.assertEqual(cache.read_counts[3], 3)  # first try + 2 retries
+        self.assertFalse(cache.stats()['offline'])
         reader.fail.clear()
-        cache.retry(3)
+        epoch = cache.stats()['epoch']
+        cache.refresh()  # F5
         self.assertEqual(cache.get(3)[0][:14], b'photo:0003.jpg')
+        self.assertEqual(cache.stats()['epoch'], epoch + 1)
+
+    def test_network_outage_pauses_and_recovers_by_itself(self):
+        share = Share()
+        names = ['%04d.jpg' % i for i in range(300)]
+        cache = engine.ImageCache('/share', names, [100] * 300, cfg(ahead_count=20, behind_count=5), reader=share,
+                                  probe=share.probe, probe_interval=0.05)
+        self.addCleanup(cache.close)
+        self.assertTrue(wait_until(lambda: cache.stats()['ready_ahead'] == 20))
+        share.online = False
+        self.assertEqual(cache.get(10)[0][:14], b'photo:0010.jpg')  # still in RAM
+        cache.set_cursor(100)
+        self.assertTrue(wait_until(lambda: cache.stats()['offline'], 5))
+        started = time.monotonic()
+        with self.assertRaises(engine.ReadError) as caught:
+            cache.get(100)
+        self.assertTrue(caught.exception.offline)
+        self.assertLess(time.monotonic() - started, 0.05)  # fails at once, no 60 s wait
+        self.assertEqual(cache.stats()['errors'], 0)  # nothing is marked as a bad photo
+        calls = len(share.calls)
+        time.sleep(0.3)
+        self.assertEqual(len(share.calls), calls)  # prefetching paused: no hammering of a dead share
+        epoch = cache.stats()['epoch']
+        share.online = True
+        self.assertTrue(wait_until(lambda: not cache.stats()['offline'], 5))
+        self.assertEqual(cache.get(100)[0][:14], b'photo:0100.jpg')
+        self.assertTrue(wait_until(lambda: cache.stats()['ready_ahead'] == 20))
+        self.assertGreater(cache.stats()['epoch'], epoch)
+
+    def test_refresh_while_still_offline_goes_offline_again(self):
+        share = Share()
+        share.online = False
+        names = ['%04d.jpg' % i for i in range(50)]
+        cache = engine.ImageCache('/share', names, [100] * 50, cfg(), reader=share, probe=share.probe, probe_interval=60)
+        self.addCleanup(cache.close)
+        self.assertTrue(wait_until(lambda: cache.stats()['offline'], 5))
+        cache.refresh()
+        self.assertFalse(cache.stats()['offline'])
+        self.assertTrue(wait_until(lambda: cache.stats()['offline'], 5))
+
+    def test_stalled_read_is_reported(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+
+        def hanging(path):
+            gate.wait(10)
+            return b'x'
+        names = ['%04d.jpg' % i for i in range(5)]
+        cache = engine.ImageCache('/share', names, [1] * 5, cfg(), reader=hanging, stall_seconds=0.1)
+        self.addCleanup(cache.close)
+        self.assertTrue(wait_until(lambda: cache.stats()['stalled'], 3))
+        gate.set()
+        self.assertTrue(wait_until(lambda: not cache.stats()['stalled'] and cache.stats()['cached'] == 5, 3))
 
     def test_each_photo_read_once_while_paging(self):
         cache, reader = self.make(n=400, ahead_count=50, behind_count=10)
