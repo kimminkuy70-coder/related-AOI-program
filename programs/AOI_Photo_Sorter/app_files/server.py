@@ -34,7 +34,9 @@ class Job:
         self.base_good = []  # extra: GOOD in the previous result, kept as is
         self.fresh = []  # extra: indices into names of photos that came after the previous result
         self.missing = 0  # extra: names in the previous result that are no longer in the folder
-        self.stamp = None  # extra: the result files as they were when the review started
+        self.base_key = None  # extra: key of the result (n차리뷰) the review started from
+        self.base_round = 0  # extra: that round; full review: the last round so far (0: none)
+        self.own = None  # (n, when) of the round this review saved: saving again rewrites it
         self.results_time = ''
         self.phase = 'scanning'
         self.found = 0
@@ -116,13 +118,12 @@ class Controller:
         output_dir = (output_dir or '').strip()
         folder_ok, folder_msg = engine.check_folder(folder)
         output_ok, output_msg = engine.check_writable(output_dir)
-        good_name, reject_name = engine.output_names(folder) if folder else ('', '')
-        existing = engine.existing_outputs(output_dir, folder) if folder and output_ok else []
         session = engine.session_summary(engine.read_session(self.base_dir, folder)) if folder_ok else None
-        results = engine.results_summary(engine.read_results(output_dir, folder)) if existing else None
+        results = engine.results_summary(engine.read_results(output_dir, folder)) if folder and output_ok else None
+        last = engine.last_round(output_dir, folder) if folder and output_ok else 0
         extra = self._extra_session(folder) if folder_ok and results else None
         return {'folder_ok': folder_ok, 'folder_msg': folder_msg, 'output_ok': output_ok, 'output_msg': output_msg,
-                'files': [good_name, reject_name], 'existing': existing, 'session': session,
+                'label': engine.folder_label(folder) if folder else '', 'next_round': last + 1, 'session': session,
                 'results': results, 'extra_session': engine.session_summary(extra)}
 
     def _extra_session(self, folder):
@@ -139,7 +140,8 @@ class Controller:
         if not checked['folder_ok'] or not checked['output_ok']:
             return {'ok': False, 'error': checked['folder_msg'] or checked['output_msg']}
         if mode and not checked['results']:
-            return {'ok': False, 'error': '저장 위치에 이전 결과 파일(%s / %s)이 없습니다.' % tuple(checked['files'])}
+            return {'ok': False, 'error': '저장 위치에 이 폴더의 이전 결과 파일(%s_n차리뷰_…_GOOD.txt / _REJECT.txt)이 없습니다.'
+                    % checked['label']}
         job = Job(folder, output_dir, mode)
         with self._lock:
             if self._job is not None:
@@ -170,7 +172,7 @@ class Controller:
                     return
                 position = {name: i for i, name in enumerate(names)}
                 job.all_names, job.base_good, job.missing = names, base, missing
-                job.stamp, job.results_time = results['stamp'], results['time']
+                job.base_key, job.base_round, job.results_time = results['key'], results['round'], results['time']
                 names = targets
                 sizes = [sizes[position[name]] for name in targets]
                 fresh = set(fresh)
@@ -178,6 +180,11 @@ class Controller:
                 previous = self._extra_session(job.folder) if resume else None
             else:
                 previous = engine.read_session(self.base_dir, job.folder) if resume else None
+                job.all_names = names
+                job.base_round = engine.last_round(job.output_dir, job.folder)
+                saved = (previous or {}).get('saved') or {}
+                if saved.get('round') and saved.get('when') and saved.get('output_dir') == job.output_dir:
+                    job.own = (saved['round'], saved['when'])  # resumed: saving again rewrites that round
             session = engine.Session(self.base_dir, job.folder, job.output_dir, names, previous, job.mode)
             cfg = self.settings.tuned()
             cache = engine.ImageCache(job.folder, names, sizes, cfg, reader=self._reader, cursor=session.cursor,
@@ -203,14 +210,15 @@ class Controller:
         if job is None:
             return {'phase': 'idle'}
         out = {'phase': job.phase, 'job': job.id, 'found': job.found, 'message': job.message,
-               'folder': job.folder, 'output_dir': job.output_dir, 'files': list(engine.output_names(job.folder))}
+               'folder': job.folder, 'output_dir': job.output_dir, 'label': engine.folder_label(job.folder),
+               'round': job.own[0] if job.own else job.base_round + 1}
         if job.phase == 'ready':
             out.update(job.session.state())
             out['stats'] = job.cache.stats()
             out['mode'] = job.mode
             if job.mode == 'extra':
                 out['extra'] = {'base_good': len(job.base_good), 'total': len(job.all_names), 'fresh': job.fresh,
-                                'missing': job.missing, 'results_time': job.results_time}
+                                'missing': job.missing, 'results_time': job.results_time, 'results_round': job.base_round}
         return out
 
     def sync(self, payload):
@@ -244,13 +252,15 @@ class Controller:
         if not ok:
             return {'ok': False, 'error': message}
         try:
-            if job.mode == 'extra':
-                # the previous result is the base only where it was read: another folder gets it fresh
-                stamp = job.stamp if output_dir == job.output_dir else None
-                result = engine.write_extra_outputs(output_dir, job.folder, job.all_names, job.base_good, job.names,
-                                                    job.session.good, stamp, bool(payload.get('overwrite')))
-            else:
-                result = engine.write_outputs(output_dir, job.folder, job.names, job.session.good, bool(payload.get('overwrite')))
+            same_place = output_dir == job.output_dir
+            picked = [job.names[i] for i in sorted(job.session.good)]
+            result = engine.save_round(
+                output_dir, job.folder, job.all_names, picked,
+                base_good=job.base_good if job.mode == 'extra' else None,
+                # the newer-result check only applies where the review's base was read
+                base_key=job.base_key if same_place else None,
+                own=job.own if same_place else None,
+                merge_newer=bool(payload.get('overwrite')), min_round=job.base_round + 1)
         except OSError as exc:
             log.exception('write outputs failed')
             return {'ok': False, 'error': '결과 파일을 쓰지 못했습니다: %s' % (exc.strerror or exc)}
@@ -258,14 +268,16 @@ class Controller:
             if output_dir != job.output_dir:
                 job.output_dir = job.session.output_dir = output_dir
                 self.settings.remember(job.folder, output_dir)
-            job.session.saved = {'good': result['good_count'], 'reject': result['reject_count'],
-                                 'output_dir': output_dir, 'time': time.strftime('%Y-%m-%d %H:%M')}
+            job.own = (result['round'], result['when'])
+            base = result.pop('base')
+            if job.mode == 'extra':
+                job.base_good = base  # merged with a newer result: saving again keeps that base
+            job.session.saved = {'good': result['good_count'], 'reject': result['reject_count'], 'round': result['round'],
+                                 'when': result['when'], 'output_dir': output_dir, 'time': time.strftime('%Y-%m-%d %H:%M')}
             try:
                 job.session.save(force=True)
             except OSError:
                 log.exception('session save failed')
-            if job.mode == 'extra':
-                job.stamp = (engine.read_results(output_dir, job.folder) or {}).get('stamp')  # saving again is not a conflict
             self._allow_open(output_dir, result['good_path'], result['reject_path'], result.get('added_path'))
             result['output_dir'] = output_dir
         return result

@@ -128,10 +128,10 @@ async function runCheck() {
   lastCheck = r;
   setMsg('folderMsg', !folder ? '' : r.folder_ok ? '✓ 폴더 확인됨' : r.folder_msg, r.folder_ok ? 'ok' : 'bad');
   setMsg('outputMsg', !output ? '' : r.output_ok ? '✓ 쓰기 가능' : r.output_msg, r.output_ok ? 'ok' : 'bad');
-  $('files').innerHTML = folder && r.files[0]
-    ? `저장될 파일: <b>${esc(r.files[0])}</b> / <b>${esc(r.files[1])}</b>` +
-      (r.existing.length ? ` <span class="warn-text">— 이미 있음 (저장할 때 덮어쓸지 묻습니다)</span>` : '')
-    : '';
+  const res0 = r.folder_ok && r.output_ok ? r.results : null;
+  $('files').innerHTML = !(folder && r.label) ? ''
+    : `저장될 파일: <b>${esc(r.label)}_${r.next_round}차리뷰_날짜_시각_GOOD.txt</b> / <b>_REJECT.txt</b>` +
+      (res0 ? ` <span class="muted">(전체 리뷰로 시작할 때. 이전 회차 파일은 그대로 둡니다)</span>` : '');
   const s = r.folder_ok ? r.session : null;
   $('resume').classList.toggle('hidden', !s);
   if (s) {
@@ -144,9 +144,10 @@ async function runCheck() {
   $('extra').classList.toggle('hidden', !res);
   $('extraFresh').classList.toggle('hidden', !x);
   if (res) {
-    $('extraText').textContent = `이전 결과: GOOD ${fmt(res.good)} / REJECT ${fmt(res.reject)} (저장 ${res.time})` +
+    $('extraText').textContent = `이전 결과: ${res.round}차리뷰${res.legacy ? '(v4 형식 파일)' : ''} · ` +
+      `GOOD ${fmt(res.good)} / REJECT ${fmt(res.reject)} (저장 ${res.time})` +
       (x ? ` · 추가 검토 중: ${fmt(x.seen)} / ${fmt(x.total)} 확인, 추가 GOOD ${fmt(x.good)}` : '');
-    $('extraBtn').textContent = x ? '추가 GOOD 검토 이어하기' : '추가 GOOD 검토 시작';
+    $('extraBtn').textContent = (x ? '추가 GOOD 검토 이어하기' : '추가 GOOD 검토 시작') + ` → ${r.next_round}차리뷰`;
   }
   $('extraBtn').disabled = !res;
 }
@@ -188,7 +189,7 @@ async function pick(field) {
 // ------------------------------------------------------------------ sorting state
 const S = {
   job: null, names: [], n: 0, good: new Uint8Array(0), seen: new Uint8Array(0), failed: new Uint8Array(0),
-  goodCount: 0, seenCount: 0, folder: '', output: '', files: ['', ''], mode: '', extra: null, fresh: new Uint8Array(0),
+  goodCount: 0, seenCount: 0, folder: '', output: '', label: '', round: 1, mode: '', extra: null, fresh: new Uint8Array(0),
   list: null, listName: '', pos: 0, allPos: 0, painted: -1, drawToken: 0,
   paintedAt: 0, lastMoveAt: 0, last: '', note: '', noteTimer: null, zoom: null, epoch: 0,
 };
@@ -208,7 +209,7 @@ function beginSort(s) {
   S.seen = Uint8Array.from(s.seen, c => c === '1' ? 1 : 0);
   S.seenCount = S.seen.reduce((a, b) => a + b, 0);
   S.failed = new Uint8Array(S.n);
-  S.folder = s.folder; S.output = s.output_dir; S.files = s.files;
+  S.folder = s.folder; S.output = s.output_dir; S.label = s.label; S.round = s.round || 1;
   S.mode = s.mode || ''; S.extra = s.extra || null;
   S.fresh = new Uint8Array(S.n); (S.extra ? S.extra.fresh : []).forEach(i => { S.fresh[i] = 1; });
   S.list = null; S.listName = ''; S.pos = Math.min(Math.max(0, s.cursor || 0), S.n - 1); S.allPos = S.pos;
@@ -714,11 +715,11 @@ function renderReview() {
   $('rExtra').classList.toggle('hidden', !extra);
   if (extra) {
     const x = S.extra;
-    $('rExtra').textContent = `추가 GOOD 검토 — 이전 결과(${x.results_time}) 기준. 기존 GOOD ${fmt(x.base_good)}장은 그대로 유지되고, ` +
-      `저장하면 GOOD ${fmt(x.base_good + S.goodCount)}장(기존 ${fmt(x.base_good)} + 추가 ${fmt(S.goodCount)})이 됩니다.` +
+    $('rExtra').textContent = `추가 GOOD 검토 — 이전 결과 ${x.results_round}차리뷰(${x.results_time}) 기준. 기존 GOOD ${fmt(x.base_good)}장은 ` +
+      `그대로 유지되고, ${S.round}차리뷰로 저장하면 GOOD ${fmt(x.base_good + S.goodCount)}장(기존 ${fmt(x.base_good)} + 추가 ${fmt(S.goodCount)})이 됩니다.` +
       (x.fresh.length ? ` 신규 사진 ${fmt(x.fresh.length)}장 포함.` : '') + (x.missing ? ` 폴더에 없는 ${fmt(x.missing)}장은 제외.` : '');
   }
-  $('gridEmpty').textContent = extra ? '이번에 추가한 GOOD이 없습니다. 저장하면 이전 결과와 같은 내용이 됩니다.'
+  $('gridEmpty').textContent = extra ? '이번에 추가한 GOOD이 없습니다. 저장하면 이전 결과와 같은 내용의 새 회차가 만들어집니다.'
     : 'GOOD으로 고른 사진이 없습니다. 저장하면 전부 REJECT 목록에 들어갑니다.';
   $('rTotal').textContent = fmt(S.n);
   $('rGood').textContent = fmt(S.goodCount);
@@ -727,9 +728,10 @@ function renderReview() {
   $('rWarn').classList.toggle('hidden', unseen === 0);
   $('rWarnText').textContent = `화면에 한 번도 표시되지 않은 미확인 사진 ${fmt(unseen)}장 — 저장하면 REJECT로 들어갑니다.` +
     (failed ? ` (읽기 실패 ${fmt(failed)}장 포함)` : '');
+  const stem = `${S.label}_${S.round}차리뷰_날짜_시각`;
   $('rDest').textContent = extra
-    ? `${S.output}  →  ${S.files[0]} (${fmt(S.extra.base_good + S.goodCount)}), ${S.files[1]} (${fmt(S.n - S.goodCount)}) · 이전 파일은 백업`
-    : `${S.output}  →  ${S.files[0]} (${fmt(S.goodCount)}), ${S.files[1]} (${fmt(S.n - S.goodCount)})`;
+    ? `${S.output}  →  ${stem}: 추가GOOD (${fmt(S.goodCount)}), GOOD (${fmt(S.extra.base_good + S.goodCount)}), REJECT (${fmt(S.n - S.goodCount)})`
+    : `${S.output}  →  ${stem}: GOOD (${fmt(S.goodCount)}), REJECT (${fmt(S.n - S.goodCount)})`;
   $('rBrowse').disabled = !R.items.length;
   $('gridEmpty').classList.toggle('hidden', R.items.length > 0);
 }
@@ -812,18 +814,11 @@ async function save() {
   let overwrite = false;
   for (;;) {
     const r = await api('save', {job: S.job, good: goodIndices(), overwrite, output_dir: outputDir});
-    if (r.ok) { S.output = r.output_dir; $('hOut').textContent = '저장: ' + S.output; showDone(r); return; }
+    if (r.ok) { S.output = r.output_dir; S.round = r.round; $('hOut').textContent = '저장: ' + S.output; showDone(r); return; }
     if (r.changed) {
-      const a = await ask('이전 결과 파일이 바뀌었습니다', `${outputDir}\n추가 검토를 시작한 뒤에 결과 파일이 바뀌었습니다(다른 PC에서 저장 등).\n` +
-        '그래도 이 검토 내용으로 저장할까요? (지금 파일은 백업됩니다)',
-        [{label: '저장 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
-      if (a !== 'ok') return;
-      overwrite = true;
-      continue;
-    }
-    if (r.conflict) {
-      const a = await ask('같은 이름의 결과 파일이 있습니다', `${outputDir}\n${r.conflict.join('\n')}\n\n덮어쓸까요?`,
-        [{label: '덮어쓰기 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
+      const a = await ask('다른 곳에서 먼저 저장된 회차가 있습니다', `${outputDir}\n이 추가 검토를 시작한 뒤에 ${r.latest_round}차리뷰가 저장되었습니다(다른 PC 등).\n` +
+        `그 결과의 GOOD에 이번 추가 GOOD을 합쳐 ${r.latest_round + 1}차리뷰로 저장할까요? (이전 회차 파일은 그대로 둡니다)`,
+        [{label: '합쳐서 저장 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
       if (a !== 'ok') return;
       overwrite = true;
       continue;
@@ -840,11 +835,13 @@ async function save() {
 }
 
 function showDone(r) {
+  $('doneTitle').textContent = `${r.round}차리뷰 저장 완료 (${r.time})`;
   $('doneFiles').innerHTML =
-    `<div><span class="g">GOOD</span> <b>${fmt(r.good_count)}</b>장<br><small class="muted">${esc(r.good_path)}</small></div>` +
+    (r.added_path ? `<div><span class="g">추가GOOD</span> <b>${fmt(r.added_count)}</b>장 — 이번 회차에서 새로 GOOD<br><small class="muted">${esc(r.added_path)}</small></div>` : '') +
+    `<div><span class="g">GOOD</span> <b>${fmt(r.good_count)}</b>장` + (r.added_path ? ` — 누적 (이전 ${fmt(r.base_count)} + 추가 ${fmt(r.added_count)})` : '') +
+    `<br><small class="muted">${esc(r.good_path)}</small></div>` +
     `<div><span class="r">REJECT</span> <b>${fmt(r.reject_count)}</b>장<br><small class="muted">${esc(r.reject_path)}</small></div>` +
-    (r.added_path ? `<div><span class="g">추가 GOOD</span> <b>${fmt(r.added_count)}</b>장 (기존 GOOD ${fmt(r.base_count)}장 + 추가)<br><small class="muted">${esc(r.added_path)}</small></div>` : '') +
-    (r.backups && r.backups.length ? `<div><span class="muted">이전 파일 백업</span><br><small class="muted">${r.backups.map(esc).join('<br>')}</small></div>` : '');
+    (r.merged ? `<div><span class="muted">다른 곳에서 먼저 저장된 회차의 GOOD에 이번 추가분을 합쳤습니다.</span></div>` : '');
   show('done');
 }
 

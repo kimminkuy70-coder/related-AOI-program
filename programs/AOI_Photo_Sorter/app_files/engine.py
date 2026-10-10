@@ -106,15 +106,6 @@ def folder_label(folder):
     return label or 'photos'
 
 
-def output_names(folder):
-    label = folder_label(folder)
-    return label + '_GOOD.txt', label + '_REJECT.txt'
-
-
-def existing_outputs(output_dir, folder):
-    return [name for name in output_names(folder) if os.path.exists(os.path.join(output_dir, name))]
-
-
 def check_folder(folder):
     if not folder:
         return False, '사진 폴더를 지정하세요.'
@@ -139,30 +130,23 @@ def check_writable(output_dir):
     return True, ''
 
 
-def write_outputs(output_dir, folder, names, good, overwrite=False):
-    """<folder>_GOOD.txt (picked with Space) and <folder>_REJECT.txt (everything else):
-    one file name per line in folder order, UTF-8, CRLF."""
-    good_name, reject_name = output_names(folder)
-    if not overwrite:
-        existing = existing_outputs(output_dir, folder)
-        if existing:
-            return {'ok': False, 'conflict': existing}
-    good = set(good)
-    picked = [n for i, n in enumerate(names) if i in good]
-    rest = [n for i, n in enumerate(names) if i not in good]
-    paths = {}
-    for key, name, lines in (('good', good_name, picked), ('reject', reject_name, rest)):
-        path = os.path.join(output_dir, name)
-        atomic_write(path, ''.join(line + '\r\n' for line in lines).encode('utf-8'))
-        paths[key] = path
-    return {'ok': True, 'good_path': paths['good'], 'reject_path': paths['reject'],
-            'good_count': len(picked), 'reject_count': len(rest)}
+# ---------------------------------------------------------------- result files (v5: n차리뷰)
+# Every save writes a new round and never touches an earlier one:
+#   <folder>_<n>차리뷰_<YYYYMMDD>_<HHMM>_GOOD.txt      GOOD so far (all rounds)
+#   <folder>_<n>차리뷰_<YYYYMMDD>_<HHMM>_REJECT.txt    still REJECT after this round
+#   <folder>_<n>차리뷰_<YYYYMMDD>_<HHMM>_추가GOOD.txt  added in this round (extra GOOD review only)
+# The latest result is the highest n with both GOOD and REJECT. A 1차/full review writes the
+# first two only. One file name per line, folder order, UTF-8, CRLF. The result files are the
+# record, so a result made on another PC works too; v4 files (<folder>_GOOD.txt / _REJECT.txt)
+# are read as the previous result and left as they are.
+
+RESULT_KINDS = ('추가GOOD', 'GOOD', 'REJECT')
 
 
-# ---------------------------------------------------------------- extra GOOD review (v4)
-# Photos still REJECT in the previous result files are looked at again; new GOOD picks are
-# added to the old GOOD list. The result files are the record, so a result made on another
-# PC works too.
+def round_names(folder, n, when):
+    label = folder_label(folder)
+    return {kind: '%s_%d차리뷰_%s_%s.txt' % (label, n, when, kind) for kind in RESULT_KINDS}
+
 
 def _read_lines(path):
     with open(path, 'rb') as handle:
@@ -178,15 +162,29 @@ def _match_key(name):
     return os.path.normcase(name)  # Windows file names ignore case
 
 
-def read_results(output_dir, folder):
-    """The previous <folder>_GOOD.txt / _REJECT.txt, or None when neither exists.
-    {'good': [...], 'reject': [...], 'time': 'YYYY-MM-DD HH:MM', 'stamp': [...]}"""
-    if not output_dir or not folder:
-        return None
-    good_name, reject_name = output_names(folder)
-    out, stamp, newest = {'good': [], 'reject': []}, [], 0
-    found = False
-    for key, name in (('good', good_name), ('reject', reject_name)):
+def list_rounds(output_dir, folder):
+    """{(n, 'YYYYMMDD_HHMM'): {kind: path}} of this photo folder's n차리뷰 files."""
+    pattern = re.compile(r'^%s_(\d+)차리뷰_(\d{8})_(\d{4})_(추가GOOD|GOOD|REJECT)\.txt$' % re.escape(folder_label(folder)),
+                         re.IGNORECASE)
+    rounds = {}
+    try:
+        entries = os.listdir(output_dir) if output_dir else []
+    except OSError:
+        return rounds
+    for name in entries:
+        match = pattern.match(name)
+        if match:
+            key = (int(match.group(1)), match.group(2) + '_' + match.group(3))
+            rounds.setdefault(key, {})[match.group(4).upper()] = os.path.join(output_dir, name)
+    return rounds
+
+
+def _legacy_results(output_dir, folder):
+    """v4 and earlier: <folder>_GOOD.txt / _REJECT.txt. Its round = 1 + the v4 extra reviews
+    saved on it (one <folder>_GOOD_추가_*.txt each)."""
+    label = folder_label(folder)
+    out, stamp, newest, found = {'good': [], 'reject': []}, ['legacy'], 0, False
+    for key, name in (('good', label + '_GOOD.txt'), ('reject', label + '_REJECT.txt')):
         path = os.path.join(output_dir, name)
         try:
             info = os.stat(path)
@@ -199,15 +197,49 @@ def read_results(output_dir, folder):
         newest = max(newest, info.st_mtime)
     if not found:
         return None
-    out['stamp'] = stamp
-    out['time'] = time.strftime('%Y-%m-%d %H:%M', time.localtime(newest))
+    try:
+        extra = [n for n in os.listdir(output_dir) if n.lower().startswith((label + '_GOOD_추가_').lower())]
+    except OSError:
+        extra = []
+    out.update(round=1 + len(extra), key=stamp, legacy=True,
+               time=time.strftime('%Y-%m-%d %H:%M', time.localtime(newest)),
+               files=[os.path.join(output_dir, label + '_GOOD.txt'), os.path.join(output_dir, label + '_REJECT.txt')])
     return out
+
+
+def read_results(output_dir, folder):
+    """The latest result for this photo folder, or None.
+    {'good': [...], 'reject': [...], 'round': n, 'time': 'YYYY-MM-DD HH:MM', 'key', 'files', 'legacy'}"""
+    if not output_dir or not folder:
+        return None
+    rounds = list_rounds(output_dir, folder)
+    for key in sorted((k for k, f in rounds.items() if 'GOOD' in f and 'REJECT' in f), reverse=True):
+        files = rounds[key]
+        try:
+            good, reject = _read_lines(files['GOOD']), _read_lines(files['REJECT'])
+        except OSError:
+            continue
+        n, when = key
+        return {'good': good, 'reject': reject, 'round': n, 'key': [n, when], 'legacy': False,
+                'time': '%s-%s-%s %s:%s' % (when[:4], when[4:6], when[6:8], when[9:11], when[11:13]),
+                'files': [files['GOOD'], files['REJECT']]}
+    return _legacy_results(output_dir, folder)
+
+
+def last_round(output_dir, folder):
+    """Highest round number used so far for this folder (0: none)."""
+    rounds = list_rounds(output_dir, folder)
+    if rounds:
+        return max(n for n, _ in rounds)
+    legacy = _legacy_results(output_dir, folder) if output_dir and folder else None
+    return legacy['round'] if legacy else 0
 
 
 def results_summary(results):
     if not results:
         return None
-    return {'good': len(results['good']), 'reject': len(results['reject']), 'time': results['time']}
+    return {'good': len(results['good']), 'reject': len(results['reject']), 'time': results['time'],
+            'round': results['round'], 'legacy': results['legacy']}
 
 
 def plan_extra(names, results):
@@ -231,53 +263,50 @@ def plan_extra(names, results):
     return base, targets, fresh, missing
 
 
-def _free_name(output_dir, stem, suffix='.txt'):
-    name = stem + suffix
-    number = 2
-    while os.path.exists(os.path.join(output_dir, name)):
-        name = '%s_%d%s' % (stem, number, suffix)
-        number += 1
-    return name
+def save_round(output_dir, folder, all_names, picked, base_good=None, base_key=None, own=None,
+               merge_newer=False, min_round=1):
+    """Write this review as a new round, never touching an earlier one.
 
-
-def write_extra_outputs(output_dir, folder, all_names, base_good, targets, picked, stamp=None, overwrite=False):
-    """Save an extra review: <folder>_GOOD.txt = old GOOD + picked targets, _REJECT.txt = the
-    rest of the targets (folder order, UTF-8, CRLF). The files being replaced are first copied
-    to <folder>_GOOD_이전_<time>.txt etc., and the added photos alone go to <folder>_GOOD_추가_<time>.txt.
-    stamp: the result files as they were when the review started; if they changed since
-    (saved from another PC meanwhile), nothing is written unless overwrite."""
-    good_name, reject_name = output_names(folder)
-    label = folder_label(folder)
-    if stamp is not None and not overwrite:
-        now = read_results(output_dir, folder)
-        if (now or {}).get('stamp') != stamp:
-            return {'ok': False, 'changed': True, 'conflict': existing_outputs(output_dir, folder)}
-    added = set(targets[i] for i in picked if 0 <= i < len(targets))
-    good = set(base_good) | added
-    target_set = set(targets)
-    good_lines = [n for n in all_names if n in good]
-    reject_lines = [n for n in all_names if n in target_set and n not in good]
-    added_lines = [n for n in all_names if n in added]
-    when = time.strftime('%Y%m%d_%H%M')
-    backups = []
-    for name, kind in ((good_name, 'GOOD'), (reject_name, 'REJECT')):
-        path = os.path.join(output_dir, name)
-        if os.path.exists(path):
-            with open(path, 'rb') as handle:
-                data = handle.read()
-            backup = os.path.join(output_dir, _free_name(output_dir, '%s_%s_이전_%s' % (label, kind, when)))
-            atomic_write(backup, data)
-            backups.append(backup)
-    added_path = os.path.join(output_dir, _free_name(output_dir, '%s_GOOD_추가_%s' % (label, when)))
+    all_names: every photo of the folder (folder order); picked: the names chosen GOOD here.
+    base_good: an extra GOOD review keeps these GOOD and adds picked to them (None: a full
+    review, two files). base_key: the result the extra review started from; if a newer one
+    appeared since (saved on another PC) nothing is written unless merge_newer, which takes
+    that newer GOOD as the base. own: (n, when) this review saved before: saving again
+    rewrites that round as long as nothing newer exists."""
+    latest = read_results(output_dir, folder)
+    latest_key = latest['key'] if latest else None
+    base = base_good
+    merged = False
+    if own is not None and latest_key == [own[0], own[1]]:
+        n, when = own
+    else:
+        if base_good is not None and base_key is not None and latest_key != base_key:
+            if not merge_newer:
+                return {'ok': False, 'changed': True, 'latest_round': latest['round'] if latest else 0}
+            if latest is not None:
+                newer = set(_match_key(x) for x in latest['good'])
+                base = [x for x in all_names if _match_key(x) in newer]
+                merged = True
+        n = max(last_round(output_dir, folder) + 1, min_round)
+        when = time.strftime('%Y%m%d_%H%M')
+    good = set(base or ()) | set(picked)
+    good_lines = [x for x in all_names if x in good]
+    reject_lines = [x for x in all_names if x not in good]
+    added_lines = None if base is None else [x for x in all_names if x in set(picked) and x not in set(base)]
+    names = round_names(folder, n, when)
     paths = {}
-    for key, path, lines in (('good', os.path.join(output_dir, good_name), good_lines),
-                             ('reject', os.path.join(output_dir, reject_name), reject_lines),
-                             ('added', added_path, added_lines)):
-        atomic_write(path, ''.join(line + '\r\n' for line in lines).encode('utf-8'))
-        paths[key] = path
-    return {'ok': True, 'good_path': paths['good'], 'reject_path': paths['reject'], 'added_path': paths['added'],
-            'backups': backups, 'good_count': len(good_lines), 'reject_count': len(reject_lines),
-            'added_count': len(added_lines), 'base_count': len(good_lines) - len(added_lines)}
+    # GOOD last: a round counts once GOOD and REJECT both exist
+    for kind, lines in (('추가GOOD', added_lines), ('REJECT', reject_lines), ('GOOD', good_lines)):
+        if lines is None:
+            continue
+        paths[kind] = os.path.join(output_dir, names[kind])
+        atomic_write(paths[kind], ''.join(line + '\r\n' for line in lines).encode('utf-8'))
+    return {'ok': True, 'round': n, 'when': when, 'merged': merged, 'base': base,
+            'time': '%s-%s-%s %s:%s' % (when[:4], when[4:6], when[6:8], when[9:11], when[11:13]),
+            'good_path': paths['GOOD'], 'reject_path': paths['REJECT'], 'added_path': paths.get('추가GOOD'),
+            'good_count': len(good_lines), 'reject_count': len(reject_lines),
+            'added_count': len(added_lines) if added_lines is not None else None,
+            'base_count': len(good_lines) - len(added_lines) if added_lines is not None else None}
 
 
 # ---------------------------------------------------------------- settings
