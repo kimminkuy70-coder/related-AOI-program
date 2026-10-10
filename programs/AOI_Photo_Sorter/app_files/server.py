@@ -25,10 +25,17 @@ log = logging.getLogger(__name__)
 
 
 class Job:
-    def __init__(self, folder, output_dir):
+    def __init__(self, folder, output_dir, mode=''):
         self.id = secrets.token_hex(4)
         self.folder = folder
         self.output_dir = output_dir
+        self.mode = mode  # '' = normal sort, 'extra' = extra GOOD review of the previous REJECT photos
+        self.all_names = []  # extra: the whole folder (names = the photos under review)
+        self.base_good = []  # extra: GOOD in the previous result, kept as is
+        self.fresh = []  # extra: indices into names of photos that came after the previous result
+        self.missing = 0  # extra: names in the previous result that are no longer in the folder
+        self.stamp = None  # extra: the result files as they were when the review started
+        self.results_time = ''
         self.phase = 'scanning'
         self.found = 0
         self.message = ''
@@ -112,16 +119,28 @@ class Controller:
         good_name, reject_name = engine.output_names(folder) if folder else ('', '')
         existing = engine.existing_outputs(output_dir, folder) if folder and output_ok else []
         session = engine.session_summary(engine.read_session(self.base_dir, folder)) if folder_ok else None
+        results = engine.results_summary(engine.read_results(output_dir, folder)) if existing else None
+        extra = self._extra_session(folder) if folder_ok and results else None
         return {'folder_ok': folder_ok, 'folder_msg': folder_msg, 'output_ok': output_ok, 'output_msg': output_msg,
-                'files': [good_name, reject_name], 'existing': existing, 'session': session}
+                'files': [good_name, reject_name], 'existing': existing, 'session': session,
+                'results': results, 'extra_session': engine.session_summary(extra)}
 
-    def start(self, folder, output_dir, resume):
+    def _extra_session(self, folder):
+        """An extra review that was not saved yet (a saved one is done: the next review
+        starts from the result files again)."""
+        data = engine.read_session(self.base_dir, folder, 'extra')
+        return data if data and not data.get('saved') else None
+
+    def start(self, folder, output_dir, resume, mode=''):
         folder = (folder or '').strip()
         output_dir = (output_dir or '').strip()
+        mode = 'extra' if mode == 'extra' else ''
         checked = self.check(folder, output_dir)
         if not checked['folder_ok'] or not checked['output_ok']:
             return {'ok': False, 'error': checked['folder_msg'] or checked['output_msg']}
-        job = Job(folder, output_dir)
+        if mode and not checked['results']:
+            return {'ok': False, 'error': '저장 위치에 이전 결과 파일(%s / %s)이 없습니다.' % tuple(checked['files'])}
+        job = Job(folder, output_dir, mode)
         with self._lock:
             if self._job is not None:
                 self._job.close()
@@ -140,8 +159,26 @@ class Controller:
                 job.message = '사진이 없습니다 (jpg, jpeg, png, bmp, tif).'
                 job.phase = 'error'
                 return
-            previous = engine.read_session(self.base_dir, job.folder) if resume else None
-            session = engine.Session(self.base_dir, job.folder, job.output_dir, names, previous)
+            if job.mode == 'extra':
+                results = engine.read_results(job.output_dir, job.folder)
+                if results is None:
+                    raise RuntimeError('이전 결과 파일을 읽을 수 없습니다.')
+                base, targets, fresh, missing = engine.plan_extra(names, results)
+                if not targets:
+                    job.message = '추가로 검토할 REJECT 사진이 없습니다 (폴더의 사진이 모두 이미 GOOD입니다).'
+                    job.phase = 'error'
+                    return
+                position = {name: i for i, name in enumerate(names)}
+                job.all_names, job.base_good, job.missing = names, base, missing
+                job.stamp, job.results_time = results['stamp'], results['time']
+                names = targets
+                sizes = [sizes[position[name]] for name in targets]
+                fresh = set(fresh)
+                job.fresh = [i for i, name in enumerate(targets) if name in fresh]
+                previous = self._extra_session(job.folder) if resume else None
+            else:
+                previous = engine.read_session(self.base_dir, job.folder) if resume else None
+            session = engine.Session(self.base_dir, job.folder, job.output_dir, names, previous, job.mode)
             cfg = self.settings.tuned()
             cache = engine.ImageCache(job.folder, names, sizes, cfg, reader=self._reader, cursor=session.cursor,
                                       probe=self._probe)
@@ -170,6 +207,10 @@ class Controller:
         if job.phase == 'ready':
             out.update(job.session.state())
             out['stats'] = job.cache.stats()
+            out['mode'] = job.mode
+            if job.mode == 'extra':
+                out['extra'] = {'base_good': len(job.base_good), 'total': len(job.all_names), 'fresh': job.fresh,
+                                'missing': job.missing, 'results_time': job.results_time}
         return out
 
     def sync(self, payload):
@@ -203,7 +244,13 @@ class Controller:
         if not ok:
             return {'ok': False, 'error': message}
         try:
-            result = engine.write_outputs(output_dir, job.folder, job.names, job.session.good, bool(payload.get('overwrite')))
+            if job.mode == 'extra':
+                # the previous result is the base only where it was read: another folder gets it fresh
+                stamp = job.stamp if output_dir == job.output_dir else None
+                result = engine.write_extra_outputs(output_dir, job.folder, job.all_names, job.base_good, job.names,
+                                                    job.session.good, stamp, bool(payload.get('overwrite')))
+            else:
+                result = engine.write_outputs(output_dir, job.folder, job.names, job.session.good, bool(payload.get('overwrite')))
         except OSError as exc:
             log.exception('write outputs failed')
             return {'ok': False, 'error': '결과 파일을 쓰지 못했습니다: %s' % (exc.strerror or exc)}
@@ -217,7 +264,9 @@ class Controller:
                 job.session.save(force=True)
             except OSError:
                 log.exception('session save failed')
-            self._allow_open(output_dir, result['good_path'], result['reject_path'])
+            if job.mode == 'extra':
+                job.stamp = (engine.read_results(output_dir, job.folder) or {}).get('stamp')  # saving again is not a conflict
+            self._allow_open(output_dir, result['good_path'], result['reject_path'], result.get('added_path'))
             result['output_dir'] = output_dir
         return result
 
@@ -343,7 +392,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if name == 'check':
                 self._json(controller.check(payload.get('folder'), payload.get('output_dir')))
             elif name == 'start':
-                self._json(controller.start(payload.get('folder'), payload.get('output_dir'), payload.get('resume')))
+                self._json(controller.start(payload.get('folder'), payload.get('output_dir'), payload.get('resume'),
+                                            payload.get('mode') or ''))
             elif name == 'sync':
                 self._json(controller.sync(payload))
             elif name == 'refresh':

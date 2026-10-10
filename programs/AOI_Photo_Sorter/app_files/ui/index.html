@@ -1,8 +1,8 @@
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AOI Photo Sorter v1</title><link rel="stylesheet" href="styles.css"></head><body>
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AOI Photo Sorter v4</title><link rel="stylesheet" href="styles.css"></head><body>
 
 <section id="start" class="screen show">
   <div class="card-box">
-    <h1>AOI Photo Sorter <small>v1</small></h1>
+    <h1>AOI Photo Sorter <small>v4</small></h1>
     <p class="lead">Reject 사진을 <kbd>→</kbd>로 넘겨 보다가, GOOD 처리할 사진에서 <kbd>Space</kbd>를 누르면 GOOD으로 바뀌고 다음 사진으로 넘어갑니다.</p>
     <div class="field">
       <span class="label">① 사진 폴더</span>
@@ -17,6 +17,7 @@
     <div id="files" class="files"></div>
     <div id="resume" class="resume hidden"><span id="resumeText"></span><span class="spacer"></span><button id="freshBtn" class="ghost">새로 시작</button></div>
     <button id="startBtn" class="primary wide" disabled>시작 (Enter)</button>
+    <div id="extra" class="resume extra hidden"><span id="extraText"></span><span class="spacer"></span><button id="extraFresh" class="ghost hidden">처음부터</button><button id="extraBtn" class="primary">추가 GOOD 검토 시작</button></div>
     <h3>최근 작업</h3>
     <div id="recent" class="recent"><small class="muted">없음</small></div>
   </div>
@@ -28,21 +29,22 @@
 
 <section id="sort" class="screen">
   <header class="hud">
-    <b id="hFolder"></b><span id="hPos"></span><span id="hSeen" class="muted"></span><span class="goodcount">GOOD <b id="hGood">0</b></span><span id="hMode" class="mode hidden"></span>
+    <b id="hFolder"></b><span id="hPos"></span><span id="hSeen" class="muted"></span><span class="goodcount"><span id="hGoodLabel">GOOD</span> <b id="hGood">0</b></span><span id="hExtra" class="mode extra hidden">추가 검토</span><span id="hMode" class="mode hidden"></span>
     <span class="spacer"></span><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
   </header>
   <div class="bar"><i id="hBar"></i></div>
   <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card hidden"><b id="cardTitle"></b><small id="cardText"></small></div><div id="badge" class="badge">GOOD</div></div>
-  <footer class="foot"><span id="fName" class="fname"></span><span id="fTag" class="tag">REJECT</span><span id="fNote" class="note"></span><span class="spacer"></span><span id="fLast" class="muted"></span></footer>
+  <footer class="foot"><span id="fName" class="fname"></span><span id="fTag" class="tag">REJECT</span><span id="fNew" class="tag new hidden">신규</span><span id="fNote" class="note"></span><span class="spacer"></span><span id="fLast" class="muted"></span></footer>
   <div class="keys"><kbd>→</kbd> 다음 <kbd>Space</kbd> GOOD + 다음 <kbd>←</kbd> 이전 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>F5</kbd> 새로고침 <kbd>Esc</kbd> 메뉴</div>
 </section>
 
 <section id="review" class="screen">
   <header class="rhead">
     <h2>확인</h2>
-    <div class="counts">전체 <b id="rTotal">0</b> · <span class="g">GOOD <b id="rGood">0</b></span> · <span class="r">REJECT <b id="rReject">0</b></span> · 미확인 <b id="rUnseen">0</b></div>
+    <div class="counts"><span id="rTotalLabel">전체</span> <b id="rTotal">0</b> · <span class="g"><span id="rGoodLabel">GOOD</span> <b id="rGood">0</b></span> · <span class="r"><span id="rRejectLabel">REJECT</span> <b id="rReject">0</b></span> · 미확인 <b id="rUnseen">0</b></div>
     <span class="spacer"></span><button id="rBrowse" class="ghost">GOOD만 다시 넘겨보기</button><button id="rBack" class="ghost">선별 화면으로 (Esc)</button>
   </header>
+  <div id="rExtra" class="info hidden"></div>
   <div id="rWarn" class="warn hidden"><span id="rWarnText"></span><button id="rUnseenBtn" class="ghost">미확인 사진 보기</button></div>
   <div id="grid" class="grid"><div id="gridInner" class="grid-inner"></div><div id="gridEmpty" class="empty hidden">GOOD으로 고른 사진이 없습니다. 저장하면 전부 REJECT 목록에 들어갑니다.</div></div>
   <footer class="rfoot"><span class="muted">클릭 / <kbd>Space</kbd> GOOD ↔ 해제 (Space는 다음 칸으로 이동) · <kbd>Enter</kbd> 크게 보기 · 방향키 이동</span><span class="spacer"></span><span id="rDest" class="dest"></span><button id="rSave" class="primary">저장 (Ctrl+S)</button></footer>

@@ -358,6 +358,73 @@ class OutputTest(unittest.TestCase):
         self.assertFalse(engine.check_writable('')[0])
 
 
+class ExtraReviewTest(unittest.TestCase):
+    """v4: extra GOOD review of the photos still REJECT in the previous result files."""
+
+    def setUp(self):
+        self.out = tempfile.mkdtemp()
+        self.base = tempfile.mkdtemp()
+        self.folder = r'\\srv\aoi\LOT5'
+
+    def tearDown(self):
+        shutil.rmtree(self.out, ignore_errors=True)
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def write(self, name, text, encoding='utf-8'):
+        Path(self.out, name).write_bytes(text.replace('\n', '\r\n').encode(encoding))
+
+    def test_read_results_and_plan(self):
+        self.assertIsNone(engine.read_results(self.out, self.folder))
+        self.write('LOT5_GOOD.txt', '\ufeffb.jpg\nD.JPG\n')  # Notepad BOM; other case on Windows only
+        self.write('LOT5_REJECT.txt', 'a.jpg\nc.jpg\n불량_e.jpg\ngone.jpg\n\n', 'cp949')  # saved as ANSI
+        results = engine.read_results(self.out, self.folder)
+        self.assertEqual((results['good'], results['reject']), (['b.jpg', 'D.JPG'], ['a.jpg', 'c.jpg', '불량_e.jpg', 'gone.jpg']))
+        self.assertEqual(engine.results_summary(results)['reject'], 4)
+        names = ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg', '불량_e.jpg', 'new.jpg']
+        base, targets, fresh, missing = engine.plan_extra(names, results)
+        if os.name == 'nt':
+            self.assertEqual(base, ['b.jpg', 'd.jpg'])
+        else:
+            self.assertEqual(base, ['b.jpg'])
+            names.remove('d.jpg')
+            base, targets, fresh, missing = engine.plan_extra(names, results)
+        self.assertEqual((targets, fresh, missing), (['a.jpg', 'c.jpg', '불량_e.jpg', 'new.jpg'], ['new.jpg'], 2))
+
+    def test_write_merges_backs_up_and_lists_added(self):
+        self.write('LOT5_GOOD.txt', 'b.jpg\n')
+        self.write('LOT5_REJECT.txt', 'a.jpg\nc.jpg\nd.jpg\n')
+        results = engine.read_results(self.out, self.folder)
+        names = ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg']
+        base, targets, _, _ = engine.plan_extra(names, results)
+        result = engine.write_extra_outputs(self.out, self.folder, names, base, targets, {2}, results['stamp'])
+        self.assertTrue(result['ok'])
+        self.assertEqual((result['good_count'], result['reject_count'], result['added_count'], result['base_count']), (2, 2, 1, 1))
+        self.assertEqual(Path(self.out, 'LOT5_GOOD.txt').read_bytes(), b'b.jpg\r\nd.jpg\r\n')
+        self.assertEqual(Path(self.out, 'LOT5_REJECT.txt').read_bytes(), b'a.jpg\r\nc.jpg\r\n')
+        self.assertEqual(Path(result['added_path']).read_bytes(), b'd.jpg\r\n')
+        self.assertTrue(os.path.basename(result['added_path']).startswith('LOT5_GOOD_추가_'))
+        self.assertEqual(sorted(Path(p).read_bytes() for p in result['backups']), [b'a.jpg\r\nc.jpg\r\nd.jpg\r\n', b'b.jpg\r\n'])
+        self.assertEqual(sorted(os.path.basename(p).rsplit('_', 2)[0] for p in result['backups']), ['LOT5_GOOD_이전', 'LOT5_REJECT_이전'])
+        # the result changed since the review started (old stamp): nothing written unless confirmed
+        again = engine.write_extra_outputs(self.out, self.folder, names, base, targets, {0}, results['stamp'])
+        self.assertEqual((again['ok'], again['changed']), (False, True))
+        self.assertEqual(Path(self.out, 'LOT5_GOOD.txt').read_bytes(), b'b.jpg\r\nd.jpg\r\n')
+        forced = engine.write_extra_outputs(self.out, self.folder, names, base, targets, {0}, results['stamp'], overwrite=True)
+        self.assertTrue(forced['ok'])
+        self.assertEqual(Path(self.out, 'LOT5_GOOD.txt').read_bytes(), b'a.jpg\r\nb.jpg\r\n')
+        self.assertEqual(len(set(os.listdir(self.out))), 2 + 3 * 2)  # same-minute backups / lists get _2, never overwritten
+
+    def test_extra_session_is_separate(self):
+        normal = engine.Session(self.base, '/photos', '/out', ['a.jpg', 'b.jpg'])
+        normal.apply({'seq': 1, 'good': {'0': 1}, 'cursor': 1})
+        normal.save()
+        extra = engine.Session(self.base, '/photos', '/out', ['b.jpg'], mode='extra')
+        extra.apply({'seq': 1, 'good': {'0': 1}})
+        extra.save()
+        self.assertEqual(engine.read_session(self.base, '/photos')['good'], ['a.jpg'])
+        self.assertEqual(engine.read_session(self.base, '/photos', 'extra')['good'], ['b.jpg'])
+
+
 class SettingsTest(unittest.TestCase):
     def test_bad_values_fall_back_and_recent_list(self):
         base = tempfile.mkdtemp()
@@ -473,6 +540,48 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
         state = self.api('state')[1]
         self.assertEqual((state['good'], state['cursor'], state['seen'].count('1')), ([3], 9, 10))
+
+    def test_extra_review(self):
+        label = os.path.basename(self.photos)
+        status, result = self.api('start', {'folder': self.photos, 'output_dir': self.out, 'resume': False, 'mode': 'extra'})
+        self.assertFalse(result['ok'])  # no previous result yet
+        job = self.start_job()['job']
+        self.assertTrue(self.api('save', {'job': job, 'good': [1, 3]})[1]['ok'])
+        os.remove(os.path.join(self.photos, 'IMG_29.jpg'))
+        from PIL import Image
+        Image.new('RGB', (64, 48)).save(os.path.join(self.photos, 'IMG_30.jpg'))
+        checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]
+        self.assertEqual((checked['results']['good'], checked['results']['reject'], checked['extra_session']), (2, 28, None))
+
+        self.api('start', {'folder': self.photos, 'output_dir': self.out, 'resume': True, 'mode': 'extra'})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
+        state = self.api('state')[1]
+        job = state['job']
+        self.assertEqual(state['mode'], 'extra')
+        self.assertEqual(len(state['names']), 28)  # 30 - 2 GOOD - 1 removed + 1 new
+        self.assertNotIn('IMG_1.jpg', state['names'])
+        self.assertEqual(state['names'][state['extra']['fresh'][0]], 'IMG_30.jpg')
+        self.assertEqual((state['extra']['base_good'], state['extra']['missing'], state['extra']['total']), (2, 1, 30))
+        target = state['names'].index('IMG_7.jpg')
+        response, body = self.request('GET', '/%s/img/%s/%d' % (self.web.token, job, target), raw=True)
+        self.assertEqual(body, Path(self.photos, 'IMG_7.jpg').read_bytes())
+        self.api('sync', {'job': job, 'seq': 1, 'cursor': target, 'good': {str(target): 1}, 'seen': [0, target]})
+        self.api('new', {})
+        self.assertEqual(engine.read_session(self.base, self.photos)['saved']['good'], 2)  # normal session untouched
+        self.assertEqual(self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]['extra_session']['good'], 1)
+
+        self.api('start', {'folder': self.photos, 'output_dir': self.out, 'resume': True, 'mode': 'extra'})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
+        state = self.api('state')[1]
+        self.assertEqual((state['good'], state['cursor']), ([target], target))
+        status, saved = self.api('save', {'job': state['job'], 'good': state['good']})
+        self.assertTrue(saved['ok'])
+        self.assertEqual(Path(self.out, label + '_GOOD.txt').read_bytes(), b'IMG_1.jpg\r\nIMG_3.jpg\r\nIMG_7.jpg\r\n')
+        self.assertEqual((saved['reject_count'], saved['added_count'], len(saved['backups'])), (27, 1, 2))
+        self.assertTrue(self.controller.can_open(saved['added_path']))
+        self.assertTrue(self.api('save', {'job': state['job'], 'good': state['good']})[1]['ok'])  # saving again is fine
+        checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]
+        self.assertEqual((checked['results']['good'], checked['extra_session']), (3, None))  # saved: next review starts over
 
     def test_empty_folder(self):
         empty = tempfile.mkdtemp()

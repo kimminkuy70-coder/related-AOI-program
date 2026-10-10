@@ -406,3 +406,24 @@ v2까지는 끊긴 동안 실패한 사진이 "읽기 실패"로 고정되어, �
 | 화면 | 1초마다 받는 상태(`offline`, `stalled`, `epoch`)로 위쪽 안내 표시, `epoch`가 바뀌면 실패한 사진·썸네일을 다시 불러옴. 사진 응답의 `X-Photo-Error: offline/read`로 카드 문구 구분. `F5`/`R`/`Ctrl+R`/메뉴 = 새로고침(페이지 다시 읽기는 하지 않음) |
 
 측정(모의): 끊김 → 첫 미독 사진 "연결 끊김" 카드 2.0초, 복구 → 키 입력 없이 사진 재표시 2.7초, 확인 화면 썸네일 재표시 2.0초, 파일 실패 → F5로 즉시 복구, 응답 없음 안내 표시 후 해제 확인. E2E: `test_network_outage_recovers_by_itself`, `test_refresh_key_reloads_failed_photos`, `test_forward_waits_for_a_loading_photo`(응답 대기 안내).
+
+---
+
+## 13. v4: 추가 GOOD 검토 모드
+
+리뷰가 끝난 뒤 REJECT로 남은 사진 중에서 GOOD을 더 골라야 할 때 쓰는 모드입니다. 계획안(related-AOI-program 이슈 #9)의 기본값 Q1~Q7을 그대로 따랐습니다(#9, #10에서 컨펌).
+
+| 항목 | 동작 |
+|---|---|
+| 이전 기록 (Q1) | 저장 위치의 `<폴더명>_GOOD.txt` / `_REJECT.txt`를 읽음(`engine.read_results`). 다른 PC에서 만든 결과도 사용 가능. UTF-8(BOM 허용), 실패하면 CP949로 읽음. 이름 비교는 Windows에서 대소문자 무시 |
+| 시작 화면 | 결과 파일이 있으면 `이전 결과: GOOD n / REJECT m (저장 시각)`과 **[추가 GOOD 검토 시작]**. 기존 [시작]/이어하기는 그대로 |
+| 검토 대상 (`engine.plan_extra`) | 폴더의 사진 중 이전 GOOD이 아닌 것 전부. 이전 GOOD은 화면에 나오지 않고 네트워크에서도 읽지 않음(캐시는 검토 대상 목록만 다룸) |
+| 신규 사진 (Q5) | 두 결과 파일 어디에도 없는 사진은 검토 대상에 포함하고 하단에 「신규」 표시 |
+| 사라진 사진 (Q6) | 결과 파일에는 있는데 폴더에 없는 이름은 제외하고 개수만 안내 |
+| 기존 GOOD (Q4) | 해제 불가(추가만). 확인 화면은 이번에 추가한 GOOD만 썸네일로 보여 주고, 기존 GOOD은 개수만 표시 |
+| 화면 | 상단 「추가 검토」 표시, `REJECT N장 중 k번째`, `추가 GOOD n`. 키 조작은 일반 모드와 같음 |
+| 저장 (Q2, Q3) | `_GOOD.txt` = 기존 GOOD + 추가 GOOD, `_REJECT.txt` = 남은 검토 대상(폴더 순서, UTF-8, CRLF). 갱신 전 파일은 `<폴더명>_GOOD_이전_YYYYMMDD_HHMM.txt` / `_REJECT_이전_…`으로 백업, 추가분만 `<폴더명>_GOOD_추가_YYYYMMDD_HHMM.txt`로 따로 저장. 같은 분에 다시 저장하면 `_2`, `_3`을 붙여 덮어쓰지 않음 |
+| 결과 파일이 도중에 바뀐 경우 | 시작할 때의 파일 상태(수정 시각·크기)와 다르면 저장 전에 확인을 받음(지금 파일은 백업됨) |
+| 진행 저장 / 이어하기 | 일반 모드와 다른 세션 파일(`sessions\<키>_extra.json`). 저장하지 않고 꺼졌으면 「추가 GOOD 검토 이어하기」, [처음부터]로 새로 시작. 저장한 뒤에는 다음 검토가 그 시점의 최신 결과 파일에서 다시 시작(Q7) |
+
+테스트: `tests/test_photo_sorter.py`의 `ExtraReviewTest`(결과 읽기·BOM/CP949·신규/사라진 사진, 병합 저장·백업·추가 목록·도중 변경 감지, 세션 분리)와 `ServerTest.test_extra_review`(시작·이미지·이어하기·저장·재저장), E2E `test_extra_good_review`(시작 화면 → 추가 검토 → 확인 화면 → 저장, Chromium).

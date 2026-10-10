@@ -13,6 +13,8 @@
 //    Space never marks the photo that just appeared; auto-repeat of Space is ignored,
 //    arrow auto-repeat too unless arrow_repeat;
 //  - keys are read by physical position (event.code): Korean IME / CapsLock do not matter.
+// Extra GOOD review (v4): the same screens over only the photos still REJECT in the previous
+// result files (S.mode 'extra'); the old GOOD photos are kept by Python and never shown.
 // Network folder outages: Python reports offline/stalled and an epoch that grows whenever
 // failures are forgotten (reconnect, F5). A new epoch reloads every failed photo here.
 
@@ -138,12 +140,21 @@ async function runCheck() {
   }
   $('startBtn').textContent = s ? '이어하기 (Enter)' : '시작 (Enter)';
   $('startBtn').disabled = !(r.folder_ok && r.output_ok);
+  const res = r.folder_ok && r.output_ok ? r.results : null, x = res ? r.extra_session : null;
+  $('extra').classList.toggle('hidden', !res);
+  $('extraFresh').classList.toggle('hidden', !x);
+  if (res) {
+    $('extraText').textContent = `이전 결과: GOOD ${fmt(res.good)} / REJECT ${fmt(res.reject)} (저장 ${res.time})` +
+      (x ? ` · 추가 검토 중: ${fmt(x.seen)} / ${fmt(x.total)} 확인, 추가 GOOD ${fmt(x.good)}` : '');
+    $('extraBtn').textContent = x ? '추가 GOOD 검토 이어하기' : '추가 GOOD 검토 시작';
+  }
+  $('extraBtn').disabled = !res;
 }
 
-async function start(resume) {
+async function start(resume, mode = '') {
   if ($('startBtn').disabled) return;
   $('startBtn').disabled = true;
-  const r = await api('start', {folder: $('folder').value.trim(), output_dir: $('output').value.trim(), resume});
+  const r = await api('start', {folder: $('folder').value.trim(), output_dir: $('output').value.trim(), resume, mode});
   if (!r.ok) { await ask('시작할 수 없습니다', r.error || '알 수 없는 오류', OK); scheduleCheck(); return; }
   $('loadMsg').textContent = '사진 목록 읽는 중…';
   $('loadDetail').textContent = $('folder').value.trim();
@@ -177,7 +188,7 @@ async function pick(field) {
 // ------------------------------------------------------------------ sorting state
 const S = {
   job: null, names: [], n: 0, good: new Uint8Array(0), seen: new Uint8Array(0), failed: new Uint8Array(0),
-  goodCount: 0, seenCount: 0, folder: '', output: '', files: ['', ''],
+  goodCount: 0, seenCount: 0, folder: '', output: '', files: ['', ''], mode: '', extra: null, fresh: new Uint8Array(0),
   list: null, listName: '', pos: 0, allPos: 0, painted: -1, drawToken: 0,
   paintedAt: 0, lastMoveAt: 0, last: '', note: '', noteTimer: null, zoom: null, epoch: 0,
 };
@@ -198,6 +209,8 @@ function beginSort(s) {
   S.seenCount = S.seen.reduce((a, b) => a + b, 0);
   S.failed = new Uint8Array(S.n);
   S.folder = s.folder; S.output = s.output_dir; S.files = s.files;
+  S.mode = s.mode || ''; S.extra = s.extra || null;
+  S.fresh = new Uint8Array(S.n); (S.extra ? S.extra.fresh : []).forEach(i => { S.fresh[i] = 1; });
   S.list = null; S.listName = ''; S.pos = Math.min(Math.max(0, s.cursor || 0), S.n - 1); S.allPos = S.pos;
   S.painted = -1; S.zoom = null; S.last = '';
   syncSeq = s.seq || 0; pendingGood.clear(); pendingSeen.clear(); lastStats = s.stats || null;
@@ -207,6 +220,11 @@ function beginSort(s) {
   $('hOut').textContent = '저장: ' + S.output;
   show('sort');
   if (s.added || s.removed) note(`폴더 변경: 추가 ${fmt(s.added)}장(미확인), 삭제 ${fmt(s.removed)}장 제외`, 6000);
+  else if (S.extra) {
+    const fresh = S.extra.fresh.length, missing = S.extra.missing;
+    note(`추가 GOOD 검토: 이전 REJECT ${fmt(S.n - fresh)}장` + (fresh ? ` + 신규 ${fmt(fresh)}장` : '') +
+      ` · 기존 GOOD ${fmt(S.extra.base_good)}장 유지` + (missing ? ` · 폴더에 없는 ${fmt(missing)}장 제외` : ''), 6000);
+  }
   present();
   pump();
 }
@@ -395,7 +413,11 @@ function put(id, prop, value) {
 function renderHud() {
   if (page !== 'sort' || !S.job) return;
   const i = cur(), good = !!S.good[i];
-  put('hPos', 'text', `${fmt(S.pos + 1)} / ${fmt(len())}`);
+  const extra = S.mode === 'extra';
+  put('hPos', 'text', extra && !S.list ? `REJECT ${fmt(len())}장 중 ${fmt(S.pos + 1)}번째` : `${fmt(S.pos + 1)} / ${fmt(len())}`);
+  put('hGoodLabel', 'text', extra ? '추가 GOOD' : 'GOOD');
+  put('hExtra', 'class', extra ? 'mode extra' : 'mode extra hidden');
+  put('fNew', 'class', S.fresh[i] ? 'tag new' : 'tag new hidden');
   put('hSeen', 'text', S.list ? '' : `확인 ${(S.seenCount / S.n * 100).toFixed(1)}%`);
   put('hGood', 'text', fmt(S.goodCount));
   put('hBar', 'transform', `scaleX(${(S.list ? (S.pos + 1) / len() : S.seenCount / S.n).toFixed(3)})`);
@@ -618,7 +640,7 @@ async function openMenu() {
     : [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true}, refresh,
        {label: '처음 화면으로', value: 'home'}, {label: '계속 (Esc)', value: 'stay', keys: ['Escape']}];
   const text = S.list ? `${S.listName}: ${fmt(S.pos + 1)} / ${fmt(len())}`
-    : `확인 ${fmt(S.seenCount)} / ${fmt(S.n)} · GOOD ${fmt(S.goodCount)}\n진행 상황은 자동 저장됩니다.`;
+    : `확인 ${fmt(S.seenCount)} / ${fmt(S.n)} · ${S.mode === 'extra' ? '추가 ' : ''}GOOD ${fmt(S.goodCount)}\n진행 상황은 자동 저장됩니다.`;
   const a = await ask('메뉴', text, buttons);
   if (a === 'review') { const keep = !!S.list; if (S.list) leaveList(); openReview(keep); }
   else if (a === 'home') { await flushSync(); await api('new', {}); S.job = null; dropAll(); show('start'); loadHome(); }
@@ -685,6 +707,19 @@ function openReview(keepSnapshot) {
 function renderReview() {
   const unseen = S.n - S.seenCount;
   const failed = S.failed.reduce((a, b) => a + b, 0);
+  const extra = S.mode === 'extra';
+  $('rTotalLabel').textContent = extra ? '검토 대상' : '전체';
+  $('rGoodLabel').textContent = extra ? '추가 GOOD' : 'GOOD';
+  $('rRejectLabel').textContent = extra ? '남는 REJECT' : 'REJECT';
+  $('rExtra').classList.toggle('hidden', !extra);
+  if (extra) {
+    const x = S.extra;
+    $('rExtra').textContent = `추가 GOOD 검토 — 이전 결과(${x.results_time}) 기준. 기존 GOOD ${fmt(x.base_good)}장은 그대로 유지되고, ` +
+      `저장하면 GOOD ${fmt(x.base_good + S.goodCount)}장(기존 ${fmt(x.base_good)} + 추가 ${fmt(S.goodCount)})이 됩니다.` +
+      (x.fresh.length ? ` 신규 사진 ${fmt(x.fresh.length)}장 포함.` : '') + (x.missing ? ` 폴더에 없는 ${fmt(x.missing)}장은 제외.` : '');
+  }
+  $('gridEmpty').textContent = extra ? '이번에 추가한 GOOD이 없습니다. 저장하면 이전 결과와 같은 내용이 됩니다.'
+    : 'GOOD으로 고른 사진이 없습니다. 저장하면 전부 REJECT 목록에 들어갑니다.';
   $('rTotal').textContent = fmt(S.n);
   $('rGood').textContent = fmt(S.goodCount);
   $('rReject').textContent = fmt(S.n - S.goodCount);
@@ -692,7 +727,9 @@ function renderReview() {
   $('rWarn').classList.toggle('hidden', unseen === 0);
   $('rWarnText').textContent = `화면에 한 번도 표시되지 않은 미확인 사진 ${fmt(unseen)}장 — 저장하면 REJECT로 들어갑니다.` +
     (failed ? ` (읽기 실패 ${fmt(failed)}장 포함)` : '');
-  $('rDest').textContent = `${S.output}  →  ${S.files[0]} (${fmt(S.goodCount)}), ${S.files[1]} (${fmt(S.n - S.goodCount)})`;
+  $('rDest').textContent = extra
+    ? `${S.output}  →  ${S.files[0]} (${fmt(S.extra.base_good + S.goodCount)}), ${S.files[1]} (${fmt(S.n - S.goodCount)}) · 이전 파일은 백업`
+    : `${S.output}  →  ${S.files[0]} (${fmt(S.goodCount)}), ${S.files[1]} (${fmt(S.n - S.goodCount)})`;
   $('rBrowse').disabled = !R.items.length;
   $('gridEmpty').classList.toggle('hidden', R.items.length > 0);
 }
@@ -776,6 +813,14 @@ async function save() {
   for (;;) {
     const r = await api('save', {job: S.job, good: goodIndices(), overwrite, output_dir: outputDir});
     if (r.ok) { S.output = r.output_dir; $('hOut').textContent = '저장: ' + S.output; showDone(r); return; }
+    if (r.changed) {
+      const a = await ask('이전 결과 파일이 바뀌었습니다', `${outputDir}\n추가 검토를 시작한 뒤에 결과 파일이 바뀌었습니다(다른 PC에서 저장 등).\n` +
+        '그래도 이 검토 내용으로 저장할까요? (지금 파일은 백업됩니다)',
+        [{label: '저장 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
+      if (a !== 'ok') return;
+      overwrite = true;
+      continue;
+    }
     if (r.conflict) {
       const a = await ask('같은 이름의 결과 파일이 있습니다', `${outputDir}\n${r.conflict.join('\n')}\n\n덮어쓸까요?`,
         [{label: '덮어쓰기 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
@@ -797,7 +842,9 @@ async function save() {
 function showDone(r) {
   $('doneFiles').innerHTML =
     `<div><span class="g">GOOD</span> <b>${fmt(r.good_count)}</b>장<br><small class="muted">${esc(r.good_path)}</small></div>` +
-    `<div><span class="r">REJECT</span> <b>${fmt(r.reject_count)}</b>장<br><small class="muted">${esc(r.reject_path)}</small></div>`;
+    `<div><span class="r">REJECT</span> <b>${fmt(r.reject_count)}</b>장<br><small class="muted">${esc(r.reject_path)}</small></div>` +
+    (r.added_path ? `<div><span class="g">추가 GOOD</span> <b>${fmt(r.added_count)}</b>장 (기존 GOOD ${fmt(r.base_count)}장 + 추가)<br><small class="muted">${esc(r.added_path)}</small></div>` : '') +
+    (r.backups && r.backups.length ? `<div><span class="muted">이전 파일 백업</span><br><small class="muted">${r.backups.map(esc).join('<br>')}</small></div>` : '');
   show('done');
 }
 
@@ -855,6 +902,12 @@ $('output').addEventListener('input', scheduleCheck);
 $('pickFolder').onclick = () => pick('folder');
 $('pickOutput').onclick = () => pick('output');
 $('startBtn').onclick = () => start(!!(lastCheck && lastCheck.session));
+$('extraBtn').onclick = () => start(!!(lastCheck && lastCheck.extra_session), 'extra');
+$('extraFresh').onclick = async () => {
+  const a = await ask('추가 GOOD 검토 처음부터', '진행 중이던 추가 검토(추가 GOOD 지정, 확인 위치)를 지우고 지금 결과 파일 기준으로 처음부터 시작할까요?',
+    [{label: '처음부터 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
+  if (a === 'ok') start(false, 'extra');
+};
 $('freshBtn').onclick = async () => {
   const a = await ask('새로 시작', '이전 진행 내용(GOOD 지정, 확인 위치)을 지우고 처음부터 시작할까요?',
     [{label: '새로 시작 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);

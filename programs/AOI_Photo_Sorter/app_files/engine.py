@@ -159,6 +159,127 @@ def write_outputs(output_dir, folder, names, good, overwrite=False):
             'good_count': len(picked), 'reject_count': len(rest)}
 
 
+# ---------------------------------------------------------------- extra GOOD review (v4)
+# Photos still REJECT in the previous result files are looked at again; new GOOD picks are
+# added to the old GOOD list. The result files are the record, so a result made on another
+# PC works too.
+
+def _read_lines(path):
+    with open(path, 'rb') as handle:
+        data = handle.read()
+    try:
+        text = data.decode('utf-8-sig')
+    except UnicodeDecodeError:  # edited and saved as ANSI (Korean Windows)
+        text = data.decode('cp949', errors='replace')
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _match_key(name):
+    return os.path.normcase(name)  # Windows file names ignore case
+
+
+def read_results(output_dir, folder):
+    """The previous <folder>_GOOD.txt / _REJECT.txt, or None when neither exists.
+    {'good': [...], 'reject': [...], 'time': 'YYYY-MM-DD HH:MM', 'stamp': [...]}"""
+    if not output_dir or not folder:
+        return None
+    good_name, reject_name = output_names(folder)
+    out, stamp, newest = {'good': [], 'reject': []}, [], 0
+    found = False
+    for key, name in (('good', good_name), ('reject', reject_name)):
+        path = os.path.join(output_dir, name)
+        try:
+            info = os.stat(path)
+            out[key] = _read_lines(path)
+        except (OSError, ValueError):
+            stamp.append(None)
+            continue
+        found = True
+        stamp.append([info.st_mtime_ns, info.st_size])
+        newest = max(newest, info.st_mtime)
+    if not found:
+        return None
+    out['stamp'] = stamp
+    out['time'] = time.strftime('%Y-%m-%d %H:%M', time.localtime(newest))
+    return out
+
+
+def results_summary(results):
+    if not results:
+        return None
+    return {'good': len(results['good']), 'reject': len(results['reject']), 'time': results['time']}
+
+
+def plan_extra(names, results):
+    """Split the folder by the previous results: the old GOOD photos stay GOOD (not shown
+    again), every other photo is reviewed. Photos in neither list came after the result
+    was saved ("new"); names listed in the results but gone from the folder are dropped.
+    Returns (base_good_names, target_names, new_names, missing_count); names in folder order."""
+    good = set(_match_key(n) for n in results['good'])
+    reject = set(_match_key(n) for n in results['reject'])
+    in_folder = set(_match_key(n) for n in names)
+    base, targets, fresh = [], [], []
+    for name in names:
+        key = _match_key(name)
+        if key in good:
+            base.append(name)
+        else:
+            targets.append(name)
+            if key not in reject:
+                fresh.append(name)
+    missing = len((good | reject) - in_folder)
+    return base, targets, fresh, missing
+
+
+def _free_name(output_dir, stem, suffix='.txt'):
+    name = stem + suffix
+    number = 2
+    while os.path.exists(os.path.join(output_dir, name)):
+        name = '%s_%d%s' % (stem, number, suffix)
+        number += 1
+    return name
+
+
+def write_extra_outputs(output_dir, folder, all_names, base_good, targets, picked, stamp=None, overwrite=False):
+    """Save an extra review: <folder>_GOOD.txt = old GOOD + picked targets, _REJECT.txt = the
+    rest of the targets (folder order, UTF-8, CRLF). The files being replaced are first copied
+    to <folder>_GOOD_이전_<time>.txt etc., and the added photos alone go to <folder>_GOOD_추가_<time>.txt.
+    stamp: the result files as they were when the review started; if they changed since
+    (saved from another PC meanwhile), nothing is written unless overwrite."""
+    good_name, reject_name = output_names(folder)
+    label = folder_label(folder)
+    if stamp is not None and not overwrite:
+        now = read_results(output_dir, folder)
+        if (now or {}).get('stamp') != stamp:
+            return {'ok': False, 'changed': True, 'conflict': existing_outputs(output_dir, folder)}
+    added = set(targets[i] for i in picked if 0 <= i < len(targets))
+    good = set(base_good) | added
+    target_set = set(targets)
+    good_lines = [n for n in all_names if n in good]
+    reject_lines = [n for n in all_names if n in target_set and n not in good]
+    added_lines = [n for n in all_names if n in added]
+    when = time.strftime('%Y%m%d_%H%M')
+    backups = []
+    for name, kind in ((good_name, 'GOOD'), (reject_name, 'REJECT')):
+        path = os.path.join(output_dir, name)
+        if os.path.exists(path):
+            with open(path, 'rb') as handle:
+                data = handle.read()
+            backup = os.path.join(output_dir, _free_name(output_dir, '%s_%s_이전_%s' % (label, kind, when)))
+            atomic_write(backup, data)
+            backups.append(backup)
+    added_path = os.path.join(output_dir, _free_name(output_dir, '%s_GOOD_추가_%s' % (label, when)))
+    paths = {}
+    for key, path, lines in (('good', os.path.join(output_dir, good_name), good_lines),
+                             ('reject', os.path.join(output_dir, reject_name), reject_lines),
+                             ('added', added_path, added_lines)):
+        atomic_write(path, ''.join(line + '\r\n' for line in lines).encode('utf-8'))
+        paths[key] = path
+    return {'ok': True, 'good_path': paths['good'], 'reject_path': paths['reject'], 'added_path': paths['added'],
+            'backups': backups, 'good_count': len(good_lines), 'reject_count': len(reject_lines),
+            'added_count': len(added_lines), 'base_count': len(good_lines) - len(added_lines)}
+
+
 # ---------------------------------------------------------------- settings
 
 class Settings:
@@ -568,14 +689,16 @@ class Thumbnails:
 
 # ---------------------------------------------------------------- session
 
-def session_path(base_dir, folder):
+def session_path(base_dir, folder, mode=''):
+    """mode 'extra': the extra GOOD review keeps its own file, so it never overwrites
+    the progress of a normal sort of the same folder."""
     key = hashlib.sha1(os.path.normcase(os.path.abspath(folder)).encode('utf-8')).hexdigest()[:20]
-    return os.path.join(base_dir, 'sessions', key + '.json')
+    return os.path.join(base_dir, 'sessions', key + ('_' + mode if mode else '') + '.json')
 
 
-def read_session(base_dir, folder):
+def read_session(base_dir, folder, mode=''):
     try:
-        with open(session_path(base_dir, folder), 'r', encoding='utf-8') as handle:
+        with open(session_path(base_dir, folder, mode), 'r', encoding='utf-8') as handle:
             data = json.load(handle)
         return data if isinstance(data, dict) and isinstance(data.get('names'), list) else None
     except (OSError, ValueError):
@@ -594,8 +717,9 @@ class Session:
     """GOOD picks, which photos were really on screen ("seen") and the position.
     Saved atomically (temp file + replace) by the controller about once a second."""
 
-    def __init__(self, base_dir, folder, output_dir, names, previous=None):
-        self.path = session_path(base_dir, folder)
+    def __init__(self, base_dir, folder, output_dir, names, previous=None, mode=''):
+        self.path = session_path(base_dir, folder, mode)
+        self.mode = mode
         self.folder = folder
         self.output_dir = output_dir
         self.names = names
@@ -665,7 +789,7 @@ class Session:
             with self._lock:
                 if not self.dirty and not force:
                     return False
-                data = {'version': 1, 'folder': self.folder, 'output_dir': self.output_dir, 'names': self.names,
+                data = {'version': 1, 'mode': self.mode, 'folder': self.folder, 'output_dir': self.output_dir, 'names': self.names,
                         'good': [self.names[i] for i in sorted(self.good)],
                         'seen': ''.join('1' if s else '0' for s in self.seen),
                         'cursor': self.cursor, 'saved': self.saved, 'updated': time.strftime('%Y-%m-%d %H:%M:%S')}

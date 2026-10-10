@@ -451,6 +451,49 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(self.ui_good(), {0, 2})
 
 
+    def test_extra_good_review(self):
+        """v4: a saved result, then 추가 GOOD 검토 over the photos still REJECT."""
+        label = os.path.basename(self.photos)
+        good_txt, reject_txt = Path(self.out, label + '_GOOD.txt'), Path(self.out, label + '_REJECT.txt')
+        good_txt.write_bytes(b'IMG_0001.jpg\r\nIMG_0003.jpg\r\n')
+        reject_txt.write_bytes(''.join('IMG_%04d.jpg\r\n' % i for i in range(self.N) if i not in (1, 3)).encode())
+        page = self.page
+        page.goto(self.web.url)
+        page.fill('#folder', self.photos)
+        page.fill('#output', self.out)
+        page.wait_for_selector('#extra:not(.hidden)')
+        self.assertIn('GOOD 2 / REJECT %d' % (self.N - 2), page.inner_text('#extra'))
+        page.click('#extraBtn')
+        page.wait_for_function('window.__sorter.S.painted === 0', timeout=30000)
+        names = self.js('window.__sorter.S.names')
+        self.assertEqual((len(names), names[:3]), (self.N - 2, ['IMG_0000.jpg', 'IMG_0002.jpg', 'IMG_0004.jpg']))
+        self.assertEqual(page.inner_text('#hPos'), 'REJECT %s장 중 1번째' % format(self.N - 2, ','))
+        self.assertTrue(page.is_visible('#hExtra'))
+        self.page.keyboard.press('ArrowRight')  # IMG_0002
+        self.wait_painted()
+        self.assertEqual(self.shown_index(), 2)
+        time.sleep(0.2)
+        self.page.keyboard.press('Space')  # IMG_0002 GOOD, on to IMG_0004
+        self.wait_painted()
+        self.assertEqual(self.shown_index(), 4)
+        self.assertEqual(page.inner_text('#hGoodLabel') + ' ' + page.inner_text('#hGood'), '추가 GOOD 1')
+        self.page.keyboard.press('Escape')
+        self.page.keyboard.press('Enter')  # menu → review
+        page.wait_for_selector('#review.show')
+        page.wait_for_function("document.querySelectorAll('.cell').length === 1")
+        self.assertIn('기존 GOOD 2장', page.inner_text('#rExtra'))
+        page.keyboard.press('Control+s')
+        page.keyboard.press('Enter')  # unseen photos stay REJECT: save anyway
+        page.wait_for_selector('#done.show')
+        self.assertEqual(good_txt.read_bytes(), b'IMG_0001.jpg\r\nIMG_0002.jpg\r\nIMG_0003.jpg\r\n')
+        self.assertNotIn(b'IMG_0002.jpg', reject_txt.read_bytes())
+        self.assertEqual(len(reject_txt.read_bytes().split(b'\r\n')) - 1, self.N - 3)
+        files = os.listdir(self.out)
+        self.assertEqual(len([f for f in files if '_이전_' in f]), 2)
+        added = [f for f in files if '_GOOD_추가_' in f]
+        self.assertEqual(Path(self.out, added[0]).read_bytes(), b'IMG_0002.jpg\r\n')
+        self.assertIn('추가 GOOD', page.inner_text('#doneFiles'))
+
 @unittest.skipIf(sync_playwright is None, 'playwright / Pillow not installed')
 class TenThousandTest(unittest.TestCase):
     def test_ten_thousand_photos(self):
