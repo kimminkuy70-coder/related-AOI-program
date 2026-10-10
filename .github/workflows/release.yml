@@ -4,7 +4,9 @@ name: Release
 # 태그를 푸시하면, 테스트를 통과한 경우에만 그 프로그램의 ZIP을 만들어 GitHub 릴리스로 게시한다.
 #   git tag AOI_Photo_Sorter_v1 && git push origin AOI_Photo_Sorter_v1
 # 태그를 직접 푸시할 수 없으면 Actions 탭에서 이 워크플로를 실행(Run workflow)한다:
-# 실행한 브랜치의 현재 커밋에 태그를 만들어 게시한다(이미 있는 태그는 거부).
+# 실행한 브랜치의 현재 커밋에 태그를 만들어 게시한다. 태그가 이미 있으면(예: GitHub 화면에서
+# 릴리스를 먼저 만든 경우) 지금 커밋의 programs/ 가 태그와 같을 때만 그 릴리스에 ZIP을 올린다.
+# 릴리스가 이미 있으면 새로 만들지 않고 ZIP·제목·노트를 채운다.
 on:
   push:
     tags: ['*_v*']
@@ -36,12 +38,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Refuse an existing tag (manual run)
+      - name: Check an existing tag (manual run)
         if: github.event_name == 'workflow_dispatch'
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null; then
-            echo "::error::태그 ${TAG} 가 이미 있습니다. 새 릴리스 이름(버전)을 쓰세요."
-            exit 1
+            # Only publish when this commit builds exactly the program files the tag points at.
+            git fetch --depth=1 origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            if ! git diff --quiet "refs/tags/${TAG}" HEAD -- programs; then
+              echo "::error::태그 ${TAG} 가 이미 있고 programs/ 내용이 지금 커밋과 다릅니다. 새 릴리스 이름(버전)을 쓰세요."
+              exit 1
+            fi
+            echo "태그 ${TAG} 가 이미 있음: 프로그램 파일이 같으므로 그 릴리스에 ZIP을 올립니다."
           fi
 
       - name: Find the program for this tag
@@ -99,8 +106,14 @@ jobs:
         run: |
           notes="docs/releases/${TAG}.md"
           [ -f "$notes" ] || notes="programs/${DIR}/README_KO.txt"
-          verify=()
-          [ "$GITHUB_EVENT_NAME" = push ] && verify=(--verify-tag)
-          # manual run: gh creates the tag on the commit that was tested and built
-          gh release create "$TAG" "dist/${TAG}.zip" "${verify[@]}" --target "$GITHUB_SHA" \
-            --title "$TITLE" --notes-file "$notes"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # created on the GitHub page first (that also made the tag): attach the ZIP, fill in title/notes
+            gh release upload "$TAG" "dist/${TAG}.zip" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$notes"
+          else
+            verify=()
+            [ "$GITHUB_EVENT_NAME" = push ] && verify=(--verify-tag)
+            # manual run: gh creates the tag on the commit that was tested and built
+            gh release create "$TAG" "dist/${TAG}.zip" "${verify[@]}" --target "$GITHUB_SHA" \
+              --title "$TITLE" --notes-file "$notes"
+          fi

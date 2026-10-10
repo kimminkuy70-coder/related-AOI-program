@@ -297,8 +297,15 @@ class RapidInputTest(unittest.TestCase):
         presses = (['ArrowRight'] * 3 + ['Space']) * 75
         next_at = time.monotonic()
         for key in presses:
-            next_at += 0.05 + (0.15 if key == 'Space' else 0)
-            time.sleep(max(0, next_at - time.monotonic()))
+            if key == 'Space':
+                # A person presses GOOD after looking at the photo: the 150 ms count from when
+                # it is on screen (a busy CI runner may paint a photo later than the key + 50 ms).
+                self.wait_painted()
+                time.sleep(0.15)
+                next_at = time.monotonic()
+            else:
+                next_at += 0.05
+                time.sleep(max(0, next_at - time.monotonic()))
             keyboard.press(key)
         self.wait_painted()
         trace = self.trace()
