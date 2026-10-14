@@ -4,6 +4,7 @@
 - **v2**: `Space` = GOOD + 다음 사진, GOOD 이펙트 최소화 → [11장](#11-v2-변경-v1-사용-피드백)
 - **v3**: 네트워크 폴더 연결 끊김 감지·자동 복구, F5 새로고침 → [12장](#12-v3-네트워크-폴더-연결-끊김-대응)
 - **v5**: 결과 파일을 n차리뷰(날짜·시각) 파일로 정리 → [14장](#14-v5-결과-파일-n차리뷰)
+- **v6**: 상위 폴더 → 하위 폴더별 작업, 연속 넘김 버튼, 설치 없는 단일 .exe → [15장](#15-v6-상위-폴더하위-폴더별-작업-단일-exe)
 - 브랜치: `claude/cool-meitner-n7uz0l`
 - 목적: 네트워크 폴더에 있는 **Reject 사진**(폴더당 최대 1만 장)을 방향키로 넘겨 보면서, GOOD 처리할 Defect 사진만 Space로 골라내고 **GOOD 목록 / REJECT 목록**을 텍스트 파일 2개로 저장
 
@@ -446,3 +447,30 @@ v4는 결과를 `<폴더명>_GOOD.txt` / `_REJECT.txt`에 덮어쓰면서 `_GOOD
 | v4 파일 | 이전 결과로 읽음(회차 = 1 + v4 추가 검토 횟수), 손대지 않음 |
 
 구현: `engine.save_round`(번호·병합·재저장 결정), `list_rounds` / `read_results` / `last_round`. 시험: 단위(회차 이름, 재저장, 최신 판정, v4 호환, 병합), E2E(`test_extra_good_review`, `test_rounds_through_the_screens`).
+
+## 15. v6: 상위 폴더(하위 폴더별 작업), 단일 .exe
+
+### 상위 폴더
+| 항목 | 규칙 |
+|---|---|
+| 찾기 | `engine.FolderTree`: 상위 폴더와 그 아래 4단계까지를 스레드 6개로 동시에 나열(`list_folder` 1회 = 사진 목록 + 하위 폴더). 사진이 있는 폴더만 목록에 넣고, 숨김·시스템·`.`/`$`로 시작하는 폴더는 제외. 화면은 250 ms마다 다시 물어 찾는 대로 보여 줌 |
+| 작업 단위 | 하위 폴더 1개 = 작업 1개(세션, 회차, 추가 GOOD 검토 모두 폴더별). 서버의 `start/check`가 `root`(상위 폴더)를 받음 |
+| 결과 이름 | `engine.result_label`: 상위 폴더에서 연 폴더는 `<상위>_<하위>[_<하위의 하위>]` (결과 폴더 하나에 여러 LOT의 Top/Bottom 같은 같은 이름이 섞여도 구분). 직접 연 폴더는 v5와 같이 폴더명 |
+| 다시 읽지 않기 | 목록을 만들 때 읽은 폴더 목록은 60초 동안 보관(전체 20만 이름까지): 바로 시작하면 다시 나열하지 않음. 폴더를 열면 목록 찾기는 멈춤(사진 읽기가 먼저), 목록으로 돌아오면 끝나지 않은 찾기만 다시 |
+| 상태 표시 | 결과 폴더를 한 번 나열해 이름만으로 최신 회차를 판단(`results_index`, 2초 캐시, 저장하면 비움). 세션 요약은 파일이 바뀔 때만 다시 읽음 |
+| 이동 | ↑↓/PageUp/PageDown/Home/End + Enter, 더블클릭. 완료 화면 [다음 폴더 (Enter)], Esc 메뉴 [다음 폴더 (N)], [폴더 목록으로] |
+
+시험: 단위(폴더 찾기·순서·숨김 제외·깊이·접근 불가·취소, 이름 규칙, 결과 색인), 서버(목록 상태, 다시 읽지 않기, 같은 회차 다시 저장, 직접 연 경우 이름), E2E(`test_parent_folder_by_subfolders`: 목록 → ↑↓ → 저장 → 다음 폴더 → 목록 상태 → 더블클릭).
+
+### 연속 넘김
+선별 화면 HUD의 `#hRepeat` 버튼이 `arrow_repeat`을 켜고 끄고 `api/options`로 settings.json에 저장한다(화면이 바꿀 수 있는 설정은 `Settings.OPTIONS`만). ON이면 화살표 auto-repeat를 `arrow_repeat_ms`(기본 100 ms)마다 1장 받아 준다. → 는 그대로 "현재 사진이 그려진 뒤에만" 규칙을 지키므로 건너뛰는 사진이 없다. Space auto-repeat는 계속 무시. 시험: 서버(저장·검증·다음 실행), E2E(`test_hold_to_page_button`).
+
+### 단일 .exe
+| 항목 | 내용 |
+|---|---|
+| 빌드 | `tools/build_exe.py`: PyInstaller onefile, windowed. 앱 파일 + `app_manifest.json` + `ui/`를 넣고, pywebview(WebView2 DLL·JS)·pythonnet·clr_loader는 각 패키지의 PyInstaller 훅이 수집. 설치 환경은 `requirements.txt` + `constraints.txt` 그대로 |
+| 실행 | `app.py`가 `sys.frozen`이면 환경 점검·복구(setup_env)를 건너뜀. 데이터 폴더·단일 실행·WebView2 프로필은 .vbs 버전과 같음 |
+| 검증 | `selftest.py`: `.exe --selftest`(패키지·화면 파일·서버·사진 폴더 정리·저장), `--selftest-window`(WebView2 창에서 app.js 실행, 버전 표시 확인). 결과는 JSON 파일 + 종료 코드 |
+| CI | `.github/workflows/build-exe.yml`(Windows, PR·수동·릴리스에서 호출) → 아티팩트. `release.yml`이 불러 `"exe": true`인 프로그램은 `<릴리스>.exe`를 ZIP과 함께 게시(없으면 실패) |
+| 한계 | 코드 서명 없음: 처음 실행 때 SmartScreen 경고가 뜰 수 있음. onefile은 실행할 때마다 임시 폴더에 풀어 1~3초 더 걸림 |
+

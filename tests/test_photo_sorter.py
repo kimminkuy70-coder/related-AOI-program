@@ -126,6 +126,83 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(seen[-1], 10000)
 
 
+class FolderTreeTest(unittest.TestCase):
+    """v6: a parent folder: every folder with photos at and below it, listed in the background."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix='LOT7_')
+        for sub, count in (('Top', 3), ('B/X', 2), ('B/Y', 0), ('.thumbs', 4), ('$RECYCLE.BIN', 1), ('C', 0),
+                           ('Top/deep', 1), ('img10', 1), ('img2', 1)):
+            folder = os.path.join(self.root, *sub.split('/'))
+            os.makedirs(folder, exist_ok=True)
+            for i in range(count):
+                Path(folder, 'P_%d.jpg' % i).write_bytes(b'x' * (i + 1))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def finished(self, tree):
+        self.assertTrue(wait_until(lambda: tree.state != 'running'))
+        return tree.snapshot()
+
+    def test_finds_photo_folders_and_skips_hidden_ones(self):
+        tree = engine.FolderTree(self.root)
+        snap = self.finished(tree)
+        self.assertEqual((snap['state'], snap['root_listed'], snap['failed'], snap['pending']), ('done', True, 0, 0))
+        self.assertEqual([(e['parts'], e['count']) for e in snap['entries']],
+                         [(['B', 'X'], 2), (['img2'], 1), (['img10'], 1), (['Top'], 3), (['Top', 'deep'], 1)])
+        self.assertEqual(snap['entries'][3]['path'], os.path.join(self.root, 'Top'))
+        # a folder opened right after: its listing is reused, not read again
+        self.assertEqual(tree.listing(os.path.join(self.root, 'Top')), (['P_0.jpg', 'P_1.jpg', 'P_2.jpg'], [1, 2, 3]))
+        self.assertIsNone(tree.listing(os.path.join(self.root, 'C')))
+        # photos directly in the parent folder make it an entry of its own (first)
+        Path(self.root, 'own.jpg').write_bytes(b'1')
+        snap = self.finished(engine.FolderTree(self.root))
+        self.assertEqual((snap['entries'][0]['parts'], snap['entries'][0]['count'], snap['found']), ([], 1, 1))
+        # a folder scanned again when opened updates its count
+        tree.update(os.path.join(self.root, 'C'), ['a.jpg'])
+        tree.update(os.path.join(self.root, 'Top'), [])
+        self.assertEqual([e['parts'] for e in tree.snapshot()['entries']], [['B', 'X'], ['C'], ['img2'], ['img10'], ['Top', 'deep']])
+
+    def test_depth_limit_reuse_time_and_unreadable_folders(self):
+        calls = []
+
+        def lister(folder, progress=None, cancel=None):
+            calls.append(folder)
+            if folder.endswith('X'):
+                raise PermissionError(5, 'Access is denied')
+            return engine.list_folder(folder, progress, cancel)
+
+        tree = engine.FolderTree(self.root, max_depth=1, reuse_seconds=0, lister=lister)
+        snap = self.finished(tree)
+        self.assertEqual([e['parts'] for e in snap['entries']], [['img2'], ['img10'], ['Top']])  # B/X, Top/deep: too deep
+        self.assertEqual(snap['failed'], 0)
+        self.assertIsNone(tree.listing(os.path.join(self.root, 'Top')))  # too old to reuse
+        snap = self.finished(engine.FolderTree(self.root, lister=lister))
+        self.assertEqual((snap['state'], snap['failed']), ('done', 1))  # no access to B/X: the others still listed
+        broken = engine.FolderTree(os.path.join(self.root, 'missing'))
+        snap = self.finished(broken)
+        self.assertEqual((snap['state'], snap['entries']), ('error', []))
+        self.assertIn('폴더를 읽을 수 없습니다', snap['error'])
+
+    def test_cancel_stops_and_drops_cut_short_listings(self):
+        gate = threading.Event()
+
+        def lister(folder, progress=None, cancel=None):
+            if folder != self.root:
+                gate.wait(5)
+            return engine.list_folder(folder, progress, cancel)
+
+        tree = engine.FolderTree(self.root, lister=lister)
+        self.assertTrue(wait_until(lambda: tree.snapshot()['root_listed']))
+        tree.cancel()
+        gate.set()
+        time.sleep(0.2)
+        snap = tree.snapshot()
+        self.assertEqual((snap['state'], snap['entries']), ('stopped', []))
+        self.assertIsNone(tree.listing(os.path.join(self.root, 'Top')))
+
+
 class CacheTest(unittest.TestCase):
     def make(self, n=300, sizes=None, reader=None, **overrides):
         names = ['%04d.jpg' % i for i in range(n)]
@@ -362,6 +439,34 @@ class OutputTest(unittest.TestCase):
                          {'추가GOOD': 'LOT9_3차리뷰_20261010_1029_추가GOOD.txt', 'GOOD': 'LOT9_3차리뷰_20261010_1029_GOOD.txt',
                           'REJECT': 'LOT9_3차리뷰_20261010_1029_REJECT.txt'})
 
+    def test_subfolder_labels(self):
+        root = os.path.join(tempfile.gettempdir(), 'LOT123')
+        top = os.path.join(root, 'Top')
+        self.assertEqual(engine.result_label(top, root), 'LOT123_Top')
+        self.assertEqual(engine.result_label(os.path.join(root, 'A', 'B:1'), root), 'LOT123_A_B_1')
+        self.assertEqual(engine.result_label(root, root), 'LOT123')  # the parent folder's own photos
+        self.assertEqual(engine.result_label(top), 'Top')  # opened directly: as in v5
+        self.assertEqual(engine.result_label(top, os.path.join(tempfile.gettempdir(), 'OTHER')), 'Top')
+        self.assertEqual(engine.relative_parts(root, os.path.join(root, 'A', 'B')), ['A', 'B'])
+        self.assertIsNone(engine.relative_parts(top, root))
+        result = engine.save_round(self.out, top, ['a.jpg', 'b.jpg'], ['b.jpg'], label='LOT123_Top')
+        self.assertEqual(os.path.basename(result['good_path']), 'LOT123_Top_1차리뷰_%s_GOOD.txt' % result['when'])
+        self.assertEqual(engine.read_results(self.out, top, 'LOT123_Top')['good'], ['b.jpg'])
+        self.assertIsNone(engine.read_results(self.out, top))  # 'Top' alone is another label
+
+    def test_results_index(self):
+        for name in ('LOT1_Top_1차리뷰_20261001_0900_GOOD.txt', 'LOT1_Top_1차리뷰_20261001_0900_REJECT.txt',
+                     'LOT1_Top_2차리뷰_20261002_0900_GOOD.txt', 'LOT1_Top_2차리뷰_20261002_0900_REJECT.txt',
+                     'LOT1_Top_2차리뷰_20261002_0900_추가GOOD.txt', 'lot1_bottom_3차리뷰_20261003_0900_GOOD.txt',
+                     'LOT1_Side_GOOD.txt', 'LOT1_Side_REJECT.txt', 'LOT1_Side_GOOD_추가_20261009_1000.txt',
+                     'LOT1_Top_GOOD.txt', 'notes.txt'):
+            Path(self.out, name).write_bytes(b'')
+        index = engine.results_index(self.out)
+        self.assertEqual(index['lot1_top'], {'round': 2, 'time': '2026-10-02 09:00', 'legacy': False})
+        self.assertEqual(index['lot1_side'], {'round': 2, 'time': '', 'legacy': True})  # v4 files + one v4 extra review
+        self.assertNotIn('lot1_bottom', index)  # GOOD without REJECT is not a result
+        self.assertEqual(engine.results_index(os.path.join(self.out, 'missing')), {})
+
     def test_writable_check(self):
         self.assertEqual(engine.check_writable(self.out), (True, ''))
         self.assertEqual(os.listdir(self.out), [])
@@ -521,6 +626,22 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
         return self.api('state')[1]
 
+    def test_home_reports_the_title(self):
+        self.controller.title = 'AOI Photo Sorter v9'
+        self.assertEqual(self.api('home')[1]['title'], 'AOI Photo Sorter v9')
+
+    def test_hold_to_page_switch_is_kept(self):
+        config = self.api('home')[1]['config']
+        self.assertEqual((config['arrow_repeat'], config['arrow_repeat_ms']), (False, 100))
+        status, result = self.api('options', {'arrow_repeat': True})
+        self.assertEqual((status, result['config']['arrow_repeat']), (200, True))
+        self.assertTrue(json.loads(Path(self.base, 'settings.json').read_text(encoding='utf-8'))['arrow_repeat'])
+        self.assertEqual(self.api('options', {'arrow_repeat': 'yes'})[0], 400)  # wrong type
+        self.assertEqual(self.api('options', {'read_threads': 1})[0], 400)  # not a screen switch
+        self.controller.close()
+        self.controller = server.Controller(self.base)  # next start
+        self.assertTrue(self.controller.home()['config']['arrow_repeat'])
+
     def test_token_host_and_page(self):
         self.assertEqual(self.request('GET', '/wrong/')[0], 403)
         self.assertEqual(self.request('GET', '/%s/' % self.web.token, host='evil.example:80')[0], 403)
@@ -632,6 +753,65 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(len(os.listdir(self.out)), 2 + 3)  # round 1 (2 files) + round 2 (3 files)
         checked = self.api('check', {'folder': self.photos, 'output_dir': self.out})[1]
         self.assertEqual((checked['results']['round'], checked['results']['good'], checked['extra_session']), (2, 3, None))
+
+    def test_parent_folder(self):
+        """v6: a parent folder lists its photo folders; each one is opened, saved and resumed
+        on its own, its result files named <parent>_<sub>_…."""
+        parent = tempfile.mkdtemp(prefix='LOTP_')
+        self.addCleanup(shutil.rmtree, parent, True)
+        for sub, count in (('Top', 4), ('Bottom', 2)):
+            os.makedirs(os.path.join(parent, sub))
+            for i in range(count):
+                Path(parent, sub, 'IMG_%d.jpg' % i).write_bytes(Path(self.photos, 'IMG_%d.jpg' % i).read_bytes())
+        label = os.path.basename(parent)
+        self.assertFalse(self.api('tree', {'folder': parent + '_nope', 'output_dir': self.out})[1]['ok'])
+        self.assertTrue(wait_until(lambda: self.api('tree', {'folder': parent, 'output_dir': self.out})[1]['state'] == 'done'))
+        tree = self.api('tree', {'folder': parent, 'output_dir': self.out})[1]
+        self.assertEqual([(e['parts'], e['count'], e['label']) for e in tree['entries']],
+                         [(['Bottom'], 2, label + '_Bottom'), (['Top'], 4, label + '_Top')])
+        self.assertEqual((tree['entries'][1]['results'], tree['entries'][1]['session']), (None, None))
+        top = tree['entries'][1]['path']
+        checked = self.api('check', {'folder': top, 'output_dir': self.out, 'root': parent})[1]
+        self.assertEqual((checked['label'], checked['next_round'], checked['folder']), (label + '_Top', 1, top))
+
+        listed = []
+        real = engine.list_folder
+        engine.list_folder = lambda *a, **k: listed.append(a[0]) or real(*a, **k)
+        self.addCleanup(setattr, engine, 'list_folder', real)
+        self.api('start', {'folder': top, 'output_dir': self.out, 'resume': True, 'root': parent})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
+        self.assertEqual(listed, [])  # listed a moment ago for the list: not read again
+        state = self.api('state')[1]
+        self.assertEqual((state['label'], state['root'], state['parts'], len(state['names'])), (label + '_Top', parent, ['Top'], 4))
+        saved = self.api('save', {'job': state['job'], 'good': [1]})[1]
+        self.assertEqual(os.path.basename(saved['good_path']), '%s_Top_1차리뷰_%s_GOOD.txt' % (label, saved['when']))
+        self.assertEqual(engine.read_session(self.base, top)['saved']['label'], label + '_Top')
+        self.assertEqual(self.api('home')[1]['recent'][0]['folder'], parent)  # the recent list opens the parent again
+
+        tree = self.api('tree', {'folder': parent, 'output_dir': self.out, 'rescan': True})[1]
+        self.assertTrue(wait_until(lambda: self.api('tree', {'folder': parent, 'output_dir': self.out})[1]['state'] == 'done'))
+        tree = self.api('tree', {'folder': parent, 'output_dir': self.out})[1]
+        entry = tree['entries'][1]
+        self.assertEqual((entry['results']['round'], entry['session']['saved']['good'], entry['extra_session']), (1, 1, None))
+        checked = self.api('check', {'folder': top, 'output_dir': self.out, 'root': parent})[1]
+        self.assertEqual((checked['results']['good'], checked['next_round']), (1, 2))
+        # resumed through the parent: saving again rewrites the same round
+        self.api('start', {'folder': top, 'output_dir': self.out, 'resume': True, 'root': parent})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
+        again = self.api('save', {'job': self.api('state')[1]['job'], 'good': [1, 2]})[1]
+        self.assertEqual((again['round'], again['good_path']), (1, saved['good_path']))
+        # the same folder opened directly is named as in v5 (Top_…): its own rounds, not that one
+        self.api('start', {'folder': top, 'output_dir': self.out, 'resume': True})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
+        state = self.api('state')[1]
+        self.assertEqual((state['label'], state['root'], state['round']), ('Top', '', 1))
+        direct = self.api('save', {'job': state['job'], 'good': [0]})[1]
+        self.assertEqual((direct['round'], os.path.basename(direct['good_path'])), (1, 'Top_1차리뷰_%s_GOOD.txt' % direct['when']))
+        self.assertEqual(Path(saved['good_path']).read_bytes(), b'IMG_1.jpg\r\nIMG_2.jpg\r\n')
+        # the parent folder itself has no photos: a clear message
+        self.api('start', {'folder': parent, 'output_dir': self.out, 'root': parent})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'error'))
+        self.assertIn('하위 폴더', self.api('state')[1]['message'])
 
     def test_empty_folder(self):
         empty = tempfile.mkdtemp()

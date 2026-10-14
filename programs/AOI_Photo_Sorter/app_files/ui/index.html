@@ -1,18 +1,22 @@
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AOI Photo Sorter v4</title><link rel="stylesheet" href="styles.css"></head><body>
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AOI Photo Sorter</title><link rel="stylesheet" href="styles.css"></head><body>
 
 <section id="start" class="screen show">
   <div class="card-box">
-    <h1>AOI Photo Sorter <small>v4</small></h1>
+    <h1>AOI Photo Sorter <small id="ver"></small></h1>
     <p class="lead">Reject 사진을 <kbd>→</kbd>로 넘겨 보다가, GOOD 처리할 사진에서 <kbd>Space</kbd>를 누르면 GOOD으로 바뀌고 다음 사진으로 넘어갑니다.</p>
     <div class="field">
-      <span class="label">① 사진 폴더</span>
+      <span class="label">① 사진 폴더 <small class="muted">(상위 폴더를 지정하면 하위 폴더별로 작업)</small></span>
       <div class="row"><input id="folder" spellcheck="false" autocomplete="off" placeholder="\\서버\공유\LOT123  또는  D:\사진\LOT123"><button id="pickFolder" class="ghost bridge-only">찾아보기</button></div>
       <small id="folderMsg" class="msg"></small>
     </div>
     <div class="field">
       <span class="label">② 결과 저장 위치</span>
-      <div class="row"><input id="output" spellcheck="false" autocomplete="off" placeholder="결과 txt 2개를 저장할 폴더"><button id="pickOutput" class="ghost bridge-only">찾아보기</button></div>
+      <div class="row"><input id="output" spellcheck="false" autocomplete="off" placeholder="결과 txt 파일을 저장할 폴더"><button id="pickOutput" class="ghost bridge-only">찾아보기</button></div>
       <small id="outputMsg" class="msg"></small>
+    </div>
+    <div id="subs" class="subs hidden">
+      <div class="subs-head"><b>하위 폴더</b><span id="subsInfo" class="muted"></span><span class="spacer"></span><small class="muted"><kbd>↑</kbd><kbd>↓</kbd> 선택 · <kbd>Enter</kbd> 시작</small><button id="subsRescan" class="ghost small">다시 읽기 (F5)</button></div>
+      <div id="subsList" class="subs-list"></div>
     </div>
     <div id="files" class="files"></div>
     <div id="resume" class="resume hidden"><span id="resumeText"></span><span class="spacer"></span><button id="freshBtn" class="ghost">새로 시작</button></div>
@@ -30,12 +34,12 @@
 <section id="sort" class="screen">
   <header class="hud">
     <b id="hFolder"></b><span id="hPos"></span><span id="hSeen" class="muted"></span><span class="goodcount"><span id="hGoodLabel">GOOD</span> <b id="hGood">0</b></span><span id="hExtra" class="mode extra hidden">추가 검토</span><span id="hMode" class="mode hidden"></span>
-    <span class="spacer"></span><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
+    <span class="spacer"></span><button id="hRepeat" class="toggle" title="켜면 ←/→를 누르고 있는 동안 연속으로 넘깁니다 (사진마다 화면에 그려진 뒤 다음으로)">연속 넘김 OFF</button><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
   </header>
   <div class="bar"><i id="hBar"></i></div>
   <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card hidden"><b id="cardTitle"></b><small id="cardText"></small></div><div id="badge" class="badge">GOOD</div></div>
   <footer class="foot"><span id="fName" class="fname"></span><span id="fTag" class="tag">REJECT</span><span id="fNew" class="tag new hidden">신규</span><span id="fNote" class="note"></span><span class="spacer"></span><span id="fLast" class="muted"></span></footer>
-  <div class="keys"><kbd>→</kbd> 다음 <kbd>Space</kbd> GOOD + 다음 <kbd>←</kbd> 이전 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>F5</kbd> 새로고침 <kbd>Esc</kbd> 메뉴</div>
+  <div class="keys"><kbd>→</kbd> 다음 (연속 넘김 ON: 꾹 누르면 연속) <kbd>Space</kbd> GOOD + 다음 <kbd>←</kbd> 이전 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>F5</kbd> 새로고침 <kbd>Esc</kbd> 메뉴</div>
 </section>
 
 <section id="review" class="screen">
@@ -54,7 +58,7 @@
   <div class="card-box">
     <h2 id="doneTitle">저장 완료</h2>
     <div id="doneFiles" class="donefiles"></div>
-    <div class="row"><button id="doneOpen" class="primary bridge-only">결과 폴더 열기</button><button id="doneReview" class="ghost">확인 화면으로</button><button id="doneNew" class="ghost">새 작업</button></div>
+    <div class="row"><button id="doneNext" class="primary hidden"></button><button id="doneOpen" class="ghost bridge-only">결과 폴더 열기</button><button id="doneReview" class="ghost">확인 화면으로</button><button id="doneNew" class="ghost">새 작업</button></div>
   </div>
 </section>
 

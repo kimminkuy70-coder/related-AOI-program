@@ -1,0 +1,58 @@
+name: Build exe
+
+# 설치 없이 실행되는 단일 .exe(Python과 패키지 포함, PC에는 WebView2 런타임만 필요)를 Windows에서
+# 만들고, 그 .exe의 자체 시험(--selftest: 패키지·화면 파일·사진 폴더 정리·저장, --selftest-window:
+# WebView2 창에서 화면 실행)을 통과하면 아티팩트로 올린다. 릴리스 워크플로가 이것을 불러 릴리스에 붙인다.
+on:
+  pull_request:
+    paths:
+      - 'programs/**'
+      - 'tools/build_exe.py'
+      - '.github/workflows/build-exe.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '릴리스 이름 (비우면 exe를 만드는 모든 프로그램)'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      release:
+        required: true
+        type: string
+    outputs:
+      built:
+        description: 'true when an .exe was built (the program has "exe": true)'
+        value: ${{ jobs.exe.outputs.built }}
+
+permissions:
+  contents: read
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    outputs:
+      built: ${{ steps.build.outputs.built }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build and self-test
+        id: build
+        env:
+          AOI_TOOLS_HOME: ${{ runner.temp }}\aoi_tools
+          PYTHONUTF8: '1'
+          RELEASE: ${{ inputs.release }}
+        run: python tools/build_exe.py --release="$env:RELEASE" --install --test
+
+      - uses: actions/upload-artifact@v4
+        if: steps.build.outputs.built == 'true'
+        with:
+          name: exe
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
