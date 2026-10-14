@@ -117,7 +117,17 @@ class Controller:
                 recent.append(dict(item, summary=summary))
         cfg = self.settings.data
         return {'title': self.title, 'output_dir': cfg['output_dir'], 'recent': recent,
-                'config': {key: cfg[key] for key in ('arrow_repeat', 'space_min_view_ms', 'decode_ahead', 'decode_behind')}}
+                'config': self._config()}
+
+    def _config(self):
+        cfg = self.settings.data
+        return {key: cfg[key] for key in ('arrow_repeat', 'arrow_repeat_ms', 'space_min_view_ms', 'decode_ahead', 'decode_behind')}
+
+    def options(self, payload):
+        """A switch on the screen (연속 넘김): kept in settings.json for the next start."""
+        for key, value in payload.items():
+            self.settings.set_option(key, value)
+        return {'ok': True, 'config': self._config()}
 
     def check(self, folder, output_dir, root=''):
         """folder: the photo folder to open; root: the parent folder it was picked from."""
@@ -488,6 +498,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             name = parts[1] if len(parts) == 2 and parts[0] == 'api' else ''
             if name == 'check':
                 self._json(controller.check(payload.get('folder'), payload.get('output_dir'), payload.get('root')))
+            elif name == 'options':
+                self._json(controller.options(payload))
             elif name == 'tree':
                 self._json(controller.tree(payload.get('folder'), payload.get('output_dir'), bool(payload.get('rescan'))))
             elif name == 'start':

@@ -34,12 +34,12 @@
 <section id="sort" class="screen">
   <header class="hud">
     <b id="hFolder"></b><span id="hPos"></span><span id="hSeen" class="muted"></span><span class="goodcount"><span id="hGoodLabel">GOOD</span> <b id="hGood">0</b></span><span id="hExtra" class="mode extra hidden">추가 검토</span><span id="hMode" class="mode hidden"></span>
-    <span class="spacer"></span><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
+    <span class="spacer"></span><button id="hRepeat" class="toggle" title="켜면 ←/→를 누르고 있는 동안 연속으로 넘깁니다 (사진마다 화면에 그려진 뒤 다음으로)">연속 넘김 OFF</button><span id="hOut" class="muted out"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span>
   </header>
   <div class="bar"><i id="hBar"></i></div>
   <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card hidden"><b id="cardTitle"></b><small id="cardText"></small></div><div id="badge" class="badge">GOOD</div></div>
   <footer class="foot"><span id="fName" class="fname"></span><span id="fTag" class="tag">REJECT</span><span id="fNew" class="tag new hidden">신규</span><span id="fNote" class="note"></span><span class="spacer"></span><span id="fLast" class="muted"></span></footer>
-  <div class="keys"><kbd>→</kbd> 다음 <kbd>Space</kbd> GOOD + 다음 <kbd>←</kbd> 이전 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>F5</kbd> 새로고침 <kbd>Esc</kbd> 메뉴</div>
+  <div class="keys"><kbd>→</kbd> 다음 (연속 넘김 ON: 꾹 누르면 연속) <kbd>Space</kbd> GOOD + 다음 <kbd>←</kbd> 이전 <kbd>F</kbd> 100%/맞춤 · 휠 확대 <kbd>Home</kbd> 처음 <kbd>End</kbd> 작업 위치 <kbd>F5</kbd> 새로고침 <kbd>Esc</kbd> 메뉴</div>
 </section>
 
 <section id="review" class="screen">

@@ -338,6 +338,44 @@ class RapidInputTest(unittest.TestCase):
         reasons = [t.get('reason') for t in self.trace() if t['type'] == 'ignored']
         self.assertEqual((reasons.count('repeat'), reasons.count('too-soon')), (5, 1))
 
+    def test_hold_to_page_button(self):
+        """연속 넘김: OFF, a held → moves one photo; ON (button), it pages on, at most one photo
+        per arrow_repeat_ms, each painted first; the switch is kept for the next start."""
+        page, keyboard = self.page, self.page.keyboard
+        self.start()
+        self.assertEqual(page.inner_text('#hRepeat'), '연속 넘김 OFF')
+        for _ in range(6):  # held: one keydown and five auto-repeats
+            keyboard.down('ArrowRight')
+            time.sleep(0.12)
+        keyboard.up('ArrowRight')
+        self.wait_painted()
+        self.assertEqual(self.js('window.__sorter.S.pos'), 1)
+
+        page.click('#hRepeat')
+        self.assertEqual(page.inner_text('#hRepeat'), '연속 넘김 ON')
+        self.assertTrue(wait(lambda: json.loads(Path(self.base, 'settings.json').read_text(encoding='utf-8')).get('arrow_repeat')))
+        for _ in range(6):  # held again, auto-repeats 120 ms apart: every one pages on
+            keyboard.down('ArrowRight')
+            self.wait_painted()
+            time.sleep(0.12)
+        keyboard.up('ArrowRight')
+        self.wait_painted()
+        self.assertEqual(self.js('window.__sorter.S.pos'), 7)
+        self.assertEqual(self.shown_index(), 7)
+        for _ in range(10):  # auto-repeats 10 ms apart: held back to one photo per 100 ms
+            keyboard.down('ArrowLeft')
+            time.sleep(0.01)
+        keyboard.up('ArrowLeft')
+        self.wait_painted()
+        self.assertLessEqual(7 - self.js('window.__sorter.S.pos'), 3)
+        self.assertGreaterEqual(7 - self.js('window.__sorter.S.pos'), 1)
+        moves = [t for t in self.trace() if t['type'] == 'move' and t['key'] == 'right']
+        self.assertEqual(len(moves), 7)
+        self.assertTrue(all(t['from'] == t['to'] - 1 for t in moves))  # never skipped one
+
+        page.goto(self.web.url)  # next start: still on
+        page.wait_for_function("document.getElementById('hRepeat').textContent === '연속 넘김 ON'")
+
     def test_forward_waits_for_a_loading_photo(self):
         gate = threading.Event()
         self.share.gates['IMG_0003.jpg'] = gate  # this photo is stuck on the network

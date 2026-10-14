@@ -62,6 +62,8 @@ button.small{padding:3px 10px;font-size:12px}
 .goodcount{color:#86efac;font-weight:700}
 .mode{background:#3b2f0b;color:#fcd34d;border-radius:6px;padding:2px 10px;font-weight:700}
 .out{max-width:40vw;overflow:hidden;text-overflow:ellipsis}
+button.toggle{padding:3px 10px;font-size:12px;font-weight:700;background:transparent;border:1px solid var(--line);color:var(--muted);flex:none}
+button.toggle.on{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
 .dot{width:12px;height:12px;border-radius:50%;background:#475569;flex:none}
 .dot.green{background:var(--good)}.dot.yellow{background:var(--warn)}.dot.red{background:var(--reject)}
 .bar{height:4px;flex:none;background:#1e293b;overflow:hidden}

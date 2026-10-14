@@ -630,6 +630,18 @@ class ServerTest(unittest.TestCase):
         self.controller.title = 'AOI Photo Sorter v9'
         self.assertEqual(self.api('home')[1]['title'], 'AOI Photo Sorter v9')
 
+    def test_hold_to_page_switch_is_kept(self):
+        config = self.api('home')[1]['config']
+        self.assertEqual((config['arrow_repeat'], config['arrow_repeat_ms']), (False, 100))
+        status, result = self.api('options', {'arrow_repeat': True})
+        self.assertEqual((status, result['config']['arrow_repeat']), (200, True))
+        self.assertTrue(json.loads(Path(self.base, 'settings.json').read_text(encoding='utf-8'))['arrow_repeat'])
+        self.assertEqual(self.api('options', {'arrow_repeat': 'yes'})[0], 400)  # wrong type
+        self.assertEqual(self.api('options', {'read_threads': 1})[0], 400)  # not a screen switch
+        self.controller.close()
+        self.controller = server.Controller(self.base)  # next start
+        self.assertTrue(self.controller.home()['config']['arrow_repeat'])
+
     def test_token_host_and_page(self):
         self.assertEqual(self.request('GET', '/wrong/')[0], 403)
         self.assertEqual(self.request('GET', '/%s/' % self.web.token, host='evil.example:80')[0], 403)

@@ -31,7 +31,8 @@ DEFAULT_SETTINGS = {
     'behind_bytes': 128 * MB,
     'retry_delays': [0.2, 0.5, 1.0],
     'thumb_size': 192,
-    'arrow_repeat': False,
+    'arrow_repeat': False,  # holding ←/→ pages on (the 연속 넘김 button on the sorting screen)
+    'arrow_repeat_ms': 100,  # while held: one photo per this many ms at most (100 = 10 photos/s)
     'space_min_view_ms': 120,  # Space counts only after the photo was on screen this long
     'decode_ahead': 5,
     'decode_behind': 3,
@@ -405,6 +406,14 @@ class Settings:
                 cfg[key] = cfg[key] // 2
         cfg['read_threads'] = max(2, min(16, int(cfg['read_threads'])))
         return cfg
+
+    OPTIONS = ('arrow_repeat',)  # what the screen may change
+
+    def set_option(self, key, value):
+        if key not in self.OPTIONS or type(value) is not type(DEFAULT_SETTINGS[key]):
+            raise ValueError('bad option %s' % key)
+        self.data[key] = value
+        self.save()
 
     def remember(self, folder, output_dir):
         self.data['output_dir'] = output_dir

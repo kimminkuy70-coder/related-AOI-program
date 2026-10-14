@@ -11,7 +11,8 @@
 //  - Space = GOOD (or back to REJECT if it already was GOOD) and the next photo; it counts
 //    only after the photo has been on screen space_min_view_ms, so a bouncing or doubled
 //    Space never marks the photo that just appeared; auto-repeat of Space is ignored,
-//    arrow auto-repeat too unless arrow_repeat;
+//    arrow auto-repeat too unless 연속 넘김 (arrow_repeat) is on: then a held arrow pages
+//    on, one photo per arrow_repeat_ms at most, each one painted before the next;
 //  - keys are read by physical position (event.code): Korean IME / CapsLock do not matter.
 // Extra GOOD review (v4): the same screens over only the photos still REJECT in the previous
 // result files (S.mode 'extra'); the old GOOD photos are kept by Python and never shown.
@@ -29,7 +30,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => performance.now();
 const labelOf = p => (String(p).split(/[\\/]+/).filter(Boolean).pop() || p);
 
-let cfg = {arrow_repeat: false, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3};
+let cfg = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3};
 
 async function api(name, body) {
   const init = body === undefined ? {cache: 'no-store'}
@@ -89,6 +90,7 @@ let checkTimer = null, checkSeq = 0, lastCheck = null, checking = false, startWh
 async function loadHome() {
   const home = await api('home');
   Object.assign(cfg, home.config || {});
+  renderRepeat();
   if (home.title) { document.title = home.title; $('ver').textContent = home.title.replace(/^AOI Photo Sorter\s*/, ''); }
   if (!$('output').value) $('output').value = home.output_dir || '';
   renderRecent(home.recent || []);
@@ -684,7 +686,7 @@ function note(text, ms = 1500) {
 function move(d, e) {
   const key = d > 0 ? 'right' : 'left';
   const from = cur();
-  if (e && e.repeat && (!cfg.arrow_repeat || now() - S.lastMoveAt < 100)) {  // hold-to-page (option): max 10 photos/s
+  if (e && e.repeat && (!cfg.arrow_repeat || now() - S.lastMoveAt < cfg.arrow_repeat_ms)) {  // 연속 넘김: max 10 photos/s
     record({type: 'ignored', key, reason: 'repeat', i: from});
     return;
   }
@@ -709,6 +711,23 @@ function step(d, key, keyT) {
   present(keyT);
   pump();
   cursorChanged();
+}
+
+// 연속 넘김 button: holding ←/→ pages on. Kept in settings.json for the next start.
+function renderRepeat() {
+  $('hRepeat').textContent = '연속 넘김 ' + (cfg.arrow_repeat ? 'ON' : 'OFF');
+  $('hRepeat').classList.toggle('on', !!cfg.arrow_repeat);
+}
+async function toggleRepeat() {
+  cfg.arrow_repeat = !cfg.arrow_repeat;
+  renderRepeat();
+  note(cfg.arrow_repeat ? '연속 넘김 ON: ←/→를 누르고 있으면 연속으로 넘어갑니다' : '연속 넘김 OFF: 한 번 누를 때 한 장씩', 2500);
+  try {
+    const r = await api('options', {arrow_repeat: cfg.arrow_repeat});
+    if (!r.ok) throw new Error(r.error || 'save failed');
+  } catch (err) {
+    note('연속 넘김 설정을 저장하지 못했습니다 (이번 실행에만 적용)', 3000);
+  }
 }
 
 function lastPhotoNote() {
@@ -1119,6 +1138,7 @@ $('rSave').onclick = () => save();
 $('doneOpen').onclick = () => { const b = bridge(); if (b) b.open_path(S.output); };
 $('doneReview').onclick = () => openReview(true);
 $('doneNew').onclick = () => goHome();
+$('hRepeat').onclick = () => toggleRepeat();
 $('doneNext').onclick = () => openNext();
 $('subsRescan').onclick = () => pollTree(true);
 $('subsList').addEventListener('click', ev => { const el = ev.target.closest('.sub'); if (el) selectEntry(+el.dataset.k); });
