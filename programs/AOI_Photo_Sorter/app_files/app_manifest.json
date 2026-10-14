@@ -1,9 +1,10 @@
 {
   "app_id": "AOI_Photo_Sorter",
-  "title": "AOI Photo Sorter v5",
-  "release": "AOI_Photo_Sorter_v5",
+  "title": "AOI Photo Sorter v6",
+  "release": "AOI_Photo_Sorter_v6",
   "env_revision": 1,
   "entry": "app.py",
+  "exe": true,
   "modules": [
     "webview",
     "PIL"

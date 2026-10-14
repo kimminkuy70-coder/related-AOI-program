@@ -25,10 +25,12 @@ log = logging.getLogger(__name__)
 
 
 class Job:
-    def __init__(self, folder, output_dir, mode=''):
+    def __init__(self, folder, output_dir, mode='', root=''):
         self.id = secrets.token_hex(4)
         self.folder = folder
         self.output_dir = output_dir
+        self.root = root  # the parent folder it was opened through ('' = opened directly)
+        self.label = engine.result_label(folder, root)  # the result files start with this
         self.mode = mode  # '' = normal sort, 'extra' = extra GOOD review of the previous REJECT photos
         self.all_names = []  # extra: the whole folder (names = the photos under review)
         self.base_good = []  # extra: GOOD in the previous result, kept as is
@@ -63,14 +65,18 @@ class Job:
 class Controller:
     """Everything the page can do. Called from the HTTP handler threads."""
 
-    def __init__(self, base_dir, reader=engine.read_file, probe=None):
+    def __init__(self, base_dir, reader=engine.read_file, probe=None, title=''):
         self.base_dir = str(base_dir)
+        self.title = title
         self._probe = probe  # tests: stand-in for checking that the network folder answers
         os.makedirs(self.base_dir, exist_ok=True)
         self.settings = engine.Settings(os.path.join(self.base_dir, 'settings.json'))
         self._reader = reader
         self._lock = threading.RLock()
         self._job = None
+        self._tree = None  # engine.FolderTree of the parent folder on the start screen
+        self._index = (None, 0.0, {})  # (output_dir, time, engine.results_index) for the subfolder list
+        self._summaries = {}  # session file -> (mtime, size, summary)
         self._opened = set()
         self.closing = False
         self._stop = threading.Event()
@@ -110,21 +116,77 @@ class Controller:
                 summary = engine.session_summary(engine.read_session(self.base_dir, item['folder']))
                 recent.append(dict(item, summary=summary))
         cfg = self.settings.data
-        return {'output_dir': cfg['output_dir'], 'recent': recent,
+        return {'title': self.title, 'output_dir': cfg['output_dir'], 'recent': recent,
                 'config': {key: cfg[key] for key in ('arrow_repeat', 'space_min_view_ms', 'decode_ahead', 'decode_behind')}}
 
-    def check(self, folder, output_dir):
+    def check(self, folder, output_dir, root=''):
+        """folder: the photo folder to open; root: the parent folder it was picked from."""
         folder = (folder or '').strip()
         output_dir = (output_dir or '').strip()
+        root = (root or '').strip()
+        label = engine.result_label(folder, root) if folder else ''
         folder_ok, folder_msg = engine.check_folder(folder)
         output_ok, output_msg = engine.check_writable(output_dir)
         session = engine.session_summary(engine.read_session(self.base_dir, folder)) if folder_ok else None
-        results = engine.results_summary(engine.read_results(output_dir, folder)) if folder and output_ok else None
-        last = engine.last_round(output_dir, folder) if folder and output_ok else 0
+        results = engine.results_summary(engine.read_results(output_dir, folder, label)) if folder and output_ok else None
+        last = engine.last_round(output_dir, folder, label) if folder and output_ok else 0
         extra = self._extra_session(folder) if folder_ok and results else None
         return {'folder_ok': folder_ok, 'folder_msg': folder_msg, 'output_ok': output_ok, 'output_msg': output_msg,
-                'label': engine.folder_label(folder) if folder else '', 'next_round': last + 1, 'session': session,
+                'folder': folder, 'label': label, 'next_round': last + 1, 'session': session,
                 'results': results, 'extra_session': engine.session_summary(extra)}
+
+    def tree(self, folder, output_dir, rescan=False):
+        """The photo folders at and below folder (listed in the background; the page asks
+        again while state is 'running'), each with its progress and latest saved round."""
+        folder = (folder or '').strip()
+        output_dir = (output_dir or '').strip()
+        ok, message = engine.check_folder(folder)
+        if not ok:
+            return {'ok': False, 'error': message}
+        with self._lock:
+            tree = self._tree
+            if tree is None or tree.key != engine.path_key(folder) or rescan or tree.state in ('stopped', 'error'):
+                if tree is not None:
+                    tree.cancel()
+                tree = self._tree = engine.FolderTree(folder)
+        out = tree.snapshot()
+        index = self._results_index(output_dir, fresh=rescan)
+        for entry in out['entries']:
+            entry['label'] = engine.result_label(entry['path'], folder)
+            entry['results'] = index.get(entry['label'].casefold())
+            entry['session'] = self._summary(entry['path'])
+            extra = self._summary(entry['path'], 'extra')
+            entry['extra_session'] = extra if extra and not extra.get('saved') else None
+        out.update(ok=True, root=folder)
+        return out
+
+    def _results_index(self, output_dir, fresh=False):
+        # the list is asked for every 250 ms while folders are being found: one listing per 2 s
+        with self._lock:
+            cached_dir, made, index = self._index
+            if not fresh and cached_dir == output_dir and time.monotonic() - made < 2.0:
+                return index
+        index = engine.results_index(output_dir) if output_dir and os.path.isdir(output_dir) else {}
+        with self._lock:
+            self._index = (output_dir, time.monotonic(), index)
+        return index
+
+    def _summary(self, folder, mode=''):
+        """session_summary of a folder, parsed again only when its session file changed."""
+        path = engine.session_path(self.base_dir, folder, mode)
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        stamp = (info.st_mtime_ns, info.st_size)
+        with self._lock:
+            cached = self._summaries.get(path)
+        if cached and cached[0] == stamp:
+            return cached[1]
+        summary = engine.session_summary(engine.read_session(self.base_dir, folder, mode))
+        with self._lock:
+            self._summaries[path] = (stamp, summary)
+        return summary
 
     def _extra_session(self, folder):
         """An extra review that was not saved yet (a saved one is done: the next review
@@ -132,37 +194,53 @@ class Controller:
         data = engine.read_session(self.base_dir, folder, 'extra')
         return data if data and not data.get('saved') else None
 
-    def start(self, folder, output_dir, resume, mode=''):
+    def start(self, folder, output_dir, resume, mode='', root=''):
         folder = (folder or '').strip()
         output_dir = (output_dir or '').strip()
+        root = (root or '').strip()
+        if root and engine.relative_parts(root, folder) is None:
+            root = ''
         mode = 'extra' if mode == 'extra' else ''
-        checked = self.check(folder, output_dir)
+        checked = self.check(folder, output_dir, root)
         if not checked['folder_ok'] or not checked['output_ok']:
             return {'ok': False, 'error': checked['folder_msg'] or checked['output_msg']}
         if mode and not checked['results']:
             return {'ok': False, 'error': '저장 위치에 이 폴더의 이전 결과 파일(%s_n차리뷰_…_GOOD.txt / _REJECT.txt)이 없습니다.'
                     % checked['label']}
-        job = Job(folder, output_dir, mode)
+        job = Job(folder, output_dir, mode, root)
         with self._lock:
             if self._job is not None:
                 self._job.close()
             self._job = job
-        self.settings.remember(folder, output_dir)
+            if self._tree is not None:
+                self._tree.cancel()  # the photo reads come first; a cut-short list is found again later
+        self.settings.remember(root or folder, output_dir)
         self._allow_open(folder, output_dir)
         threading.Thread(target=self._prepare, args=(job, bool(resume)), name='folder-scan', daemon=True).start()
         return {'ok': True, 'job': job.id}
 
     def _prepare(self, job, resume):
         try:
-            names, sizes = engine.scan(job.folder, progress=lambda n: setattr(job, 'found', n), cancel=job.cancel)
+            tree = self._tree
+            listed = tree.listing(job.folder) if tree is not None else None  # listed a moment ago: not again
+            if listed is not None:
+                names, sizes = listed
+                folders = []
+            else:
+                names, sizes, folders = engine.list_folder(job.folder, progress=lambda n: setattr(job, 'found', n),
+                                                           cancel=job.cancel)
+                if tree is not None and not job.cancel.is_set():
+                    tree.update(job.folder, names)
             if job.cancel.is_set():
                 return
             if not names:
                 job.message = '사진이 없습니다 (jpg, jpeg, png, bmp, tif).'
+                if folders:
+                    job.message += '\n하위 폴더가 있으면 하위 폴더 목록이 나타난 뒤 목록에서 골라 시작하세요.'
                 job.phase = 'error'
                 return
             if job.mode == 'extra':
-                results = engine.read_results(job.output_dir, job.folder)
+                results = engine.read_results(job.output_dir, job.folder, job.label)
                 if results is None:
                     raise RuntimeError('이전 결과 파일을 읽을 수 없습니다.')
                 base, targets, fresh, missing = engine.plan_extra(names, results)
@@ -181,9 +259,10 @@ class Controller:
             else:
                 previous = engine.read_session(self.base_dir, job.folder) if resume else None
                 job.all_names = names
-                job.base_round = engine.last_round(job.output_dir, job.folder)
+                job.base_round = engine.last_round(job.output_dir, job.folder, job.label)
                 saved = (previous or {}).get('saved') or {}
-                if saved.get('round') and saved.get('when') and saved.get('output_dir') == job.output_dir:
+                if (saved.get('round') and saved.get('when') and saved.get('output_dir') == job.output_dir
+                        and saved.get('label', engine.folder_label(job.folder)) == job.label):
                     job.own = (saved['round'], saved['when'])  # resumed: saving again rewrites that round
             session = engine.Session(self.base_dir, job.folder, job.output_dir, names, previous, job.mode)
             cfg = self.settings.tuned()
@@ -210,7 +289,8 @@ class Controller:
         if job is None:
             return {'phase': 'idle'}
         out = {'phase': job.phase, 'job': job.id, 'found': job.found, 'message': job.message,
-               'folder': job.folder, 'output_dir': job.output_dir, 'label': engine.folder_label(job.folder),
+               'folder': job.folder, 'output_dir': job.output_dir, 'label': job.label,
+               'root': job.root, 'parts': engine.relative_parts(job.root, job.folder) if job.root else [],
                'round': job.own[0] if job.own else job.base_round + 1}
         if job.phase == 'ready':
             out.update(job.session.state())
@@ -260,20 +340,23 @@ class Controller:
                 # the newer-result check only applies where the review's base was read
                 base_key=job.base_key if same_place else None,
                 own=job.own if same_place else None,
-                merge_newer=bool(payload.get('overwrite')), min_round=job.base_round + 1)
+                merge_newer=bool(payload.get('overwrite')), min_round=job.base_round + 1, label=job.label)
         except OSError as exc:
             log.exception('write outputs failed')
             return {'ok': False, 'error': '결과 파일을 쓰지 못했습니다: %s' % (exc.strerror or exc)}
         if result['ok']:
+            with self._lock:
+                self._index = (None, 0.0, {})  # the subfolder list shows this round when the page asks next
             if output_dir != job.output_dir:
                 job.output_dir = job.session.output_dir = output_dir
-                self.settings.remember(job.folder, output_dir)
+                self.settings.remember(job.root or job.folder, output_dir)
             job.own = (result['round'], result['when'])
             base = result.pop('base')
             if job.mode == 'extra':
                 job.base_good = base  # merged with a newer result: saving again keeps that base
             job.session.saved = {'good': result['good_count'], 'reject': result['reject_count'], 'round': result['round'],
-                                 'when': result['when'], 'output_dir': output_dir, 'time': time.strftime('%Y-%m-%d %H:%M')}
+                                 'when': result['when'], 'output_dir': output_dir, 'label': job.label,
+                                 'time': time.strftime('%Y-%m-%d %H:%M')}
             try:
                 job.session.save(force=True)
             except OSError:
@@ -295,6 +378,8 @@ class Controller:
         self.closing = True
         self._stop.set()
         with self._lock:
+            if self._tree is not None:
+                self._tree.cancel()
             if self._job is not None:
                 self._job.close()
 
@@ -402,10 +487,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise ValueError('bad request')
             name = parts[1] if len(parts) == 2 and parts[0] == 'api' else ''
             if name == 'check':
-                self._json(controller.check(payload.get('folder'), payload.get('output_dir')))
+                self._json(controller.check(payload.get('folder'), payload.get('output_dir'), payload.get('root')))
+            elif name == 'tree':
+                self._json(controller.tree(payload.get('folder'), payload.get('output_dir'), bool(payload.get('rescan'))))
             elif name == 'start':
                 self._json(controller.start(payload.get('folder'), payload.get('output_dir'), payload.get('resume'),
-                                            payload.get('mode') or ''))
+                                            payload.get('mode') or '', payload.get('root')))
             elif name == 'sync':
                 self._json(controller.sync(payload))
             elif name == 'refresh':

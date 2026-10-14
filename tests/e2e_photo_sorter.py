@@ -83,6 +83,7 @@ class SlowShare:
 
 
 CUR = 'window.__sorter.current()'
+TITLE = 'AOI Photo Sorter v9'
 
 
 def wait(predicate, timeout=10.0):
@@ -116,7 +117,7 @@ class RapidInputTest(unittest.TestCase):
         self.out = tempfile.mkdtemp()
         self.base = tempfile.mkdtemp()
         self.share = SlowShare(0.015)
-        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe)
+        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe, title=TITLE)
         self.web = server.Server(self.controller, runtime.inline_ui(APP_DIR / 'ui'))
         self.page = self.browser.new_page(viewport={'width': 1400, 'height': 900})
         self.errors = []
@@ -142,7 +143,7 @@ class RapidInputTest(unittest.TestCase):
         self.web.close()
         self.controller.close()
         Path(self.base, 'settings.json').write_text(json.dumps(settings), encoding='utf-8')
-        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe)
+        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe, title=TITLE)
         self.web = server.Server(self.controller, runtime.inline_ui(APP_DIR / 'ui'))
 
     def card(self):
@@ -445,7 +446,7 @@ class RapidInputTest(unittest.TestCase):
         self.page.close()
         self.web.close()
         self.controller.close()
-        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe)
+        self.controller = server.Controller(self.base, reader=self.share, probe=self.share.probe, title=TITLE)
         self.web = server.Server(self.controller, runtime.inline_ui(APP_DIR / 'ui'))
         self.page = self.browser.new_page(viewport={'width': 1400, 'height': 900})
         self.page.goto(self.web.url)
@@ -555,6 +556,77 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(len(os.listdir(self.out)), 2 + 3)
         self.assertEqual(Path(self.out, second[0]).read_bytes(), b'IMG_0000.jpg\r\n')
         self.assertEqual(Path(self.out, second[2]).read_bytes(), b'')
+
+    def test_parent_folder_by_subfolders(self):
+        """v6: a parent folder: its photo folders listed on the start screen, ↑↓ + Enter opens
+        one, saved as <parent>_<sub>_1차리뷰, then 다음 폴더 (Enter) opens the next one."""
+        parent = tempfile.mkdtemp(prefix='LOTP_')
+        self.addCleanup(shutil.rmtree, parent, True)
+        for sub, first in (('A', 0), ('B', 10), ('B/deep', 20)):
+            os.makedirs(os.path.join(parent, *sub.split('/')), exist_ok=True)
+            for i in range(first, first + 5):
+                shutil.copy(os.path.join(self.photos, 'IMG_%04d.jpg' % i), os.path.join(parent, *sub.split('/')))
+        label = os.path.basename(parent)
+        page, keyboard = self.page, self.page.keyboard
+        page.goto(self.web.url)
+        page.fill('#folder', parent)
+        page.fill('#output', self.out)
+        page.wait_for_function("document.querySelectorAll('#subsList .sub').length === 3")
+        self.assertEqual(page.inner_text('#ver'), 'v9')
+        self.assertEqual([t.split('\n')[0].split('\t')[0] for t in page.locator('#subsList .sub .sname').all_inner_texts()],
+                         ['A', 'B', os.path.join('B', 'deep').replace('/', '\\')])
+        page.wait_for_function("!document.getElementById('startBtn').disabled")
+        self.assertIn('시작: A', page.inner_text('#startBtn'))
+        self.assertIn('%s_A_1차리뷰' % label, page.inner_text('#files'))
+        keyboard.press('ArrowDown')
+        page.wait_for_function("document.getElementById('startBtn').textContent.includes('시작: B') && "
+                               "!document.getElementById('startBtn').disabled")
+        self.assertIn('%s_B_1차리뷰' % label, page.inner_text('#files'))
+        keyboard.press('ArrowUp')
+        keyboard.press('Enter')  # at once, while A is still being checked: starts once the check is back
+        page.wait_for_function('window.__sorter.S.painted === 0', timeout=30000)
+        self.assertEqual(self.shown_index(), 0)
+        self.assertIn('› A', page.inner_text('#hFolder'))
+        self.assertIn('(1/3)', page.inner_text('#hFolder'))
+        time.sleep(0.2)
+        keyboard.press('Space')  # A/IMG_0000 GOOD
+        self.wait_painted()
+        keyboard.press('Escape')
+        page.wait_for_selector('#modal:not(.hidden)')
+        self.assertIn('다음 폴더: B', page.inner_text('#mButtons'))
+        keyboard.press('Enter')  # → review
+        page.wait_for_selector('#review.show')
+        keyboard.press('Control+s')
+        keyboard.press('Enter')  # unseen photos stay REJECT
+        page.wait_for_selector('#done.show')
+        self.assertIn('A — 1차리뷰 저장 완료', page.inner_text('#doneTitle'))
+        self.assertIn('다음 폴더: B', page.inner_text('#doneNext'))
+        good = [f for f in os.listdir(self.out) if f.endswith('_GOOD.txt')]
+        self.assertEqual(len(good), 1)
+        self.assertTrue(good[0].startswith('%s_A_1차리뷰_' % label))
+        self.assertEqual(Path(self.out, good[0]).read_bytes(), b'IMG_0000.jpg\r\n')
+
+        keyboard.press('Enter')  # 다음 폴더: B
+        page.wait_for_function("window.__sorter.S.painted === 0 && window.__sorter.S.parts.join() === 'B'", timeout=30000)
+        self.assertEqual(self.shown_index(), 10)
+        self.assertIn('(2/3)', page.inner_text('#hFolder'))
+        keyboard.press('ArrowRight')
+        self.wait_painted()
+        keyboard.press('Escape')
+        page.wait_for_selector('#modal:not(.hidden)')
+        page.click('#mButtons button:has-text("폴더 목록으로")')
+        page.wait_for_selector('#start.show')
+        page.wait_for_function("document.querySelectorAll('#subsList .sub.done').length === 1 && "
+                               "document.querySelectorAll('#subsList .sub.busy').length === 1")
+        rows = page.locator('#subsList .sub').all_inner_texts()
+        self.assertIn('1차리뷰 저장', rows[0])
+        self.assertIn('진행 중 2/5', rows[1])
+        self.assertIn('미작업', rows[2])
+        page.wait_for_function("document.getElementById('startBtn').textContent.includes('이어하기: B')")  # open last: still selected
+        page.dblclick('#subsList .sub[data-k="2"]')
+        page.wait_for_function("window.__sorter.S.painted === 0 && window.__sorter.S.parts.length === 2", timeout=30000)
+        self.assertEqual(self.shown_index(), 20)
+
 
 @unittest.skipIf(sync_playwright is None, 'playwright / Pillow not installed')
 class TenThousandTest(unittest.TestCase):

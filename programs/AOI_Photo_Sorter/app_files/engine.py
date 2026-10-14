@@ -98,12 +98,39 @@ def _sort_key():
     return _natural_key
 
 
+def _clean_label(text):
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', text).strip(' .')
+
+
 def folder_label(folder):
     """Last path component, used to name the result files (works for \\\\server\\share too)."""
     parts = [p for p in re.split(r'[\\/]+', str(folder)) if p and p != '.']
-    label = parts[-1] if parts else 'photos'
-    label = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', label).strip(' .')
-    return label or 'photos'
+    return _clean_label(parts[-1] if parts else 'photos') or 'photos'
+
+
+def path_key(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def relative_parts(root, folder):
+    """Folder names from root down to folder ([] for root itself), None if folder is not inside root."""
+    try:
+        if os.path.commonpath([path_key(root), path_key(folder)]) != path_key(root):
+            return None
+        rel = os.path.relpath(os.path.abspath(folder), os.path.abspath(root))
+    except ValueError:  # another drive
+        return None
+    return [] if rel == os.curdir else [p for p in re.split(r'[\\/]+', rel) if p]
+
+
+def result_label(folder, root=None):
+    """What the result files of a photo folder start with: the folder name, or for a folder
+    opened through its parent folder <parent>_<sub>[_<subsub>…] (one output folder serves
+    many LOTs, and their subfolders often share names such as Top / Bottom)."""
+    rel = relative_parts(root, folder) if root else None
+    if rel:
+        return _clean_label('_'.join([folder_label(root)] + rel)) or folder_label(folder)
+    return folder_label(folder)
 
 
 def check_folder(folder):
@@ -138,13 +165,14 @@ def check_writable(output_dir):
 # The latest result is the highest n with both GOOD and REJECT. A 1차/full review writes the
 # first two only. One file name per line, folder order, UTF-8, CRLF. The result files are the
 # record, so a result made on another PC works too; v4 files (<folder>_GOOD.txt / _REJECT.txt)
-# are read as the previous result and left as they are.
+# are read as the previous result and left as they are. <folder> is result_label(): for a
+# subfolder opened through its parent folder, <parent>_<sub>. label= overrides it.
 
 RESULT_KINDS = ('추가GOOD', 'GOOD', 'REJECT')
 
 
-def round_names(folder, n, when):
-    label = folder_label(folder)
+def round_names(folder, n, when, label=None):
+    label = label or folder_label(folder)
     return {kind: '%s_%d차리뷰_%s_%s.txt' % (label, n, when, kind) for kind in RESULT_KINDS}
 
 
@@ -162,9 +190,9 @@ def _match_key(name):
     return os.path.normcase(name)  # Windows file names ignore case
 
 
-def list_rounds(output_dir, folder):
+def list_rounds(output_dir, folder, label=None):
     """{(n, 'YYYYMMDD_HHMM'): {kind: path}} of this photo folder's n차리뷰 files."""
-    pattern = re.compile(r'^%s_(\d+)차리뷰_(\d{8})_(\d{4})_(추가GOOD|GOOD|REJECT)\.txt$' % re.escape(folder_label(folder)),
+    pattern = re.compile(r'^%s_(\d+)차리뷰_(\d{8})_(\d{4})_(추가GOOD|GOOD|REJECT)\.txt$' % re.escape(label or folder_label(folder)),
                          re.IGNORECASE)
     rounds = {}
     try:
@@ -179,10 +207,10 @@ def list_rounds(output_dir, folder):
     return rounds
 
 
-def _legacy_results(output_dir, folder):
+def _legacy_results(output_dir, folder, label=None):
     """v4 and earlier: <folder>_GOOD.txt / _REJECT.txt. Its round = 1 + the v4 extra reviews
     saved on it (one <folder>_GOOD_추가_*.txt each)."""
-    label = folder_label(folder)
+    label = label or folder_label(folder)
     out, stamp, newest, found = {'good': [], 'reject': []}, ['legacy'], 0, False
     for key, name in (('good', label + '_GOOD.txt'), ('reject', label + '_REJECT.txt')):
         path = os.path.join(output_dir, name)
@@ -207,12 +235,12 @@ def _legacy_results(output_dir, folder):
     return out
 
 
-def read_results(output_dir, folder):
+def read_results(output_dir, folder, label=None):
     """The latest result for this photo folder, or None.
     {'good': [...], 'reject': [...], 'round': n, 'time': 'YYYY-MM-DD HH:MM', 'key', 'files', 'legacy'}"""
     if not output_dir or not folder:
         return None
-    rounds = list_rounds(output_dir, folder)
+    rounds = list_rounds(output_dir, folder, label)
     for key in sorted((k for k, f in rounds.items() if 'GOOD' in f and 'REJECT' in f), reverse=True):
         files = rounds[key]
         try:
@@ -223,15 +251,15 @@ def read_results(output_dir, folder):
         return {'good': good, 'reject': reject, 'round': n, 'key': [n, when], 'legacy': False,
                 'time': '%s-%s-%s %s:%s' % (when[:4], when[4:6], when[6:8], when[9:11], when[11:13]),
                 'files': [files['GOOD'], files['REJECT']]}
-    return _legacy_results(output_dir, folder)
+    return _legacy_results(output_dir, folder, label)
 
 
-def last_round(output_dir, folder):
+def last_round(output_dir, folder, label=None):
     """Highest round number used so far for this folder (0: none)."""
-    rounds = list_rounds(output_dir, folder)
+    rounds = list_rounds(output_dir, folder, label)
     if rounds:
         return max(n for n, _ in rounds)
-    legacy = _legacy_results(output_dir, folder) if output_dir and folder else None
+    legacy = _legacy_results(output_dir, folder, label) if output_dir and folder else None
     return legacy['round'] if legacy else 0
 
 
@@ -240,6 +268,46 @@ def results_summary(results):
         return None
     return {'good': len(results['good']), 'reject': len(results['reject']), 'time': results['time'],
             'round': results['round'], 'legacy': results['legacy']}
+
+
+_ROUND_FILE = re.compile(r'^(.+)_(\d+)차리뷰_(\d{8})_(\d{4})_(추가GOOD|GOOD|REJECT)\.txt$', re.IGNORECASE)
+
+
+def results_index(output_dir):
+    """The latest result of every label in output_dir from one folder listing (no file is
+    read), for the subfolder list: {label.casefold(): {'round': n, 'time': 'YYYY-MM-DD HH:MM',
+    'legacy': bool}}. Same rule as read_results: the highest n with both GOOD and REJECT,
+    v4 files only where a label has no round yet."""
+    try:
+        entries = os.listdir(output_dir) if output_dir else []
+    except OSError:
+        return {}
+    rounds, legacy, extras = {}, {}, {}
+    for name in entries:
+        match = _ROUND_FILE.match(name)
+        if match:
+            kinds = rounds.setdefault(match.group(1).casefold(), {}).setdefault(
+                (int(match.group(2)), match.group(3) + '_' + match.group(4)), set())
+            kinds.add(match.group(5).upper())
+            continue
+        lower = name.casefold()
+        for suffix in ('_good.txt', '_reject.txt'):
+            if lower.endswith(suffix):
+                legacy.setdefault(lower[:-len(suffix)], set()).add(suffix)
+        if '_good_추가_' in lower:
+            label = lower.rsplit('_good_추가_', 1)[0]
+            extras[label] = extras.get(label, 0) + 1
+    out = {}
+    for label, by_key in rounds.items():
+        done = [key for key, kinds in by_key.items() if 'GOOD' in kinds and 'REJECT' in kinds]
+        if done:
+            n, when = max(done)
+            out[label] = {'round': n, 'legacy': False,
+                          'time': '%s-%s-%s %s:%s' % (when[:4], when[4:6], when[6:8], when[9:11], when[11:13])}
+    for label in legacy:
+        if label not in out:
+            out[label] = {'round': 1 + extras.get(label, 0), 'time': '', 'legacy': True}
+    return out
 
 
 def plan_extra(names, results):
@@ -264,7 +332,7 @@ def plan_extra(names, results):
 
 
 def save_round(output_dir, folder, all_names, picked, base_good=None, base_key=None, own=None,
-               merge_newer=False, min_round=1):
+               merge_newer=False, min_round=1, label=None):
     """Write this review as a new round, never touching an earlier one.
 
     all_names: every photo of the folder (folder order); picked: the names chosen GOOD here.
@@ -272,8 +340,8 @@ def save_round(output_dir, folder, all_names, picked, base_good=None, base_key=N
     review, two files). base_key: the result the extra review started from; if a newer one
     appeared since (saved on another PC) nothing is written unless merge_newer, which takes
     that newer GOOD as the base. own: (n, when) this review saved before: saving again
-    rewrites that round as long as nothing newer exists."""
-    latest = read_results(output_dir, folder)
+    rewrites that round as long as nothing newer exists. label: see result_label()."""
+    latest = read_results(output_dir, folder, label)
     latest_key = latest['key'] if latest else None
     base = base_good
     merged = False
@@ -287,13 +355,13 @@ def save_round(output_dir, folder, all_names, picked, base_good=None, base_key=N
                 newer = set(_match_key(x) for x in latest['good'])
                 base = [x for x in all_names if _match_key(x) in newer]
                 merged = True
-        n = max(last_round(output_dir, folder) + 1, min_round)
+        n = max(last_round(output_dir, folder, label) + 1, min_round)
         when = time.strftime('%Y%m%d_%H%M')
     good = set(base or ()) | set(picked)
     good_lines = [x for x in all_names if x in good]
     reject_lines = [x for x in all_names if x not in good]
     added_lines = None if base is None else [x for x in all_names if x in set(picked) and x not in set(base)]
-    names = round_names(folder, n, when)
+    names = round_names(folder, n, when, label)
     paths = {}
     # GOOD last: a round counts once GOOD and REJECT both exist
     for kind, lines in (('추가GOOD', added_lines), ('REJECT', reject_lines), ('GOOD', good_lines)):
@@ -353,18 +421,34 @@ class Settings:
 
 # ---------------------------------------------------------------- scan
 
-def scan(folder, progress=None, cancel=None, exts=IMAGE_EXTS):
-    """Photos directly inside folder, Explorer order. One os.scandir pass: on Windows
-    the size comes with the directory listing, so there is no per-file round trip."""
-    found = []
+_SKIP_ATTRIBUTES = 0x2 | 0x4  # FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
+
+
+def _skip_folder(entry):
+    """Hidden and system folders ($RECYCLE.BIN, System Volume Information, .thumbnails …)."""
+    if entry.name.startswith(('.', '$')):
+        return True
+    try:
+        return bool(getattr(entry.stat(follow_symlinks=False), 'st_file_attributes', 0) & _SKIP_ATTRIBUTES)
+    except OSError:
+        return True
+
+
+def list_folder(folder, progress=None, cancel=None, exts=IMAGE_EXTS):
+    """One os.scandir pass over a folder: (photo names, sizes, subfolder names), Explorer
+    order. On Windows the size and the folder flag come with the directory listing, so
+    there is no per-file round trip."""
+    found, folders = [], []
     with os.scandir(folder) as entries:
         for entry in entries:
             if cancel is not None and cancel.is_set():
                 break
-            if not entry.name.lower().endswith(exts):
-                continue
             try:
-                if not entry.is_file():
+                if entry.is_dir():
+                    if not _skip_folder(entry):
+                        folders.append(entry.name)
+                    continue
+                if not entry.name.lower().endswith(exts) or not entry.is_file():
                     continue
                 size = entry.stat().st_size
             except OSError:
@@ -374,9 +458,136 @@ def scan(folder, progress=None, cancel=None, exts=IMAGE_EXTS):
                 progress(len(found))
     key = _sort_key()
     found.sort(key=lambda item: key(item[0]))
+    folders.sort(key=key)
     if progress is not None:
         progress(len(found))
-    return [name for name, _ in found], [size for _, size in found]
+    return [name for name, _ in found], [size for _, size in found], folders
+
+
+def scan(folder, progress=None, cancel=None, exts=IMAGE_EXTS):
+    """Photos directly inside folder (subfolders are separate photo folders), Explorer order."""
+    names, sizes, _ = list_folder(folder, progress, cancel, exts)
+    return names, sizes
+
+
+class FolderTree:
+    """The photo folders at and below a parent folder, found in the background.
+
+    One listing per folder (the same one scan() makes) gives its photos and its subfolders.
+    A network share answers each listing slowly, so folders are listed in parallel and the
+    list grows while the user looks at it. Hidden/system folders and folders deeper than
+    max_depth below the parent are skipped. A finished listing is kept reuse_seconds (up to
+    keep_names names in all), so starting a folder right after does not list it again."""
+
+    def __init__(self, root, threads=6, max_depth=4, max_folders=2000, keep_names=200000,
+                 reuse_seconds=60.0, lister=None):
+        self.root = root
+        self.key = path_key(root)
+        self._lister = lister or list_folder
+        self._max_depth = max_depth
+        self._max_folders = max_folders
+        self._keep_names = keep_names
+        self._reuse = reuse_seconds
+        self._sort = _sort_key()
+        self._cond = threading.Condition()
+        self._queue = [(root, ())]
+        self._pending = 1  # queued or being listed
+        self._seen = 1
+        self._entries = {}  # path key -> {'path', 'parts', 'count'}
+        self._listings = {}  # path key -> (monotonic time, names, sizes)
+        self._cancel = threading.Event()
+        self.state = 'running'  # running | done | stopped | error
+        self.error = ''
+        self.listed = self.failed = 0
+        self.root_listed = False
+        self.found = 0  # photos found while listing the parent folder itself
+        for number in range(threads):
+            threading.Thread(target=self._work, name='folder-tree-%d' % number, daemon=True).start()
+
+    def cancel(self):
+        """Stop listing (a photo folder is being opened: its reads come first)."""
+        with self._cond:
+            self._cancel.set()
+            if self.state == 'running':
+                self.state = 'stopped'
+            self._cond.notify_all()
+
+    def snapshot(self):
+        with self._cond:
+            entries = sorted(self._entries.values(), key=lambda e: [self._sort(p) for p in e['parts']])
+            return {'state': self.state, 'error': self.error, 'listed': self.listed, 'pending': self._pending,
+                    'failed': self.failed, 'root_listed': self.root_listed, 'found': self.found,
+                    'entries': [dict(e) for e in entries]}
+
+    def listing(self, folder):
+        """(names, sizes) of folder if it was listed less than reuse_seconds ago, else None."""
+        with self._cond:
+            kept = self._listings.get(path_key(folder))
+            if kept and time.monotonic() - kept[0] < self._reuse:
+                return list(kept[1]), list(kept[2])
+            return None
+
+    def update(self, folder, names):
+        """A photo folder was scanned again when it was opened: keep its count current."""
+        parts = relative_parts(self.root, folder)
+        if parts is None:
+            return
+        with self._cond:
+            key = path_key(folder)
+            if names:
+                self._entries[key] = {'path': self._entries.get(key, {}).get('path', folder), 'parts': parts,
+                                      'count': len(names)}
+            else:
+                self._entries.pop(key, None)
+
+    def _found(self, count):
+        with self._cond:
+            self.found = count
+
+    def _work(self):
+        while True:
+            with self._cond:
+                while not self._queue and self._pending and not self._cancel.is_set():
+                    self._cond.wait()
+                if self._cancel.is_set() or not self._queue:
+                    return
+                folder, parts = self._queue.pop(0)
+            error = None
+            try:
+                names, sizes, folders = self._lister(folder, progress=None if parts else self._found, cancel=self._cancel)
+            except OSError as exc:
+                error = exc
+            with self._cond:
+                self._pending -= 1
+                if self._cancel.is_set():  # a cut-short listing is never used
+                    self._cond.notify_all()
+                    return
+                if error is not None:
+                    if parts:
+                        self.failed += 1  # no access to one subfolder: the others still count
+                    else:
+                        self.state = 'error'
+                        self.error = '폴더를 읽을 수 없습니다: %s' % (error.strerror or error)
+                else:
+                    self.listed += 1
+                    if not parts:
+                        self.root_listed = True
+                    key = path_key(folder)
+                    if names:
+                        self._entries[key] = {'path': folder, 'parts': list(parts), 'count': len(names)}
+                        kept = sum(len(v[1]) for v in self._listings.values())
+                        if kept + len(names) <= self._keep_names:
+                            self._listings[key] = (time.monotonic(), names, sizes)
+                    if len(parts) < self._max_depth:
+                        for name in folders:
+                            if self._seen >= self._max_folders:
+                                break
+                            self._seen += 1
+                            self._pending += 1
+                            self._queue.append((os.path.join(folder, name), parts + (name,)))
+                if not self._pending and self.state == 'running':
+                    self.state = 'done'
+                self._cond.notify_all()
 
 
 # ---------------------------------------------------------------- image cache

@@ -29,6 +29,18 @@ h2{margin:0}h3{margin:26px 0 8px;font-size:14px;color:var(--muted)}
 .files{color:var(--muted);margin:0 0 12px;min-height:20px}.files b{color:var(--text)}.files .warn-text{color:#fcd34d}
 .resume{display:flex;align-items:center;gap:10px;background:#16233f;border:1px solid #29406b;border-radius:10px;padding:10px 14px;margin-bottom:10px}
 .resume.extra{margin:12px 0 0;background:#13301f;border-color:#1f5b37}
+.subs{margin:0 0 14px;border:1px solid var(--line);border-radius:10px;background:#0d1528;overflow:hidden}
+.subs-head{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.subs-head kbd{min-width:18px;padding:0 4px;font-size:11px}
+button.small{padding:3px 10px;font-size:12px}
+.subs-list{max-height:300px;overflow-y:auto}
+.sub{display:flex;gap:14px;align-items:center;padding:6px 12px;cursor:pointer;border-left:3px solid transparent;user-select:none}
+.sub:hover{background:#13203a}
+.sub.sel{background:#1b2d52;border-left-color:var(--accent)}
+.sub .sname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.sub .scount{color:var(--muted);flex:none;min-width:72px;text-align:right}
+.sub .sstate{color:var(--muted);flex:none;width:250px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub.done .sstate{color:#86efac}.sub.busy .sstate{color:#fcd34d}
 .recent{display:flex;flex-direction:column;gap:6px}
 .recent button{display:flex;gap:12px;text-align:left;background:#0d1528;border:1px solid var(--line);padding:9px 12px}
 .recent button:hover{border-color:var(--muted)}

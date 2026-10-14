@@ -3,12 +3,16 @@ from pathlib import Path
 import logging
 import os
 import subprocess
+import sys
 import runtime
 
 MANIFEST = runtime.load_manifest()
 APP_TITLE = MANIFEST['title']
 UI_DIR = Path(__file__).parent / 'ui'
 DATA_DIR = runtime.TOOLS_ROOT / 'Photo_Sorter'  # settings.json, sessions\
+# The standalone .exe (tools/build_exe.py, PyInstaller): Python and every package are inside,
+# so there is no environment to check or repair; settings and sessions are the same files.
+FROZEN = bool(getattr(sys, 'frozen', False))
 
 # pywebview exposes every public attribute of the js_api object to JS and walks
 # non-callable ones recursively. Everything that is not a JS-callable method is
@@ -49,18 +53,18 @@ def main():
         if not runtime.focus_window(APP_TITLE):
             runtime.message_box(APP_TITLE, '프로그램이 이미 실행 중(또는 시작 중)입니다.', error=False)
         return
-    missing = runtime.missing_modules(MANIFEST)
+    missing = [] if FROZEN else runtime.missing_modules(MANIFEST)
     if missing and runtime.request_repair(MANIFEST, 'missing: ' + ', '.join(missing)):
         return
     try:
         import webview
         import server
     except ImportError as exc:
-        if runtime.is_dependency_error(exc, MANIFEST) and runtime.request_repair(MANIFEST, exc):
+        if not FROZEN and runtime.is_dependency_error(exc, MANIFEST) and runtime.request_repair(MANIFEST, exc):
             return
         raise
     job = runtime.WindowsJob()
-    controller = server.Controller(DATA_DIR)
+    controller = server.Controller(DATA_DIR, title=APP_TITLE)
     web = server.Server(controller, runtime.inline_ui(UI_DIR))
     api = API(webview, controller)
     window = webview.create_window(APP_TITLE, url=web.url, js_api=api, width=1280, height=900, min_size=(960, 680),
@@ -85,6 +89,9 @@ def main():
 
 
 if __name__ == '__main__':
+    if sys.argv[1:2] in (['--selftest'], ['--selftest-window']):  # build check of the .exe
+        import selftest
+        os._exit(selftest.run(sys.argv[1:], APP_TITLE, UI_DIR))
     try:
         main()
     except Exception as exc:
