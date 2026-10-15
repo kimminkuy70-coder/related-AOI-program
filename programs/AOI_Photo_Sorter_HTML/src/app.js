@@ -36,7 +36,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => performance.now();
 const labelOf = p => (String(p).split(/[\\/]+/).filter(Boolean).pop() || p);
 
-let cfg = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3, path_panel: true};
+let cfg = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3, path_panel: true, photo_folders: ''};
 const sepOf = folder => /\\/.test(folder) || !String(folder).includes('/') ? '\\' : '/';
 const joinPath = (folder, name) => String(folder).replace(/[\\/]+$/, '') + sepOf(folder) + name;
 const MIME = {jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff'};
@@ -114,6 +114,7 @@ async function loadHome() {
   const home = await api('home');
   Object.assign(cfg, home.config || {});
   renderRepeat();
+  renderCopyMode();
   renderSide();
   if (home.title) { document.title = home.title; $('ver').textContent = home.title.replace(/^AOI Photo Sorter\s*/, ''); }
   if (!$('output').value) $('output').value = home.output_dir || '';
@@ -777,6 +778,51 @@ async function toggleRepeat() {
   }
 }
 
+// 사진 분류 button (start screen and sorting screen): OFF → GOOD만 → 전체. When on, every save also copies the
+// photos of each result file into a folder of the same name in the result folder (backend Copier, in the
+// background). Off: only the result txt files, as before (for PCs where copying is not wanted or allowed).
+const COPY_MODES = {'': '사진 분류 OFF', good: '사진 분류: GOOD만', all: '사진 분류: 전체'};
+function renderCopyMode() {
+  const mode = cfg.photo_folders || '';
+  $('hCopyMode').textContent = COPY_MODES[mode];
+  $('sCopyMode').textContent = mode === 'good' ? 'GOOD만' : mode === 'all' ? '전체 (GOOD·REJECT)' : 'OFF';
+  for (const id of ['hCopyMode', 'sCopyMode']) $(id).classList.toggle('on', !!mode);
+}
+async function cycleCopyMode() {
+  const mode = {'': 'good', good: 'all', all: ''}[cfg.photo_folders || ''];
+  cfg.photo_folders = mode;
+  renderCopyMode();
+  if (page === 'sort') note(mode === 'good' ? '사진 분류 GOOD만: 저장할 때 GOOD / 추가GOOD 사진을 결과 txt 이름의 폴더에 복사합니다'
+    : mode === 'all' ? '사진 분류 전체: 저장할 때 GOOD / REJECT 모든 사진을 결과 txt 이름의 폴더에 복사합니다 (용량 주의)'
+    : '사진 분류 OFF: 결과 txt만 저장합니다', 3500);
+  try {
+    const r = await api('options', {photo_folders: mode});
+    if (!r.ok) throw new Error(r.error || 'save failed');
+  } catch (err) {
+    note('사진 분류 설정을 저장하지 못했습니다 (이번 실행에만 적용)', 3000);
+  }
+}
+function copyText_(st) {
+  const head = `📁 사진 분류 (${st.round}차리뷰): ${st.folders.join(', ')}`;
+  if (st.state === 'copying') return `${head}\n복사 중… ${fmt(st.done)} / ${fmt(st.total)}장` + (st.queued ? ` · 대기 ${st.queued}건` : '');
+  return `${head}\n${st.stopped ? '중지함' : st.failed ? '일부 실패' : '✓ 완료'}: 복사 ${fmt(st.copied)} · 이미 있음 ${fmt(st.already)}` +
+    (st.removed ? ` · 목록에서 빠진 사진 정리 ${fmt(st.removed)}` : '') +
+    (st.conflict ? ` · 다른 파일이 이미 있어 건너뜀 ${fmt(st.conflict)}` : '') +
+    (st.failed ? ` · 실패 ${fmt(st.failed)} (${st.error})` : '') + (st.stopped ? ` · ${fmt(st.done)} / ${fmt(st.total)}` : '');
+}
+function renderCopy() {
+  const st = Backend.copyStatus();
+  const copying = !!st && st.state === 'copying';
+  put('hCopy', 'text', !st ? '' : copying ? `사진 분류 ${fmt(st.done)}/${fmt(st.total)}` : st.failed ? `사진 분류 실패 ${fmt(st.failed)}장` : '');
+  put('hCopy', 'class', st && !copying && st.failed ? 'muted bad' : 'muted');
+  if (page === 'done' && !$('doneCopy').classList.contains('hidden') && st) {
+    $('doneCopyText').textContent = copyText_(st);
+    $('doneCopyStop').classList.toggle('hidden', !copying);
+    $('doneCopyAgain').classList.toggle('hidden', copying || !(st.failed || st.stopped));
+  }
+}
+setInterval(renderCopy, 400);
+
 // 경로 패널 button: the photo's path on the left of the sorting screen. Kept like 연속 넘김.
 function renderSide() {
   $('hSide').textContent = '경로 패널 ' + (cfg.path_panel ? 'ON' : 'OFF');
@@ -1184,6 +1230,8 @@ function showDone(r) {
   if (next) $('doneNext').textContent = `다음 폴더: ${entryName(next)} (Enter)`;
   $('doneNew').textContent = S.root ? '폴더 목록으로' : '새 작업';
   $('doneAll').classList.toggle('hidden', !inParent());
+  $('doneCopy').classList.toggle('hidden', !r.copy);
+  if (r.copy) $('doneCopyText').textContent = `📁 사진 분류: ${r.copy.folders.join(', ')}\n복사 준비 중… (${fmt(r.copy.count)}장)`;
   $('doneFiles').innerHTML =
     (r.added_path ? `<div><span class="g">추가GOOD</span> <b>${fmt(r.added_count)}</b>장 — 이번 회차에서 새로 GOOD<br><small class="muted">${esc(r.added_path)}</small></div>` : '') +
     `<div><span class="g">GOOD</span> <b>${fmt(r.good_count)}</b>장` + (r.added_path ? ` — 누적 (이전 ${fmt(r.base_count)} + 추가 ${fmt(r.added_count)})` : '') +
@@ -1497,6 +1545,10 @@ $('doneOpen').onclick = () => { const b = bridge(); if (b) b.open_path(S.output)
 $('doneReview').onclick = () => openReview(true);
 $('doneNew').onclick = () => goHome();
 $('hRepeat').onclick = () => toggleRepeat();
+$('hCopyMode').onclick = () => cycleCopyMode();
+$('sCopyMode').onclick = () => cycleCopyMode();
+$('doneCopyStop').onclick = () => Backend.copyStop();
+$('doneCopyAgain').onclick = () => Backend.copyAgain();
 $('hSide').onclick = () => toggleSide();
 $('sideCopy').onclick = () => copyPath();
 $('sDrag').addEventListener('dragstart', ev => {
@@ -1542,7 +1594,10 @@ $('subsList').addEventListener('mousedown', ev => ev.preventDefault());  // keep
 function bridgeReady() { document.querySelectorAll('.bridge-only').forEach(el => el.classList.toggle('hidden', !bridge())); }
 bridgeReady();
 // closing the tab while sorting: Edge asks first (progress is saved every second anyway)
-window.addEventListener('beforeunload', ev => { if (S.job && (page === 'sort' || page === 'review')) { flushSync(); ev.preventDefault(); ev.returnValue = ''; } });
+window.addEventListener('beforeunload', ev => {
+  const copying = (Backend.copyStatus() || {}).state === 'copying';  // the photo copy stops with the page
+  if (copying || (S.job && (page === 'sort' || page === 'review'))) { flushSync(); ev.preventDefault(); ev.returnValue = ''; }
+});
 if (!('showDirectoryPicker' in window)) {
   ask('이 브라우저에서는 실행할 수 없습니다', 'Microsoft Edge(또는 Chrome)로 이 파일을 여세요.\n폴더 접근 기능(File System Access)이 없거나 회사 정책으로 꺼져 있습니다.', OK);
 }

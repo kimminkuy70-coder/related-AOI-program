@@ -29,8 +29,9 @@ const Backend = (() => {
   const CFG = {read_threads: 8, ahead_count: 200, ahead_bytes: 384 * MB, behind_count: 50, behind_bytes: 128 * MB,
     retry_delays: [200, 500, 1000], thumb_size: 192, probe_ms: 2000, stall_ms: 5000, tree_threads: 6, tree_depth: 4,
     tree_folders: 2000, keep_names: 200000, reuse_ms: 60000};
-  const OPTIONS = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, path_panel: true, decode_ahead: 5, decode_behind: 3};
-  const SCREEN_OPTIONS = ['arrow_repeat', 'path_panel'];  // what the screen may change
+  const OPTIONS = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, path_panel: true, decode_ahead: 5, decode_behind: 3,
+    photo_folders: ''};  // 사진 분류: '' off, 'good' GOOD / 추가GOOD folders, 'all' every result file
+  const SCREEN_OPTIONS = {arrow_repeat: null, path_panel: null, photo_folders: ['', 'good', 'all']};  // what the screen may change
 
   class StaleError extends Error { constructor(m) { super(m); this.stale = true; } }
   class ReadError extends Error { constructor(m, kind) { super(m); this.kind = kind || 'read'; } }
@@ -430,9 +431,10 @@ const Backend = (() => {
     let names = await outputNames(out);
     const latest = await readResults(out, names, label);
     const latestKey = latest ? JSON.stringify(latest.key) : null;
-    let base = baseGood, merged = false, n, when;
+    let base = baseGood, merged = false, n, when, rewrote = false;
     if (own && latestKey === JSON.stringify([own[0], own[1]])) {
       [n, when] = own;
+      rewrote = true;
     } else {
       if (baseGood !== null && baseKey !== null && latestKey !== JSON.stringify(baseKey)) {
         if (!mergeNewer) return {ok: false, changed: true, latest_round: latest ? latest.round : 0};
@@ -450,13 +452,14 @@ const Backend = (() => {
     const goodLines = allNames.filter(x => good.has(x)), rejectLines = allNames.filter(x => !good.has(x));
     const addedLines = base === null ? null : allNames.filter(x => pickedSet.has(x) && !baseSet.has(x));
     const file = kind => `${label}_${n}차리뷰_${when}_${kind}.txt`;
-    const paths = {};
+    const paths = {}, written = {};
     for (const [kind, lines] of [['추가GOOD', addedLines], ['REJECT', rejectLines], ['GOOD', goodLines]]) {  // GOOD last: the round counts once both exist
       if (lines === null) continue;
       await writeText(out, file(kind), lines);
       paths[kind] = outDisplay + SEP + file(kind);
+      written[kind] = {file: file(kind), lines};
     }
-    return {ok: true, round: n, when, merged, base, time: whenText(when),
+    return {ok: true, round: n, when, merged, base, time: whenText(when), written, rewrote,
       good_path: paths.GOOD, reject_path: paths.REJECT, added_path: paths['추가GOOD'] || null,
       good_count: goodLines.length, reject_count: rejectLines.length,
       added_count: addedLines === null ? null : addedLines.length,
@@ -812,6 +815,93 @@ const Backend = (() => {
     await saveSettings();
   }
 
+  // ------------------------------------------------------------------ 사진 분류: the photos of each result file in a folder
+  // ON (GOOD만 / 전체): every save copies the photos each result file lists into a folder of the same name
+  // (the file name without .txt) in the result folder. Originals are only read. A file already there is
+  // left as it is (same size: copied before; other size: counted, never overwritten), so a stopped or
+  // failed copy is finished by the next save of that round. Saving the same round again brings its
+  // folders in line: copies of this photo folder's photos that the file no longer lists are removed.
+  // In the background, 3 photos at a time (the read-ahead keeps 8).
+  class CopyTask {
+    constructor(key, out, folders, sync, j, round) {
+      const index = new Map(j.names.map((n, i) => [n, i])), dir = j.cache.dir, handles = j.cache.handles;
+      Object.assign(this, {key, out, folders, sync, round, label: j.label, photoNames: new Set(j.allNames.map(lower)),
+        total: folders.reduce((a, f) => a + f.names.length, 0), done: 0, copied: 0, already: 0, conflict: 0, removed: 0, failed: 0,
+        error: '', stopped: false});
+      this.read = async name => {
+        const h = hooks();
+        if (h.readDelay) await sleep(h.readDelay);
+        if (h.offline || (h.failRead && h.failRead(name))) throw new DOMException('The network path was not found', 'NotReadableError');
+        const i = index.get(name);
+        return ((i !== undefined && handles[i]) || await dir.getFileHandle(name)).getFile();
+      };
+    }
+  }
+  class Copier {
+    constructor() { Object.assign(this, {queue: [], running: null, finished: null, stop: false}); }
+    add(task) { this.queue = this.queue.filter(t => t.key !== task.key); this.queue.push(task); this.run(); }
+    again() {  // the last copy once more (what is there already is skipped)
+      const t = this.running || this.finished;
+      if (!t || this.running) return false;
+      this.add(Object.assign(Object.create(CopyTask.prototype), t, {done: 0, copied: 0, already: 0, conflict: 0, removed: 0, failed: 0, error: '', stopped: false}));
+      return true;
+    }
+    status() {
+      const t = this.running || this.finished;
+      if (!t) return null;
+      return {state: this.running ? 'copying' : 'done', folders: t.folders.map(f => f.name), round: t.round, label: t.label, total: t.total,
+        done: t.done, copied: t.copied, already: t.already, conflict: t.conflict, removed: t.removed, failed: t.failed, error: t.error,
+        stopped: t.stopped, queued: this.queue.length};
+    }
+    async run() {
+      if (this.running) return;
+      while (this.queue.length) {
+        const t = this.running = this.queue.shift();
+        this.stop = false;
+        try { await this.copy(t); } catch (err) { t.failed++; t.error = t.error || errText(err); }
+        this.finished = t;
+        this.running = null;
+      }
+    }
+    async copy(t) {
+      const jobs = [];
+      for (const f of t.folders) {
+        const dir = await t.out.getDirectoryHandle(f.name, {create: true});
+        if (t.sync) {
+          const want = new Set(f.names.map(lower)), stale = [];
+          for await (const [name, h] of dir.entries()) if (h.kind === 'file' && !want.has(lower(name)) && t.photoNames.has(lower(name))) stale.push(name);
+          for (const name of stale) { try { await dir.removeEntry(name); t.removed++; } catch (err) { /* left there */ } }
+        }
+        for (const name of f.names) jobs.push([dir, name]);
+      }
+      let next = 0;
+      await Promise.all(Array.from({length: 3}, async () => {
+        while (next < jobs.length && !this.stop) {
+          const [dir, name] = jobs[next++];
+          try {
+            let existing = null;
+            try { existing = await (await dir.getFileHandle(name)).getFile(); } catch (err) { /* not there yet */ }
+            const source = await t.read(name);
+            if (existing) {
+              if (existing.size === source.size) t.already++; else t.conflict++;
+            } else {
+              const writer = await (await dir.getFileHandle(name, {create: true})).createWritable();
+              try { await writer.write(source); await writer.close(); }
+              catch (err) { await writer.abort().catch(() => {}); throw err; }  // no half-written photo left behind
+              t.copied++;
+            }
+          } catch (err) {
+            t.failed++;
+            if (!t.error) t.error = name + ': ' + errText(err);
+          }
+          t.done++;
+        }
+      }));
+      t.stopped = this.stop;
+    }
+  }
+  const copier = new Copier();
+
   // ------------------------------------------------------------------ page API (server.Controller)
   async function home() {
     const s = await loadSettings();
@@ -833,7 +923,8 @@ const Backend = (() => {
   async function options(payload) {
     const s = await loadSettings();
     for (const [key, value] of Object.entries(payload || {})) {
-      if (!SCREEN_OPTIONS.includes(key) || typeof value !== typeof OPTIONS[key]) return {ok: false, error: 'bad option ' + key, status: 400};
+      const allowed = SCREEN_OPTIONS[key];
+      if (allowed === undefined || typeof value !== typeof OPTIONS[key] || (allowed && !allowed.includes(value))) return {ok: false, error: 'bad option ' + key, status: 400};
       s.options[key] = value;
     }
     await saveSettings();
@@ -1030,7 +1121,22 @@ const Backend = (() => {
         output_dir: output, label: j.label, time: clock()};
       await j.session.save(true);
       result.output_dir = output;
+      const mode = settings.options.photo_folders;
+      if (mode) {
+        const kinds = mode === 'all' ? ['추가GOOD', 'GOOD', 'REJECT'] : ['추가GOOD', 'GOOD'], folders = [];
+        for (const kind of ['추가GOOD', 'GOOD', 'REJECT']) {
+          const w = result.written[kind];
+          if (!w) continue;
+          const name = w.file.replace(/\.txt$/i, '');
+          // REJECT under GOOD만: still kept in line when an earlier save of this round (under 전체) made its folder
+          if (kinds.includes(kind) || (result.rewrote && await outputs.get(output).getDirectoryHandle(name).then(() => true, () => false))) folders.push({name, names: w.lines});
+        }
+        copier.add(new CopyTask(output + '|' + result.written.GOOD.file, outputs.get(output), folders, result.rewrote, j, result.round));
+        result.copy = {folders: folders.map(f => f.name), count: folders.reduce((a, f) => a + f.names.length, 0)};
+      }
     }
+    delete result.written;
+    delete result.rewrote;
     return result;
   }
 
@@ -1124,6 +1230,9 @@ const Backend = (() => {
       return overviewUrls.set(key, URL.createObjectURL(await thumbnail(await overviewBlob(id, g))));
     },
     async overviewImageUrl(id, g) { return URL.createObjectURL(await displayable(await overviewBlob(id, g))); },
+    copyStatus: () => copier.status(),
+    copyStop: () => { copier.stop = true; },
+    copyAgain: () => copier.again(),
     async useRecent(folder) {  // a click on a recent item: ask Edge for access again in one go
       const s = await loadSettings();
       const item = s.recent.find(x => x.folder === folder);

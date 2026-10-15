@@ -102,6 +102,22 @@ READ_DIR = """async (dir) => {
   return out;
 }"""
 
+READ_FOLDERS = """async (dir) => {
+  let h = await navigator.storage.getDirectory();
+  for (const p of dir.split('/')) h = await h.getDirectoryHandle(p, {create: true});
+  const out = {};
+  for await (const [name, d] of h.entries()) {
+    if (d.kind !== 'directory') continue;
+    out[name] = {};
+    for await (const [file, f] of d.entries()) {
+      const bytes = new Uint8Array(await (await f.getFile()).arrayBuffer());
+      let s = ''; for (const b of bytes) s += String.fromCharCode(b);
+      out[name][file] = btoa(s);
+    }
+  }
+  return out;
+}"""
+
 CENTER = """(() => { const c = document.getElementById('view');
   return Array.from(c.getContext('2d').getImageData(c.width >> 1, c.height >> 1, 1, 1).data); })()"""
 
@@ -164,6 +180,13 @@ class HtmlSorterTest(unittest.TestCase):
 
     def read_dir(self, folder):
         return {name: base64.b64decode(b64) for name, b64 in self.js(READ_DIR, folder).items()}
+
+    def read_folders(self, folder):
+        return {name: {f: base64.b64decode(b64) for f, b64 in files.items()} for name, files in self.js(READ_FOLDERS, folder).items()}
+
+    def wait_copied(self, text='✓ 완료'):
+        self.page.wait_for_function("t => document.getElementById('doneCopyText').textContent.includes(t)", arg=text)
+        return self.page.inner_text('#doneCopyText')
 
     def pick(self, field, path):
         self.js('p => window.__picks.push(p)', path)
@@ -251,6 +274,92 @@ class HtmlSorterTest(unittest.TestCase):
         again = self.rounds(files, 2)
         self.assertEqual(again['GOOD.txt'], b'IMG_0000.jpg\r\nIMG_0002.jpg\r\n')
         self.assertEqual(again['추가GOOD.txt'], b'')
+        self.assertEqual(self.read_folders('out'), {})  # 사진 분류 OFF (the default): result files only
+        self.assertFalse(page.is_visible('#doneCopy'))
+
+    def test_photo_folders_all_kept_and_same_round_again(self):
+        """사진 분류 전체: every result file gets a folder of the same name with its photos (the originals'
+        bytes). The switch is kept. The same round saved again brings the folders in line."""
+        page, keyboard = self.page, self.page.keyboard
+        self.photos('photos/LOT_A', 6)
+        page.wait_for_selector('#start.show')
+        self.assertEqual(page.inner_text('#sCopyMode'), 'OFF')
+        page.click('#sCopyMode')
+        self.assertEqual(page.inner_text('#sCopyMode'), 'GOOD만')
+        page.click('#sCopyMode')
+        self.assertEqual(page.inner_text('#sCopyMode'), '전체 (GOOD·REJECT)')
+        time.sleep(0.3)
+        page.goto(self.url)  # closed and opened again
+        page.wait_for_function("document.getElementById('sCopyMode').textContent.startsWith('전체')")
+        self.start()
+        self.assertEqual(page.inner_text('#hCopyMode'), '사진 분류: 전체')
+        time.sleep(0.2)
+        keyboard.press('Space')  # IMG_0000 GOOD
+        self.wait_painted()
+        self.save_from_sort()
+        text = self.wait_copied()
+        self.assertIn('복사 6', text)
+        originals = self.read_dir('photos/LOT_A')
+        files, folders = self.read_dir('out'), self.read_folders('out')
+        self.assertEqual(sorted(name + '.txt' for name in folders), sorted(files))  # one folder per result file, same name
+        good = next(name for name in folders if name.endswith('_GOOD'))
+        reject = next(name for name in folders if name.endswith('_REJECT'))
+        self.assertEqual(folders[good], {'IMG_0000.jpg': originals['IMG_0000.jpg']})
+        self.assertEqual(folders[reject], {name: data for name, data in originals.items() if name != 'IMG_0000.jpg'})
+        self.put('out/%s/메모.txt' % good, b'note')  # not a photo of this folder: never removed
+
+        self.js("() => Backend.call('options', {photo_folders: 'good'})")  # its REJECT folder is still kept in line
+        page.click('#doneReview')  # take IMG_0000 back: the same round saved again
+        page.wait_for_selector('#review.show')
+        page.wait_for_function("document.querySelectorAll('.cell').length === 1")
+        keyboard.press('Space')
+        keyboard.press('Control+s')
+        keyboard.press('Enter')
+        page.wait_for_selector('#done.show')
+        text = self.wait_copied()
+        self.assertIn('복사 1 · 이미 있음 5 · 목록에서 빠진 사진 정리 1', text)
+        self.assertEqual(sorted(self.read_dir('out')), sorted(files))  # no new round
+        folders = self.read_folders('out')
+        self.assertEqual(sorted(folders), sorted([good, reject]))
+        self.assertEqual(folders[good], {'메모.txt': b'note'})
+        self.assertEqual(folders[reject], originals)
+
+    def test_photo_folders_good_only_and_again(self):
+        """사진 분류 GOOD만, switched on while sorting: only GOOD photos are copied. A photo that cannot be
+        read is reported, and [사진 분류 다시 실행] copies the rest without copying a photo twice."""
+        page, keyboard = self.page, self.page.keyboard
+        self.photos('photos/LOT_A', 5)
+        self.start()
+        self.assertEqual(page.inner_text('#hCopyMode'), '사진 분류 OFF')
+        page.click('#hCopyMode')
+        self.assertEqual(page.inner_text('#hCopyMode'), '사진 분류: GOOD만')
+        for _ in range(2):  # IMG_0000, IMG_0001 GOOD
+            time.sleep(0.2)
+            keyboard.press('Space')
+            self.wait_painted()
+        keyboard.press('Escape')
+        keyboard.press('Enter')
+        page.wait_for_selector('#review.show')
+        page.wait_for_function("[...document.querySelectorAll('.cell img')].filter(i => i.naturalWidth > 0).length === 2")
+        self.js("() => { window.__aoiTestHooks.failRead = n => n === 'IMG_0001.jpg'; }")
+        keyboard.press('Control+s')
+        keyboard.press('Enter')
+        page.wait_for_selector('#done.show')
+        text = self.wait_copied('일부 실패')
+        self.assertIn('복사 1', text)
+        self.assertIn('실패 1 (IMG_0001.jpg', text)
+        self.assertTrue(page.is_visible('#doneCopyAgain'))
+        self.js("() => { window.__aoiTestHooks.failRead = null; }")
+        page.click('#doneCopyAgain')
+        text = self.wait_copied()
+        self.assertIn('복사 1 · 이미 있음 1', text)
+        self.assertFalse(page.is_visible('#doneCopyAgain'))
+        originals = self.read_dir('photos/LOT_A')
+        folders = self.read_folders('out')
+        self.assertEqual(len(folders), 1)
+        [(name, copied)] = folders.items()
+        self.assertTrue(name.endswith('_GOOD'))
+        self.assertEqual(copied, {n: originals[n] for n in ('IMG_0000.jpg', 'IMG_0001.jpg')})
 
     def test_fast_keys_on_a_slow_share(self):
         """Keys 25 ms apart while every photo takes 40 ms to read: → never leaves a photo that was not

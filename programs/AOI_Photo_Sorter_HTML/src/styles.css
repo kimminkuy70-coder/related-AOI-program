@@ -155,3 +155,10 @@ button.tab.on.r{background:#3f1d1d;border-color:#ef4444;color:#fca5a5}
 .modal p{margin:0 0 20px;white-space:pre-wrap;color:var(--muted)}
 .modal button.sel{outline:2px solid #93c5fd}
 .cell .cerr{width:184px;height:184px;display:flex;align-items:center;justify-content:center;color:#fca5a5;background:#05080f;font-size:12px}
+
+/* 사진 분류 (HTML version) */
+.copyrow{display:flex;align-items:center;gap:10px;margin:10px 0 0;flex-wrap:wrap}
+.copyrow small{flex:1;min-width:240px}
+.donecopy{margin:-8px 0 20px;background:#0d1528;border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre-line}
+.donecopy .row{margin-top:8px}
+#hCopy.bad{color:#fca5a5}
