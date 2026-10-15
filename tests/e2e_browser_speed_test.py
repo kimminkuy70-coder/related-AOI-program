@@ -9,6 +9,8 @@ file read waits like a network share. Everything else is the page's own code.
 """
 import functools
 import http.server
+import shutil
+import tempfile
 import threading
 import time
 import unittest
@@ -163,6 +165,67 @@ class BrowserSpeedTestPage(unittest.TestCase):
         summary = page.input_value('#summary')
         for part in ('사진 %d장' % (N + 1), '목록 읽기', '첫 사진 표시까지', '동시 16:', '키→화면', '결과 저장 시험: 성공'):
             self.assertIn(part, summary)
+
+    def out_tree(self):
+        return self.js("""(async () => {
+          const out = await (await navigator.storage.getDirectory()).getDirectoryHandle('out');
+          const tree = {};
+          for await (const [name, h] of out.entries()) {
+            if (h.kind !== 'directory') continue;
+            tree[name] = {};
+            for await (const [f, fh] of h.entries()) tree[name][f] = Array.from(new Uint8Array(await (await fh.getFile()).arrayBuffer()).slice(0, 64)).join(',');
+          }
+          return tree; })()""")
+
+    def source_head(self, name):
+        return self.page.evaluate("""async (name) => {
+          const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('LOT_TEST');
+          return Array.from(new Uint8Array(await (await (await dir.getFileHandle(name)).getFile()).arrayBuffer()).slice(0, 64)).join(','); }""", name)
+
+    def test_sort_into_folders_by_result_files(self):
+        """⑤: a folder per result .txt (named like it), the listed photos copied in from the photo
+        folder; UTF-8 (BOM) and ANSI (CP949) lists, names in another case, names not in the folder;
+        running again copies nothing twice and never overwrites a different file."""
+        page = self.page
+        self.pick()
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        good = tmp / 'LOT_TEST_1차리뷰_20261015_1200_GOOD.txt'
+        good.write_bytes('﻿IMG_5.jpg\r\nIMG_7.jpg\r\n불량_없음.jpg\r\n'.encode('utf-8'))
+        reject = tmp / 'LOT_TEST_1차리뷰_20261015_1200_REJECT.txt'
+        reject.write_bytes('IMG_1.jpg\r\nimg_2.JPG\r\n\r\nIMG_3.jpg\r\n'.encode('cp949'))
+        page.set_input_files('#txtInput', [str(good), str(reject)])
+        page.wait_for_function("!document.getElementById('sortGo').disabled")
+        listing = page.inner_text('#sortList')
+        self.assertIn('LOT_TEST_1차리뷰_20261015_1200_GOOD ← 2장 (사진 폴더에 없음 1장)', listing)
+        self.assertIn('LOT_TEST_1차리뷰_20261015_1200_REJECT ← 3장', listing)
+        # a different file already sits where IMG_3.jpg would go: it must stay as it is
+        self.js("""(async () => {
+          const out = await (await navigator.storage.getDirectory()).getDirectoryHandle('out', {create: true});
+          const d = await out.getDirectoryHandle('LOT_TEST_1차리뷰_20261015_1200_REJECT', {create: true});
+          const w = await (await d.getFileHandle('IMG_3.jpg', {create: true})).createWritable(); await w.write('mine'); await w.close(); })()""")
+        page.click('#sortGo')
+        page.wait_for_function("window.__speedTest.R.sort !== ''")
+        result = self.js('window.__speedTest.sortState().result')
+        self.assertEqual((result['copied'], result['already'], result['conflict'], result['failed']), (4, 0, 1, 0))
+        tree = self.out_tree()
+        self.assertEqual(sorted(tree), ['LOT_TEST_1차리뷰_20261015_1200_GOOD', 'LOT_TEST_1차리뷰_20261015_1200_REJECT'])
+        self.assertEqual(sorted(tree['LOT_TEST_1차리뷰_20261015_1200_GOOD']), ['IMG_5.jpg', 'IMG_7.jpg'])
+        self.assertEqual(sorted(tree['LOT_TEST_1차리뷰_20261015_1200_REJECT']), ['IMG_1.jpg', 'IMG_2.jpg', 'IMG_3.jpg'])
+        self.assertEqual(tree['LOT_TEST_1차리뷰_20261015_1200_GOOD']['IMG_7.jpg'], self.source_head('IMG_7.jpg'))
+        self.assertEqual(tree['LOT_TEST_1차리뷰_20261015_1200_REJECT']['IMG_3.jpg'], '109,105,110,101')  # 'mine': kept
+        self.assertIn('다른 파일이 이미 있어 건너뜀 1', page.inner_text('#sortMsg'))
+        self.assertIn('사진 폴더에 없음 1', page.input_value('#summary'))
+
+        page.click('#sortGo')  # again: everything is there already
+        page.wait_for_function("window.__speedTest.sortState().result && window.__speedTest.sortState().result.already === 4")
+        self.assertEqual(self.js('window.__speedTest.sortState().result.copied'), 0)
+
+        page.keyboard.press('Space')  # IMG_1 GOOD: sort by what was picked here
+        page.wait_for_function('window.__speedTest.S.painted === 1')
+        page.click('#sortMine')
+        self.assertIn('LOT_TEST_GOOD ← 1장', page.inner_text('#sortList'))
+        self.assertIn('LOT_TEST_REJECT ← %d장' % N, page.inner_text('#sortList'))
 
     def test_slow_share_never_skips_a_photo(self):
         """60 ms per file: a held → pages on but only over photos that were on screen, and

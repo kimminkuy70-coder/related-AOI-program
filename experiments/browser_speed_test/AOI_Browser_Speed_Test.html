@@ -12,6 +12,8 @@
   3) page through with the same rules as the sorter: read 200 ahead / 50 behind, → only after
      the photo is on screen; the panel shows read-ahead, speed and key → screen time
   4) pick an output folder: write a result .txt (what the sorter would do)
+  5) result .txt files -> a folder per file, named like it, with the listed photos copied into
+     it (originals are only read; an existing file of the same name is never overwritten)
   Copy the summary at the bottom right and send it back.
 -->
 <style>
@@ -48,6 +50,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 h3{margin:4px 0 8px;font-size:14px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
 small.msg{display:block;margin-top:6px;color:var(--muted);white-space:pre-line}
+#sortList{white-space:pre-line;font-size:12.5px;margin-top:8px}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12.5px}
 th,td{padding:3px 4px;border-bottom:1px solid var(--line);text-align:right}
 th:first-child,td:first-child{text-align:left}
@@ -93,6 +96,14 @@ kbd{display:inline-block;padding:0 5px;border:1px solid #334155;border-bottom-wi
       <small id="saveMsg" class="msg">결과 폴더에 AOI_브라우저시험_날짜_시각.txt 를 하나 만듭니다(시험 결과와 Space로 고른 사진 이름).</small>
     </div>
     <div class="step">
+      <h3>⑤ 결과 txt대로 폴더 나눠 복사</h3>
+      <div class="row"><button id="sortTxt" class="ghost" disabled>결과 txt 고르기 (여러 개)</button><button id="sortMine" class="ghost" disabled>지금 고른 GOOD / 나머지로</button></div>
+      <input type="file" id="txtInput" accept=".txt,text/plain" multiple class="hidden">
+      <div id="sortList"></div>
+      <div class="row"><button id="sortGo" disabled>복사할 위치 고르고 시작</button><button id="sortStop" class="ghost hidden">중지</button></div>
+      <small id="sortMsg" class="msg">txt 하나마다 같은 이름의 폴더를 만들고, txt에 적힌 사진을 ①에서 고른 사진 폴더에서 찾아 그 폴더로 복사합니다. 원본은 읽기만 하고, 같은 이름 파일이 이미 있으면 덮어쓰지 않고 건너뜁니다(다시 실행하면 이어서 복사).</small>
+    </div>
+    <div class="step">
       <h3>결과 요약</h3>
       <textarea id="summary" readonly></textarea>
       <div class="row"><button id="copy">결과 복사</button><small id="copyMsg" class="muted"></small></div>
@@ -113,7 +124,7 @@ const collator = new Intl.Collator('ko', {numeric: true, sensitivity: 'base'}); 
 const pct = (list, p) => { if (!list.length) return 0; const s = [...list].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
 // Results that go into the summary
-const R = {started: new Date(), method: '', folder: '', count: 0, tiff: 0, listMs: null, firstPaintMs: null, bench: [], save: '', pickError: ''};
+const R = {started: new Date(), method: '', folder: '', count: 0, tiff: 0, listMs: null, firstPaintMs: null, bench: [], save: '', pickError: '', sort: ''};
 // Viewer state: same rules as the sorter
 const S = {items: [], n: 0, pos: 0, cache: new Map(), inflight: new Set(), order: [], bytes: 0, conc: 8, ahead: 200, behind: 50,
   maxBytes: 384 * 1024 * 1024, paused: false, bmps: new Map(), painted: -1, token: 0, listDoneAt: 0, lastMove: 0,
@@ -160,6 +171,7 @@ async function pickFolder() {
     msg('pickMsg', `목록을 읽는 중 오류: ${err.name}: ${err.message}`, 'bad');
     return;
   }
+  S.dir = dir;
   setFolder(items, dir.name, 'File System Access (showDirectoryPicker)', now() - started);
 }
 
@@ -171,6 +183,7 @@ $('dirInput').addEventListener('change', () => {
   const top = files[0].webkitRelativePath.split('/')[0];
   const items = files.filter(f => EXT.test(f.name) && f.webkitRelativePath.split('/').length === 2)
     .map(f => ({name: f.name, get: async () => f}));
+  S.dir = null;
   setFolder(items, top, 'input webkitdirectory (읽기 전용, 목록 시간은 브라우저 안에서 측정 불가)', null);
 });
 
@@ -190,6 +203,10 @@ function setFolder(items, folder, method, listMs) {
     (listMs != null ? ` · 목록 읽기 ${sec(listMs)}` : ''), 'ok');
   $('bench').disabled = false;
   $('save').disabled = false;
+  $('sortTxt').disabled = $('sortMine').disabled = !env.fsa;
+  if (!env.fsa) msg('sortMsg', '폴더 접근 기능이 없어 폴더를 만들고 복사할 수 없습니다.', 'bad');
+  sortPlan = null;
+  renderSortPlan();
   S.listDoneAt = now();
   S.pos = 0;
   plan();
@@ -543,6 +560,128 @@ async function saveTest() {
   summary();
 }
 
+// ------------------------------------------------------------------ ⑤ result .txt -> folders with the photos copied in
+// One folder per result file, named like the file without .txt; the photos it lists are copied
+// in from the photo folder of ①. Originals are only read. A file already in the folder is left
+// as it is (same size: done before; other size: reported, never overwritten), so a stopped or
+// failed run is finished by running it again.
+let sortPlan = null, sortStop = false;
+
+function decodeText(buffer) {
+  try { return new TextDecoder('utf-8', {fatal: true}).decode(buffer); }  // the sorter writes UTF-8 (BOM is dropped)
+  catch (err) { return new TextDecoder('euc-kr').decode(buffer); }  // edited in Notepad and saved as ANSI (CP949)
+}
+
+async function loadResultTexts(files) {
+  if (!files.length) return;
+  const groups = [];
+  for (const file of files) {
+    const names = decodeText(await file.arrayBuffer()).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    groups.push({folder: file.name.replace(/\.txt$/i, '').replace(/[<>:"/\\|?*]/g, '_'), names, source: file.name});
+  }
+  setSortPlan(groups);
+}
+
+function planFromPicks() {
+  const good = [], rest = [];
+  S.items.forEach((item, i) => (S.good.has(i) ? good : rest).push(item.name));
+  setSortPlan([{folder: R.folder + '_GOOD', names: good, source: '지금 고른 GOOD'}, {folder: R.folder + '_REJECT', names: rest, source: '나머지'}]);
+}
+
+function setSortPlan(groups) {
+  const byName = new Map(S.items.map(item => [item.name.toLowerCase(), item]));  // Windows file names ignore case
+  for (const g of groups) {
+    g.found = g.names.map(n => byName.get(n.toLowerCase())).filter(Boolean);
+    g.missing = g.names.length - g.found.length;
+  }
+  sortPlan = {groups, total: groups.reduce((a, g) => a + g.found.length, 0)};
+  renderSortPlan();
+  $('sortGo').disabled = !sortPlan.total;
+  msg('sortMsg', sortPlan.total ? '[복사할 위치 고르고 시작]을 누르세요. 고른 위치 안에 위 폴더들이 만들어집니다.'
+    : '①의 사진 폴더에서 찾은 사진이 없습니다. 이 txt를 만든 사진 폴더를 ①에서 골랐는지 확인하세요.', sortPlan.total ? '' : 'bad');
+}
+
+function renderSortPlan() {
+  const box = $('sortList');
+  box.textContent = !sortPlan ? '' : sortPlan.groups.map(g =>
+    `📁 ${g.folder} ← ${fmt(g.found.length)}장` + (g.missing ? ` (사진 폴더에 없음 ${fmt(g.missing)}장)` : '')).join('\n');
+}
+
+async function sortIntoFolders() {
+  if (!sortPlan || !sortPlan.total) return;
+  let dest;
+  try {
+    dest = await window.showDirectoryPicker({id: 'aoi-sorted', mode: 'readwrite'});
+  } catch (err) {
+    if (err.name !== 'AbortError') msg('sortMsg', `복사할 위치를 열 수 없습니다 (${err.name}: ${err.message})`, 'bad');
+    return;
+  }
+  let inside = false;  // the photo folder itself, or a folder in it?
+  if (S.dir && typeof S.dir.isSameEntry === 'function') {
+    try { inside = await dest.isSameEntry(S.dir) || !!(await S.dir.resolve(dest)); } catch (err) { /* cannot tell */ }
+  }
+  if (inside && !confirm('사진 폴더 안에 폴더를 만듭니다(원본 사진은 그대로).\n사진 폴더가 아닌 다른 위치를 권장합니다. 계속할까요?')) return;
+  const jobs = [];
+  for (const g of sortPlan.groups) {
+    if (!g.found.length) continue;
+    let folder;
+    try { folder = await dest.getDirectoryHandle(g.folder, {create: true}); }
+    catch (err) { msg('sortMsg', `폴더를 만들 수 없습니다: ${g.folder} (${err.name}: ${err.message})`, 'bad'); return; }
+    for (const item of g.found) jobs.push({item, folder, group: g});
+  }
+  const t = {copied: 0, already: 0, conflict: 0, failed: 0, bytes: 0, done: 0, firstError: ''};
+  sortStop = false;
+  S.paused = true;  // the copy has the network to itself
+  $('sortGo').disabled = $('sortTxt').disabled = $('sortMine').disabled = true;
+  $('sortStop').classList.remove('hidden');
+  const started = now();
+  const show = () => {
+    const secs = (now() - started) / 1000, rate = t.done / Math.max(secs, 0.001);
+    msg('sortMsg', `복사 중… ${fmt(t.done)} / ${fmt(jobs.length)}장 · ${rate.toFixed(1)}장/초 · ${(t.bytes / 1048576 / Math.max(secs, 0.001)).toFixed(1)} MB/초` +
+      (t.done && t.done < jobs.length ? ` · 남은 시간 약 ${Math.ceil((jobs.length - t.done) / rate)}초` : ''));
+  };
+  const ticker = setInterval(show, 250);
+  let next = 0;
+  await Promise.all(Array.from({length: S.conc}, async () => {
+    while (next < jobs.length && !sortStop) {
+      const job = jobs[next++];
+      try {
+        const source = await job.item.get();
+        let existing = null;
+        try { existing = await (await job.folder.getFileHandle(job.item.name)).getFile(); } catch (err) { /* not there yet */ }
+        if (existing) {
+          if (existing.size === source.size) t.already++; else t.conflict++;
+        } else {
+          const writer = await (await job.folder.getFileHandle(job.item.name, {create: true})).createWritable();
+          try { await writer.write(source); await writer.close(); }
+          catch (err) { await writer.abort().catch(() => {}); throw err; }  // no half-written photo left behind
+          t.copied++;
+          t.bytes += source.size;
+        }
+      } catch (err) {
+        t.failed++;
+        if (!t.firstError) t.firstError = `${job.item.name}: ${err.name}: ${err.message}`;
+      }
+      t.done++;
+    }
+  }));
+  clearInterval(ticker);
+  const secs = (now() - started) / 1000;
+  const missing = sortPlan.groups.reduce((a, g) => a + g.missing, 0);
+  R.sort = `${sortPlan.groups.map(g => `${g.folder} ${fmt(g.found.length)}장`).join(', ')} → 복사 ${fmt(t.copied)}, 이미 있음 ${fmt(t.already)}` +
+    (t.conflict ? `, 다른 파일이 이미 있어 건너뜀 ${fmt(t.conflict)}` : '') + (missing ? `, 사진 폴더에 없음 ${fmt(missing)}` : '') +
+    (t.failed ? `, 실패 ${fmt(t.failed)} (${t.firstError})` : '') +
+    ` · ${secs.toFixed(1)}초, ${(t.done / Math.max(secs, 0.001)).toFixed(1)}장/초, ${(t.bytes / 1048576 / Math.max(secs, 0.001)).toFixed(1)} MB/초` +
+    (sortStop ? ` · 중지함 (${fmt(t.done)} / ${fmt(jobs.length)})` : '');
+  msg('sortMsg', (t.failed || sortStop ? '' : '✓ ') + R.sort, t.failed ? 'bad' : sortStop ? 'warn' : 'ok');
+  sortPlan.result = t;
+  $('sortStop').classList.add('hidden');
+  $('sortGo').disabled = $('sortTxt').disabled = $('sortMine').disabled = false;
+  S.paused = false;
+  pump();
+  summary();
+}
+
 // ------------------------------------------------------------------ summary to send back
 function summaryText() {
   const lines = [];
@@ -568,6 +707,7 @@ function summaryText() {
       `최근 읽기 ${sp.perSec.toFixed(1)}장/초, 오류 ${S.errors}`);
   }
   lines.push(`결과 저장 시험: ${R.save || '안 함'}`);
+  if (R.sort) lines.push(`폴더 나눠 복사: ${R.sort}`);
   return lines.join('\n');
 }
 function summary() { $('summary').value = summaryText(); }
@@ -588,11 +728,16 @@ $('pick').onclick = () => (env.fsa ? pickFolder() : pickOldWay());
 $('pickOld').onclick = () => pickOldWay();
 $('bench').onclick = () => bench();
 $('save').onclick = () => saveTest();
+$('sortTxt').onclick = () => { $('txtInput').value = ''; $('txtInput').click(); };
+$('txtInput').addEventListener('change', () => loadResultTexts([...$('txtInput').files]));
+$('sortMine').onclick = () => planFromPicks();
+$('sortGo').onclick = () => sortIntoFolders();
+$('sortStop').onclick = () => { sortStop = true; };
 $('copy').onclick = () => copySummary();
 $('conc').onchange = () => { S.conc = +$('conc').value; pump(); };
 $('ahead').onchange = () => { S.ahead = +$('ahead').value; plan(); pump(); };
 $('stage').addEventListener('mousedown', () => { if (document.activeElement) document.activeElement.blur(); });
-window.__speedTest = {S, R, summaryText};  // read by the automated test
+window.__speedTest = {S, R, summaryText, sortState: () => sortPlan};  // read by the automated test
 summary();
 </script>
 </body>
