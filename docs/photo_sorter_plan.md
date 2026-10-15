@@ -495,3 +495,15 @@ v4는 결과를 `<폴더명>_GOOD.txt` / `_REJECT.txt`에 덮어쓰면서 `_GOOD
 | 증상 | v8 .exe 실행 후 [찾아보기]로 네트워크 폴더를 오가던 중 "트로이 목마"로 종료(v7은 정상) |
 | 원인 | Defender 클라우드 ML(`!ml`)이 미서명 onefile .exe를 해시마다 판정. 처음 보는 파일은 실행을 허용한 뒤 판정이 오면 프로세스를 끝내므로 시작 직후 작업(폴더 고르기) 중에 꺼짐. v7→v8 사이 폴더 고르기(`API.choose_folder`, pywebview FOLDER 대화상자)와 `tools/build_exe.py`는 바뀌지 않음 |
 | 대응 | 버전만 v9로 올려 새 해시로 재빌드(기능은 v8과 같음). README에 Defender 차단·종료 시 ZIP(.vbs, 서명된 python.org Python) 사용 안내. 근본 해결은 코드 서명 또는 배포처 Defender 허용 등록 |
+
+## 18. v10: Python 없는 PC용 포터블 ZIP (.exe 없이, Defender 오탐 회피)
+
+| 항목 | 규칙 |
+|---|---|
+| 문제 | v9까지 ZIP(.vbs)은 PC에 설치된 Python으로 공용 venv를 만들어 실행 → Python이 없는 PC는 설치(winget/다운로드)가 필요. .exe는 미서명 PyInstaller라 Defender `!ml` 오탐 위험 |
+| 방식 | 릴리스 ZIP에 `runtime\` 동봉: NuGet `python` 패키지(PSF 공식 Windows 배포본, python.exe·pythonw.exe·python312.dll PSF 서명) + Windows 휠을 풀어 넣은 `Lib\site-packages`(pywebview, pythonnet, clr_loader, cffi, Pillow, bottle, proxy_tools 등). 이 프로젝트가 만든 실행 파일은 없음 |
+| 빌드 | `tools/build_portable.py` (`app_manifest.json`의 `"portable": true`). Linux에서도 동작: 다운로드·압축 해제만 하고 Windows 코드는 실행하지 않음. pip는 `--platform` 지정 시에도 환경 마커를 빌드 PC 기준으로 평가하므로 `--no-deps`로 하나씩 받고 `Requires-Dist`를 win32 마커로 직접 평가. 휠이 없는 순수 Python 패키지(proxy_tools)는 소스 압축에서 모듈만 복사(setup.py 실행 없음, C 코드·의존성 있으면 거부). `tools/build_release.py --zip`이 이 runtime을 `<릴리스>/runtime/`으로 넣으므로 릴리스 워크플로는 그대로 |
+| 런처 | 포터블 프로그램은 `tools/launcher_portable.vbs`: `runtime\pythonw.exe -E -s app_files\app.py`만 실행. 설치·다운로드·레지스트리(WMI)·winget 없음(오탐 휴리스틱을 피하려고 최소화). `-E -s`로 PC의 다른 Python 환경 변수·사용자 패키지와 섞이지 않음 |
+| 앱 | `app.py`의 `PORTABLE`(실행 Python이 `..\runtime`): .exe처럼 venv 복구(setup_env --repair)를 하지 않고, 패키지가 없으면 "ZIP 전체를 다시 압축 해제" 오류 |
+| .exe | 계속 빌드·자체 시험·첨부(Windows에서 앱 코드를 검증하는 유일한 CI 단계). README는 ZIP을 권장 |
+| 한계 | 서명된 Python이라도 Defender 판정은 PC 정책에 달려 있어 100% 보장은 불가. 포터블 runtime의 실제 Windows 실행은 CI에서 시험하지 않음(워크플로 변경 필요) |

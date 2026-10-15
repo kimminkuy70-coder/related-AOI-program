@@ -13,6 +13,10 @@ DATA_DIR = runtime.TOOLS_ROOT / 'Photo_Sorter'  # settings.json, sessions\
 # The standalone .exe (tools/build_exe.py, PyInstaller): Python and every package are inside,
 # so there is no environment to check or repair; settings and sessions are the same files.
 FROZEN = bool(getattr(sys, 'frozen', False))
+# The portable ZIP (tools/build_portable.py) runs this file with runtime\pythonw.exe next to
+# app_files: the official Python with every package inside. Like the .exe there is nothing to
+# repair; a missing package means the ZIP was not fully extracted.
+PORTABLE = Path(sys.executable).resolve().parent == Path(__file__).resolve().parent.parent / 'runtime'
 
 # pywebview exposes every public attribute of the js_api object to JS and walks
 # non-callable ones recursively. Everything that is not a JS-callable method is
@@ -54,13 +58,16 @@ def main():
             runtime.message_box(APP_TITLE, '프로그램이 이미 실행 중(또는 시작 중)입니다.', error=False)
         return
     missing = [] if FROZEN else runtime.missing_modules(MANIFEST)
+    if missing and PORTABLE:
+        raise RuntimeError('runtime 폴더에 %s 이(가) 없습니다. ZIP 전체를 새 로컬 폴더에 다시 압축 해제하세요.'
+                           % ', '.join(missing))
     if missing and runtime.request_repair(MANIFEST, 'missing: ' + ', '.join(missing)):
         return
     try:
         import webview
         import server
     except ImportError as exc:
-        if not FROZEN and runtime.is_dependency_error(exc, MANIFEST) and runtime.request_repair(MANIFEST, exc):
+        if not FROZEN and not PORTABLE and runtime.is_dependency_error(exc, MANIFEST) and runtime.request_repair(MANIFEST, exc):
             return
         raise
     job = runtime.WindowsJob()

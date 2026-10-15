@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Build check of the standalone .exe, run by tools/build_exe.py on the Windows build machine.
 
-    AOI_Photo_Sorter_v9.exe --selftest report.json          packages and data files inside, the page
+    AOI_Photo_Sorter_v10.exe --selftest report.json          packages and data files inside, the page
                                                              served, a photo folder sorted and saved
-    AOI_Photo_Sorter_v9.exe --selftest-window report.json   the same, then WebView2 opens the page
+    AOI_Photo_Sorter_v10.exe --selftest-window report.json   the same, then WebView2 opens the page
                                                              and app.js runs in it
 
 The .exe has no console: the result is the report file and the exit code (0 = passed).

@@ -1,32 +1,39 @@
-﻿AOI Photo Sorter v9 (GOOD 처리 사진 선별기)
+﻿AOI Photo Sorter v10 (GOOD 처리 사진 선별기)
 
 용도
 - 네트워크 폴더의 Reject 사진(폴더당 최대 1만 장)을 한 장씩 넘겨 보면서
   GOOD 처리할 사진만 Space로 골라내고, GOOD 목록 / REJECT 목록을 텍스트 파일 2개로 저장합니다.
 
-실행 파일 (둘 중 하나)
-- AOI_Photo_Sorter_v9.exe   설치 없이 바로 실행 (권장: 다른 사람에게 줄 때는 이 파일 하나만)
-- AOI_Photo_Sorter_v9.vbs   ZIP 버전: 공용 Python 환경(AOI Matcher 등과 공유)을 써서 실행
+실행 방법 (권장: ZIP, Python 설치 필요 없음)
+- AOI_Photo_Sorter_v10.zip   권장. Python이 없는 PC에서도 압축만 풀면 실행됩니다. (.exe 아님)
+- AOI_Photo_Sorter_v10.exe   설치 없는 단일 .exe. Defender가 막는 PC가 있어 권장하지 않습니다.
+
+ZIP 으로 실행 (Python 설치 없음, 권장)
+1. 릴리스에서 AOI_Photo_Sorter_v10.zip 을 받아 ZIP 전체를 새 로컬 폴더(바탕화면, 문서 등)에 압축 해제합니다.
+   - 네트워크 폴더나 ZIP 안에서 바로 실행하지 마세요. 압축 해제한 폴더는 통째로 다른 PC에 복사해도 됩니다.
+2. AOI_Photo_Sorter_v10.vbs 를 더블클릭합니다. 설치 창 없이 바로 프로그램이 뜹니다.
+- 압축 해제한 폴더 구성
+     AOI_Photo_Sorter_v10.vbs   실행 (runtime\pythonw.exe 로 app_files\app.py 를 켜기만 하는 짧은 런처)
+     runtime\                   실행용 Python 3.12 + 필요한 패키지 (pywebview, pythonnet, Pillow)
+     app_files\                 프로그램
+- runtime 의 Python은 python.org 공식 Windows 배포본(NuGet "python" 패키지)을 그대로 쓴 것이고,
+  python.exe / pythonw.exe / python312.dll 은 Python Software Foundation의 디지털 서명이 있습니다.
+  이 프로젝트가 만든 .exe가 없으므로 .exe의 Defender 오탐("트로이 목마 ...!ml")과 무관합니다.
+- PC에 아무것도 설치하거나 내려받지 않고, 레지스트리도 건드리지 않습니다. 다른 Python이 PC에 깔려 있어도
+  그것과 섞이지 않습니다. 지우려면 폴더를 지우면 됩니다. (설정은 %LOCALAPPDATA%\AOI_Tools 에 남습니다)
+- 처음 실행할 때 1~2초 정도 더 걸릴 수 있습니다(Python이 runtime 폴더에 캐시 파일을 만듭니다).
+- 브라우저에서 받은 ZIP을 풀었을 때 "보안 경고" 창이 뜨면 [실행]을 누르거나, 압축 해제 전에 ZIP 파일
+  오른쪽 클릭 → 속성 → [차단 해제] 체크 → 확인 후 다시 압축 해제하세요.
+- "필수 파일이 없습니다" 창이 뜨면 ZIP 일부만 풀린 것입니다. ZIP 전체를 새 폴더에 다시 압축 해제하세요.
 
 .exe 로 실행 (설치 없음)
-1. 릴리스에서 AOI_Photo_Sorter_v9.exe 를 받아 아무 로컬 폴더(바탕화면 등)에 둡니다.
-2. 더블클릭합니다. Python, 패키지 설치가 필요 없습니다. (Windows 10/11에 기본으로 있는
-   Microsoft Edge WebView2 Runtime만 사용)
-3. 처음 실행할 때 Windows에 "Windows의 PC 보호" (SmartScreen) 창이 뜨면 [추가 정보] → [실행]을 누릅니다.
-   (서명되지 않은 사내용 프로그램이라 처음 한 번 나타날 수 있습니다.)
-   - 사내 백신이 실행을 막으면 IT 담당자에게 이 파일의 허용을 요청하세요.
+1. 릴리스에서 AOI_Photo_Sorter_v10.exe 를 받아 아무 로컬 폴더(바탕화면 등)에 둡니다.
+2. 더블클릭합니다. (Windows 10/11에 기본으로 있는 Microsoft Edge WebView2 Runtime만 사용)
+3. 처음 실행할 때 "Windows의 PC 보호" (SmartScreen) 창이 뜨면 [추가 정보] → [실행]을 누릅니다.
    - Windows Defender가 "트로이 목마"(예: Trojan:Win32/Wacatac...!ml)로 .exe를 막거나 실행 중에 갑자기
-     종료시키면, 프로그램 문제가 아니라 서명 없는 .exe에 대한 오탐입니다. 같은 파일은 계속 막히므로
-     ZIP 버전(.vbs)으로 실행하세요. ZIP 버전은 python.org의 서명된 Python으로 실행되어 이 오탐과 무관합니다.
-- 실행할 때마다 .exe 안의 파일을 임시 폴더에 풀어 쓰므로, 창이 뜨기까지 1~3초 정도 걸릴 수 있습니다.
-- 설정, 진행 상황, 로그 위치는 .vbs 버전과 같습니다(%LOCALAPPDATA%\AOI_Tools). 둘을 번갈아 써도 이어집니다.
+     종료시키면 서명 없는 .exe에 대한 오탐입니다. 같은 파일은 계속 막히므로 ZIP 버전으로 실행하세요.
+- 설정, 진행 상황, 로그 위치는 ZIP 버전과 같습니다(%LOCALAPPDATA%\AOI_Tools). 둘을 번갈아 써도 이어집니다.
   단, 두 버전을 동시에 실행할 수는 없습니다.
-
-.vbs 로 실행 (ZIP)
-1. ZIP 전체를 새 로컬 폴더에 압축 해제합니다.
-2. AOI_Photo_Sorter_v9.vbs 를 더블클릭합니다.
-3. 최초 1회만 "실행 환경 설치" 창이 나타납니다. AOI Matcher / Wafer Map Converter를 이미 쓰고 있다면
-   같은 공용 환경을 재사용하므로 설치가 몇 초 만에 끝납니다.
 
 사용 순서
 1. 시작 화면에서 ① 사진 폴더, ② 결과 저장 위치를 지정합니다. (경로 붙여넣기 또는 [찾아보기])
@@ -175,8 +182,7 @@
 
 필요 조건
 - Windows 10/11, Microsoft Edge WebView2 Runtime (Windows 11은 기본 포함)
-- .vbs 버전만: Python 3.9 ~ 3.14 (64bit 권장). 없으면 실행 시 Python 3.12 자동 설치를 안내합니다.
-  .exe 버전은 Python이 필요 없습니다.
+- Python은 필요 없습니다(ZIP의 runtime 폴더, .exe 모두 Python 포함). Windows 10/11 64bit.
 - 대상 사진 형식: jpg, jpeg, png, bmp, tif, tiff (선택한 폴더 안의 사진만. 하위 폴더는 상위 폴더 목록에서 따로 작업)
 
 문제 해결

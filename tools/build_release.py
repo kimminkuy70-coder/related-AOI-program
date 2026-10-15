@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Generate the .vbs launchers, check shared files, and build release ZIPs.
 
+A program with "portable": true in app_manifest.json gets the portable launcher and its ZIP
+carries runtime\ (Python + packages, tools/build_portable.py): it runs without Python installed.
+
     python tools/build_release.py          # check + regenerate launchers
     python tools/build_release.py --zip    # also write dist/<release>.zip
 """
@@ -15,6 +18,7 @@ PROGRAMS = [REPO / 'programs' / 'AOI_Color_Gray_Matcher', REPO / 'programs' / 'W
             REPO / 'programs' / 'AOI_Photo_Sorter']
 SHARED = ['setup_env.py', 'runtime.py', 'constraints.txt']
 TEMPLATE = REPO / 'tools' / 'launcher_template.vbs'
+PORTABLE_TEMPLATE = REPO / 'tools' / 'launcher_portable.vbs'
 SKIP = {'__pycache__'}
 
 
@@ -34,7 +38,7 @@ def check_shared():
 
 def write_launcher(program):
     data = manifest(program)
-    text = TEMPLATE.read_text(encoding='utf-8')
+    text = (PORTABLE_TEMPLATE if data.get('portable') else TEMPLATE).read_text(encoding='utf-8')
     for key, value in (('APP_ID', data['app_id']), ('TITLE', data['title']), ('REVISION', str(data['env_revision']))):
         text = text.replace('{{%s}}' % key, value)
     if '{{' in text:
@@ -52,10 +56,18 @@ def build_zip(program):
     dist = REPO / 'dist'
     dist.mkdir(exist_ok=True)
     target = dist / (data['release'] + '.zip')
+    runtime = None
+    if data.get('portable'):
+        import build_portable  # tools/ (this script's folder)
+        runtime = build_portable.build_runtime(program / 'app_files', data)
     with zipfile.ZipFile(str(target), 'w', zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(program.rglob('*')):
             if path.is_file() and not SKIP.intersection(path.parts) and path.suffix != '.pyc':
                 archive.write(str(path), str(Path(data['release']) / path.relative_to(program)))
+        if runtime is not None:
+            for path in sorted(runtime.rglob('*')):
+                if path.is_file():
+                    archive.write(str(path), str(Path(data['release']) / 'runtime' / path.relative_to(runtime)))
     return target
 
 

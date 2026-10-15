@@ -207,7 +207,10 @@ class SharedFilesTest(unittest.TestCase):
             self.assertNotIn(b'\n', raw.replace(b'\r\n', b''))
             text = raw.decode('cp949')
             self.assertIn('Const APP_ID = "%s"' % manifest['app_id'], text)
-            self.assertIn('Const ENV_REVISION = %d' % manifest['env_revision'], text)
+            if manifest.get('portable'):  # runs runtime\pythonw.exe of the ZIP, no shared venv
+                self.assertIn('runtime\\pythonw.exe', text)
+            else:
+                self.assertIn('Const ENV_REVISION = %d' % manifest['env_revision'], text)
 
 
 if __name__ == '__main__':
