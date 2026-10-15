@@ -487,3 +487,11 @@ v4는 결과를 `<폴더명>_GOOD.txt` / `_REJECT.txt`에 덮어쓰면서 `_GOOD
 | 파일 끌어 놓기 | `#sDrag`의 dragstart에 `DownloadURL`(`<mime>:<이름>:<file/<job>/<번호> URL>`)과 `text/plain`(전체 경로). `file/<job>/<번호>`는 변환 없는 원본 바이트. WebView2에서 탐색기로 복사되는지는 Windows 실기 확인 필요 |
 
 시험: 단위(`test_overview_of_a_parent_folder`, `test_path_panel_switch_is_kept`), E2E(`test_folder_end_goes_on_and_overview`).
+
+## 17. v9: v8 .exe 실행 중 Defender 종료(오탐) 대응
+
+| 항목 | 규칙 |
+|---|---|
+| 증상 | v8 .exe 실행 후 [찾아보기]로 네트워크 폴더를 오가던 중 "트로이 목마"로 종료(v7은 정상) |
+| 원인 | Defender 클라우드 ML(`!ml`)이 미서명 onefile .exe를 해시마다 판정. 처음 보는 파일은 실행을 허용한 뒤 판정이 오면 프로세스를 끝내므로 시작 직후 작업(폴더 고르기) 중에 꺼짐. v7→v8 사이 폴더 고르기(`API.choose_folder`, pywebview FOLDER 대화상자)와 `tools/build_exe.py`는 바뀌지 않음 |
+| 대응 | 버전만 v9로 올려 새 해시로 재빌드(기능은 v8과 같음). README에 Defender 차단·종료 시 ZIP(.vbs, 서명된 python.org Python) 사용 안내. 근본 해결은 코드 서명 또는 배포처 Defender 허용 등록 |

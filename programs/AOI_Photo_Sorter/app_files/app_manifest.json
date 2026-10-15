@@ -1,7 +1,7 @@
 {
   "app_id": "AOI_Photo_Sorter",
-  "title": "AOI Photo Sorter v8",
-  "release": "AOI_Photo_Sorter_v8",
+  "title": "AOI Photo Sorter v9",
+  "release": "AOI_Photo_Sorter_v9",
   "env_revision": 1,
   "entry": "app.py",
   "exe": true,
