@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AOI 브라우저 속도 시험</title>
+<!--
+  AOI Photo Sorter: can the sorter run in Edge alone (no Python, no .exe) and still load photos fast?
+  Open this file in Edge (double-click). Nothing is installed and nothing leaves the PC.
+  1) pick a photo folder (network folder too): time to list it
+  2) read photos 1 / 4 / 8 / 16 at a time: photos per second from that folder
+  3) page through with the same rules as the sorter: read 200 ahead / 50 behind, → only after
+     the photo is on screen; the panel shows read-ahead, speed and key → screen time
+  4) pick an output folder: write a result .txt (what the sorter would do)
+  Copy the summary at the bottom right and send it back.
+-->
+<style>
+:root{--bg:#0b1220;--panel:#111a2e;--line:#1f2a44;--text:#e5e7eb;--muted:#94a3b8;--good:#22c55e;--bad:#ef4444;--accent:#3b82f6;--warn:#f59e0b}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI","Malgun Gothic",system-ui,sans-serif;overflow:hidden}
+button,select{font:inherit;color:var(--text);background:var(--accent);border:0;border-radius:8px;padding:7px 14px;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+button.ghost,select{background:transparent;border:1px solid var(--line)}
+select{padding:4px 8px}
+select option{background:var(--panel)}
+.hidden{display:none!important}
+.muted{color:var(--muted)}
+.ok{color:#86efac}.bad{color:#fca5a5}.warn{color:#fcd34d}
+.spacer{flex:1}
+header{height:44px;display:flex;align-items:center;gap:16px;padding:0 16px;background:#0f172a;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
+header b{font-size:15px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 400px;height:calc(100vh - 44px)}
+#viewer{display:flex;flex-direction:column;min-width:0;user-select:none}
+.hud{height:36px;flex:none;display:flex;align-items:center;gap:16px;padding:0 14px;background:#0f172a;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;font-size:13px}
+.dot{width:11px;height:11px;border-radius:50%;background:#475569;flex:none}
+.dot.green{background:var(--good)}.dot.yellow{background:var(--warn)}.dot.red{background:var(--bad)}
+.stage{position:relative;flex:1;min-height:0;background:#05080f;overflow:hidden}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%}
+.card{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--muted);font-size:19px;text-align:center;padding:20px;white-space:pre-line}
+.card small{font-size:13px}
+.card.error b{color:#fca5a5}
+.badge{position:absolute;top:10px;left:10px;padding:2px 10px;border-radius:5px;background:var(--good);color:#03200d;font-weight:800}
+.foot{height:32px;flex:none;display:flex;align-items:center;gap:14px;padding:0 14px;border-top:1px solid var(--line);background:#0f172a;white-space:nowrap;overflow:hidden;font-size:13px}
+.foot b{font-family:Consolas,"Malgun Gothic",monospace}
+aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;padding:12px 14px}
+.step{border-bottom:1px solid var(--line);padding:6px 0 14px;margin-bottom:8px}
+.step:last-child{border:0}
+h3{margin:4px 0 8px;font-size:14px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+small.msg{display:block;margin-top:6px;color:var(--muted);white-space:pre-line}
+table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12.5px}
+th,td{padding:3px 4px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600}
+dl{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:0;font-size:12.5px}
+dt{color:var(--muted)}dd{margin:0;text-align:right}
+textarea{width:100%;height:190px;margin-top:4px;background:#0a1020;color:var(--text);border:1px solid var(--line);border-radius:8px;font:12px/1.4 Consolas,"Malgun Gothic",monospace;padding:8px;resize:vertical}
+label{display:flex;gap:6px;align-items:center}
+kbd{display:inline-block;padding:0 5px;border:1px solid #334155;border-bottom-width:2px;border-radius:4px;background:#0f172a;font:11px Consolas,monospace}
+</style>
+</head>
+<body>
+<header><b>AOI Photo Sorter — 브라우저 속도 시험</b><span class="muted">Python·exe 없이 Edge만으로 사진을 빠르게 읽을 수 있는지 확인합니다</span><span class="spacer"></span><span id="env" class="muted"></span></header>
+<main>
+  <section id="viewer">
+    <div class="hud"><span id="hPos">사진 폴더를 고르세요</span><span id="hAhead" class="muted"></span><span id="hSpeed" class="muted"></span><span class="spacer"></span><span id="hMem" class="muted"></span><span id="hDot" class="dot" title="미리 읽기 상태"></span></div>
+    <div id="stage" class="stage"><canvas id="view"></canvas><div id="card" class="card"><b>① 오른쪽에서 사진 폴더를 고르세요</b><small>네트워크 폴더는 폴더 선택 창 주소 칸에 \\서버\공유\폴더 를 붙여 넣으면 됩니다</small></div><div id="badge" class="badge hidden">GOOD</div></div>
+    <div class="foot"><b id="fName"></b><span id="fNote" class="warn"></span><span class="spacer"></span><span class="muted"><kbd>→</kbd> 다음 <kbd>←</kbd> 이전 <kbd>Space</kbd> GOOD+다음 <kbd>Home</kbd>/<kbd>End</kbd> 처음/끝 <kbd>R</kbd> 실패 다시 읽기</span></div>
+  </section>
+  <aside>
+    <div class="step">
+      <h3>① 사진 폴더</h3>
+      <div class="row"><button id="pick">사진 폴더 고르기</button><button id="pickOld" class="ghost hidden">다른 방식으로 고르기</button></div>
+      <input type="file" id="dirInput" webkitdirectory multiple class="hidden">
+      <div class="row"><label>동시 읽기 <select id="conc"><option>4</option><option selected>8</option><option>12</option><option>16</option></select></label>
+        <label>미리 읽기 <select id="ahead"><option>50</option><option selected>200</option><option>400</option></select>장</label></div>
+      <div class="row"><label><input type="checkbox" id="repeat" checked> <kbd>→</kbd> 꾹 누르면 연속 넘김 (초당 최대 10장)</label></div>
+      <small id="pickMsg" class="msg">고른 폴더 바로 안의 jpg·jpeg·png·bmp·tif 사진을 읽습니다(하위 폴더 제외). 파일을 바꾸거나 지우지 않습니다.</small>
+    </div>
+    <div class="step">
+      <h3>② 동시 읽기 속도 측정</h3>
+      <button id="bench" disabled>측정 시작 (사진 약 130장 읽기)</button>
+      <small id="benchMsg" class="msg">한 번에 1·4·8·16장씩 읽어 초당 몇 장 읽히는지 잽니다. 넘겨 보는 위치와 겹치지 않는 사진을 씁니다.</small>
+      <table id="benchTable" class="hidden"><thead><tr><th>동시</th><th>장수</th><th>장/초</th><th>MB/초</th><th>1장 평균</th><th>1장 p95</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="step">
+      <h3>③ 넘겨 보기 (사진 화면을 클릭한 뒤 키보드)</h3>
+      <dl id="stats"></dl>
+    </div>
+    <div class="step">
+      <h3>④ 결과 저장 시험</h3>
+      <button id="save" disabled>결과 폴더 고르고 txt 저장</button>
+      <small id="saveMsg" class="msg">결과 폴더에 AOI_브라우저시험_날짜_시각.txt 를 하나 만듭니다(시험 결과와 Space로 고른 사진 이름).</small>
+    </div>
+    <div class="step">
+      <h3>결과 요약</h3>
+      <textarea id="summary" readonly></textarea>
+      <div class="row"><button id="copy">결과 복사</button><small id="copyMsg" class="muted"></small></div>
+    </div>
+  </aside>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const fmt = n => Number(n || 0).toLocaleString('ko-KR');
+const now = () => performance.now();
+const sec = ms => (ms / 1000).toFixed(2) + '초';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const EXT = /\.(jpe?g|png|bmp|tiff?)$/i, SHOWN = /\.(jpe?g|png|bmp)$/i;
+const MIME = {jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff'};
+const mimeOf = name => MIME[name.split('.').pop().toLowerCase()] || 'application/octet-stream';
+const collator = new Intl.Collator('ko', {numeric: true, sensitivity: 'base'});  // IMG_2 before IMG_10, like Explorer
+const pct = (list, p) => { if (!list.length) return 0; const s = [...list].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+
+// Results that go into the summary
+const R = {started: new Date(), method: '', folder: '', count: 0, tiff: 0, listMs: null, firstPaintMs: null, bench: [], save: '', pickError: ''};
+// Viewer state: same rules as the sorter
+const S = {items: [], n: 0, pos: 0, cache: new Map(), inflight: new Set(), order: [], bytes: 0, conc: 8, ahead: 200, behind: 50,
+  maxBytes: 384 * 1024 * 1024, paused: false, bmps: new Map(), painted: -1, token: 0, listDoneAt: 0, lastMove: 0,
+  good: new Set(), seen: new Set(), done: [], keyLat: [], pendingKey: null, waits: 0, waitedAt: -1, blocked: 0, errors: 0};
+
+// ------------------------------------------------------------------ environment
+const env = {
+  edge: (navigator.userAgent.match(/Edg\/([\d.]+)/) || [])[1] || '',
+  chrome: (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || '',
+  secure: window.isSecureContext, fsa: 'showDirectoryPicker' in window, protocol: location.protocol,
+};
+$('env').textContent = (env.edge ? 'Edge ' + env.edge : env.chrome ? 'Chrome ' + env.chrome : '브라우저 확인 불가') +
+  ' · 폴더 접근 기능 ' + (env.fsa ? '있음' : '없음');
+if (!env.fsa) {
+  msg('pickMsg', '이 브라우저(또는 회사 정책)에서는 폴더 접근 기능(showDirectoryPicker)을 쓸 수 없습니다.\nEdge로 열었는지 확인하세요. [다른 방식으로 고르기]는 읽기 속도만 잴 수 있습니다(결과 저장은 다운로드로 대신함).', 'bad');
+  $('pickOld').classList.remove('hidden');
+}
+
+function msg(id, text, kind) { const el = $(id); el.textContent = text; el.className = 'msg' + (kind ? ' ' + kind : ''); }
+
+// ------------------------------------------------------------------ ① pick and list the folder
+async function pickFolder() {
+  let dir;
+  try {
+    dir = await window.showDirectoryPicker({id: 'aoi-photos', mode: 'read'});
+  } catch (err) {
+    if (err.name === 'AbortError') return;  // dialog closed
+    R.pickError = err.name + ': ' + err.message;
+    msg('pickMsg', `폴더를 열 수 없습니다 (${R.pickError}).\n회사 정책으로 막혀 있을 수 있습니다. 시스템 폴더(다운로드·바탕화면 바로 위 등)라면 그 안의 사진 폴더를 고르세요.`, 'bad');
+    $('pickOld').classList.remove('hidden');
+    summary();
+    return;
+  }
+  R.pickError = '';
+  msg('pickMsg', '목록 읽는 중…');
+  const started = now(), items = [];
+  let seen = 0;
+  try {
+    for await (const [name, handle] of dir.entries()) {
+      if (++seen % 500 === 0) msg('pickMsg', `목록 읽는 중… 항목 ${fmt(seen)}개, 사진 ${fmt(items.length)}장`);
+      if (handle.kind === 'file' && EXT.test(name)) items.push({name, get: () => handle.getFile()});
+    }
+  } catch (err) {
+    msg('pickMsg', `목록을 읽는 중 오류: ${err.name}: ${err.message}`, 'bad');
+    return;
+  }
+  setFolder(items, dir.name, 'File System Access (showDirectoryPicker)', now() - started);
+}
+
+// Fallback when the folder API is missing or blocked: the old "upload a folder" picker (read only)
+function pickOldWay() { $('dirInput').value = ''; $('dirInput').click(); }
+$('dirInput').addEventListener('change', () => {
+  const files = [...$('dirInput').files];
+  if (!files.length) return;
+  const top = files[0].webkitRelativePath.split('/')[0];
+  const items = files.filter(f => EXT.test(f.name) && f.webkitRelativePath.split('/').length === 2)
+    .map(f => ({name: f.name, get: async () => f}));
+  setFolder(items, top, 'input webkitdirectory (읽기 전용, 목록 시간은 브라우저 안에서 측정 불가)', null);
+});
+
+function setFolder(items, folder, method, listMs) {
+  stopViewer();
+  items.sort((a, b) => collator.compare(a.name, b.name));
+  Object.assign(R, {method, folder, count: items.length, tiff: items.filter(i => !SHOWN.test(i.name)).length, listMs, firstPaintMs: null, bench: [], save: ''});
+  S.items = items; S.n = items.length;
+  $('benchTable').classList.add('hidden');
+  $('benchTable').tBodies[0].innerHTML = '';
+  if (!S.n) {
+    msg('pickMsg', `사진이 없습니다: ${folder} (바로 안의 jpg·jpeg·png·bmp·tif만, 하위 폴더 제외)`, 'bad');
+    summary();
+    return;
+  }
+  msg('pickMsg', `✓ ${folder}: 사진 ${fmt(S.n)}장` + (R.tiff ? ` (TIFF ${fmt(R.tiff)}장)` : '') +
+    (listMs != null ? ` · 목록 읽기 ${sec(listMs)}` : ''), 'ok');
+  $('bench').disabled = false;
+  $('save').disabled = false;
+  S.listDoneAt = now();
+  S.pos = 0;
+  plan();
+  pump();
+  present();
+  summary();
+}
+
+function stopViewer() {
+  for (const [, b] of S.bmps) if (b.bmp) b.bmp.close();
+  S.bmps.clear();
+  S.cache.clear();  // reads still in flight find their entry gone and drop the data
+  Object.assign(S, {bytes: 0, painted: -1, good: new Set(), seen: new Set(), done: [], keyLat: [], pendingKey: null, waits: 0,
+    waitedAt: -1, blocked: 0, errors: 0, order: []});
+  S.token++;
+}
+
+// ------------------------------------------------------------------ read-ahead (the sorter's ImageCache in JS)
+// Window: the position, then up to `ahead` photos after it and `behind` before it, nearest first,
+// forward first; everything outside the window is dropped so memory stays flat.
+function windowOrder() {
+  const p = S.pos, out = [p];
+  for (let k = 1; k <= 10; k++) out.push(p + k);
+  for (let k = 1; k <= 5; k++) out.push(p - k);
+  for (let k = 11; k <= S.ahead; k++) out.push(p + k);
+  for (let k = 6; k <= S.behind; k++) out.push(p - k);
+  return out.filter(i => i >= 0 && i < S.n);
+}
+
+function plan() {
+  S.order = windowOrder();
+  const keep = new Set(S.order);
+  for (const [i, e] of S.cache) {
+    if (keep.has(i)) continue;
+    if (e.state === 'ready') S.bytes -= e.size;
+    S.cache.delete(i);
+  }
+}
+
+function pump() {
+  if (S.paused) return;
+  for (const i of S.order) {
+    if (S.inflight.size >= S.conc) break;
+    if (S.cache.has(i)) continue;
+    if (S.bytes >= S.maxBytes && Math.abs(i - S.pos) > 10) break;  // memory budget: only the photos next to the position
+    load(i);
+  }
+}
+
+async function load(i) {
+  const e = {state: 'loading', t0: now()};
+  const item = S.items[i];
+  S.cache.set(i, e);
+  S.inflight.add(e);
+  try {
+    const file = await item.get();
+    const data = await file.arrayBuffer();  // really read it now (a File alone is read lazily)
+    e.size = data.byteLength;
+    e.blob = new Blob([data], {type: mimeOf(item.name)});
+    e.ms = now() - e.t0;
+    e.state = 'ready';
+    S.done.push({t: now(), bytes: e.size, ms: e.ms});
+    if (S.done.length > 5000) S.done.splice(0, 1000);
+  } catch (err) {
+    e.state = 'error';
+    e.err = err.name + ': ' + err.message;
+    S.errors++;
+  } finally {
+    S.inflight.delete(e);
+    if (S.cache.get(i) === e) {
+      if (e.state === 'ready') S.bytes += e.size;
+      if (Math.abs(i - S.pos) <= 5) decodeAround();
+      if (i === S.pos && S.painted !== i) present();
+    } else {
+      e.blob = null;  // left the window (or another folder) while loading
+    }
+    pump();
+    hud();
+  }
+}
+
+// Decoded bitmaps for the photos right next to the position: paging only draws a ready bitmap
+function decodeAround() {
+  const want = [];
+  for (let k = -3; k <= 5; k++) { const i = S.pos + k; if (i >= 0 && i < S.n) want.push(i); }
+  const keep = new Set(want);
+  for (const [i, b] of S.bmps) if (!keep.has(i)) { if (b.bmp) b.bmp.close(); S.bmps.delete(i); }
+  for (const i of want) {
+    if (S.bmps.has(i)) continue;
+    const e = S.cache.get(i);
+    if (!e || e.state !== 'ready') continue;
+    if (!SHOWN.test(S.items[i].name)) { S.bmps.set(i, {state: 'skip'}); continue; }
+    const b = {state: 'decoding'};
+    S.bmps.set(i, b);
+    createImageBitmap(e.blob).then(bmp => {
+      if (S.bmps.get(i) !== b) { bmp.close(); return; }
+      b.bmp = bmp;
+      b.state = 'ready';
+      if (i === S.pos && S.painted !== i) present();
+    }).catch(err => {
+      b.state = 'error';
+      b.err = err.name;
+      if (i === S.pos) present();
+    });
+  }
+}
+
+// ------------------------------------------------------------------ drawing
+const canvas = $('view'), ctx = canvas.getContext('2d', {alpha: false});
+function resize() {
+  const dpr = devicePixelRatio || 1, stage = $('stage');
+  const w = Math.max(1, Math.round(stage.clientWidth * dpr)), h = Math.max(1, Math.round(stage.clientHeight * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const b = S.bmps.get(S.pos);
+  draw(b && b.state === 'ready' ? b.bmp : null);
+}
+new ResizeObserver(resize).observe($('stage'));
+
+function draw(bmp) {
+  ctx.fillStyle = '#05080f';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!bmp) return;
+  const s = Math.min(canvas.width / bmp.width, canvas.height / bmp.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bmp, (canvas.width - bmp.width * s) / 2, (canvas.height - bmp.height * s) / 2, bmp.width * s, bmp.height * s);
+}
+
+function card(title, text, error) {
+  $('card').innerHTML = '';
+  const b = document.createElement('b'), small = document.createElement('small');
+  b.textContent = title;
+  small.textContent = text || '';
+  $('card').append(b, small);
+  $('card').classList.toggle('error', !!error);
+  $('card').classList.remove('hidden');
+}
+
+// Shows the photo at the position; it counts as painted once the frame holding it is produced.
+function present(keyT) {
+  const i = S.pos, token = ++S.token;
+  S.painted = -1;
+  if (keyT !== undefined) S.pendingKey = {i, t: keyT};
+  decodeAround();
+  const e = S.cache.get(i), b = S.bmps.get(i), name = S.items[i].name;
+  $('fName').textContent = name;
+  $('badge').classList.toggle('hidden', !S.good.has(i));
+  if (!e || e.state === 'loading' || !b && e.state === 'ready' || b && b.state === 'decoding') {
+    draw(null);
+    card('불러오는 중…', name);
+    if (S.waitedAt !== i) { S.waitedAt = i; S.waits++; }
+    hud();
+    return;
+  }
+  if (e.state === 'error') { draw(null); card('읽기 실패', e.err + '\nR: 다시 읽기', true); }
+  else if (b.state === 'skip') { draw(null); card('TIFF는 이 시험에서 화면에 표시하지 않습니다', '읽기 속도는 측정에 포함됩니다'); }
+  else if (b.state === 'error') { draw(null); card('표시할 수 없는 사진', b.err, true); }
+  else { $('card').classList.add('hidden'); draw(b.bmp); }
+  requestAnimationFrame(frame => {
+    if (token !== S.token) return;
+    S.painted = i;
+    S.seen.add(i);
+    if (S.pendingKey && S.pendingKey.i === i) { S.keyLat.push(frame - S.pendingKey.t); S.pendingKey = null; }
+    if (R.firstPaintMs === null && e.state === 'ready') { R.firstPaintMs = now() - S.listDoneAt; summary(); }
+    hud();
+  });
+  hud();
+}
+
+// ------------------------------------------------------------------ keys (same rules as the sorter)
+function move(d, ev) {
+  if (ev.repeat && (!$('repeat').checked || now() - S.lastMove < 100)) return;
+  if (d > 0 && S.painted !== S.pos) { S.blocked++; note('불러오는 중… (화면에 뜬 뒤에 넘어갑니다)'); return; }
+  const np = S.pos + d;
+  if (np < 0 || np >= S.n) { note(np < 0 ? '첫 사진입니다' : '마지막 사진입니다'); return; }
+  jump(np, ev.timeStamp);
+}
+function jump(p, keyT) {
+  if (p === S.pos) return;
+  S.pos = p;
+  S.lastMove = now();
+  plan();
+  pump();
+  present(keyT);
+}
+let noteTimer = null;
+function note(text) { $('fNote').textContent = text; clearTimeout(noteTimer); noteTimer = setTimeout(() => { $('fNote').textContent = ''; }, 1200); }
+
+function retryFailed() {
+  for (const [i, e] of [...S.cache]) if (e.state === 'error') S.cache.delete(i);
+  for (const [i, b] of [...S.bmps]) if (b.state === 'error') S.bmps.delete(i);
+  note('실패한 사진을 다시 읽습니다');
+  pump();
+  present();
+}
+
+window.addEventListener('keydown', ev => {
+  if (!S.n || ['SELECT', 'TEXTAREA', 'INPUT'].includes(ev.target.tagName)) return;
+  const c = ev.code;
+  if (['ArrowRight', 'ArrowLeft', 'Space', 'Home', 'End'].includes(c)) ev.preventDefault();
+  if (c === 'ArrowRight') move(1, ev);
+  else if (c === 'ArrowLeft') move(-1, ev);
+  else if (c === 'Space') {
+    if (ev.repeat || S.painted !== S.pos) return;
+    if (S.good.has(S.pos)) S.good.delete(S.pos); else S.good.add(S.pos);
+    if (S.pos + 1 < S.n) jump(S.pos + 1, ev.timeStamp); else present();
+  } else if (c === 'Home' && !ev.repeat) jump(0, ev.timeStamp);
+  else if (c === 'End' && !ev.repeat) jump(S.n - 1, ev.timeStamp);
+  else if (c === 'KeyR' && !ev.repeat) retryFailed();
+});
+for (const b of document.querySelectorAll('button')) b.addEventListener('mousedown', e => e.preventDefault());  // keys stay on the viewer
+
+// ------------------------------------------------------------------ live numbers
+let hudQueued = false;
+function hud() {
+  if (hudQueued) return;
+  hudQueued = true;
+  requestAnimationFrame(() => { hudQueued = false; renderHud(); });
+}
+function readyAhead() {
+  let r = 0;
+  for (let i = S.pos + 1; i < Math.min(S.n, S.pos + 1 + S.ahead); i++) { const e = S.cache.get(i); if (!e || e.state !== 'ready') break; r++; }
+  return r;
+}
+function recentSpeed() {
+  const t = now(), from = t - 3000;
+  const recent = S.done.filter(d => d.t >= from);
+  const span = Math.min(3000, t - S.listDoneAt) / 1000;
+  return {perSec: span > 0 ? recent.length / span : 0, mbPerSec: span > 0 ? recent.reduce((a, d) => a + d.bytes, 0) / 1048576 / span : 0};
+}
+function renderHud() {
+  if (!S.n) return;
+  const ahead = readyAhead(), target = Math.min(S.ahead, S.n - 1 - S.pos), sp = recentSpeed();
+  $('hPos').textContent = `${fmt(S.pos + 1)} / ${fmt(S.n)}`;
+  $('hAhead').textContent = `미리 읽음 ${fmt(ahead)} / ${fmt(target)}장`;
+  $('hSpeed').textContent = `읽기 ${sp.perSec.toFixed(1)}장/초 · ${sp.mbPerSec.toFixed(1)} MB/초`;
+  $('hMem').textContent = `메모리 ${(S.bytes / 1048576).toFixed(S.bytes < 10485760 ? 1 : 0)} MB · 읽는 중 ${S.inflight.size}`;
+  const need = Math.min(20, S.n - 1 - S.pos);
+  $('hDot').className = 'dot ' + (ahead >= need ? 'green' : ahead >= Math.min(3, need) ? 'yellow' : 'red');
+  const reads = S.done.map(d => d.ms);
+  const rows = [
+    ['본 사진', `${fmt(S.seen.size)}장 · GOOD ${fmt(S.good.size)}`],
+    ['첫 사진 표시까지', R.firstPaintMs == null ? '—' : sec(R.firstPaintMs)],
+    ['키 → 화면 (중간값 / 95%)', S.keyLat.length ? `${pct(S.keyLat, .5).toFixed(0)} ms / ${pct(S.keyLat, .95).toFixed(0)} ms` : '—'],
+    ['"불러오는 중" 대기', `${fmt(S.waits)}번`],
+    ['사진 1장 읽기 (중간값 / 95%)', reads.length ? `${pct(reads, .5).toFixed(0)} ms / ${pct(reads, .95).toFixed(0)} ms` : '—'],
+    ['최근 3초 읽기 속도', `${sp.perSec.toFixed(1)}장/초 · ${sp.mbPerSec.toFixed(1)} MB/초`],
+    ['미리 읽음 (앞쪽 연속)', `${fmt(ahead)} / ${fmt(target)}장`],
+    ['읽기 오류', fmt(S.errors)],
+  ];
+  $('stats').innerHTML = '';
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k; dd.textContent = v;
+    $('stats').append(dt, dd);
+  }
+}
+setInterval(() => { if (S.n) { hud(); summary(); } }, 1000);
+
+// ------------------------------------------------------------------ ② parallel read benchmark
+async function bench() {
+  $('bench').disabled = true;
+  S.paused = true;  // the viewer's read-ahead waits, so only the benchmark reads
+  msg('benchMsg', '넘겨 보기 읽기가 끝나기를 기다리는 중…');
+  for (let k = 0; k < 600 && S.inflight.size; k++) await sleep(50);
+  const plans = [[1, 12], [4, 40], [8, 40], [16, 40]];
+  const total = plans.reduce((a, p) => a + p[1], 0);
+  // photos away from the viewing window, so nothing comes from a cache
+  let cursor = S.n >= S.pos + S.ahead + total + 10 ? S.pos + S.ahead + 10 : S.n >= total * 2 ? Math.floor(S.n / 2) : 0;
+  const reuse = S.n < total;
+  const body = $('benchTable').tBodies[0];
+  body.innerHTML = '';
+  $('benchTable').classList.remove('hidden');
+  R.bench = [];
+  for (const [conc, count] of plans) {
+    msg('benchMsg', `동시 ${conc}장으로 ${count}장 읽는 중…`);
+    const idx = [];
+    for (let k = 0; k < count; k++) idx.push((cursor + k) % S.n);
+    cursor += count;
+    const lat = [];
+    let bytes = 0, errors = 0, next = 0;
+    const t0 = now();
+    await Promise.all(Array.from({length: conc}, async () => {
+      while (next < idx.length) {
+        const item = S.items[idx[next++]], s = now();
+        try { const data = await (await item.get()).arrayBuffer(); bytes += data.byteLength; lat.push(now() - s); }
+        catch (err) { errors++; }
+      }
+    }));
+    const secs = (now() - t0) / 1000;
+    const row = {conc, count, secs, perSec: count / secs, mbPerSec: bytes / 1048576 / secs, p50: pct(lat, .5), p95: pct(lat, .95), errors, avgKB: lat.length ? bytes / lat.length / 1024 : 0};
+    R.bench.push(row);
+    const tr = document.createElement('tr');
+    for (const v of [conc, count, row.perSec.toFixed(1), row.mbPerSec.toFixed(1), row.p50.toFixed(0) + ' ms', row.p95.toFixed(0) + ' ms']) {
+      const td = document.createElement('td'); td.textContent = v; tr.append(td);
+    }
+    if (errors) tr.title = `오류 ${errors}장`;
+    body.append(tr);
+    summary();
+  }
+  const best = R.bench.reduce((a, b) => (b.perSec > a.perSec ? b : a));
+  msg('benchMsg', `완료: 동시 ${best.conc}장일 때 가장 빠름 (${best.perSec.toFixed(1)}장/초, 사진 평균 ${best.avgKB.toFixed(0)} KB)` +
+    (reuse ? '\n폴더 사진이 적어 같은 사진을 다시 읽었습니다(캐시 영향 가능).' : ''), 'ok');
+  S.paused = false;
+  pump();
+  $('bench').disabled = false;
+}
+
+// ------------------------------------------------------------------ ④ write a result file
+function stamp(d = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+async function saveTest() {
+  const name = `AOI_브라우저시험_${stamp()}.txt`;
+  const goodNames = [...S.good].sort((a, b) => a - b).map(i => S.items[i].name);
+  const text = '\ufeff' + (summaryText() + '\n\n[GOOD으로 고른 사진]\n' + goodNames.join('\n') + '\n').replace(/\r?\n/g, '\r\n');
+  if (!env.fsa) {  // no folder API: a download is what a browser-only sorter would have to do
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+    a.download = name;
+    a.click();
+    R.save = '폴더 접근 기능 없음 → 다운로드로 저장 (사용자가 위치 선택)';
+    msg('saveMsg', R.save, 'warn');
+    summary();
+    return;
+  }
+  let out;
+  try {
+    out = await window.showDirectoryPicker({id: 'aoi-output', mode: 'readwrite'});
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    R.save = `실패: 결과 폴더를 열 수 없음 (${err.name}: ${err.message})`;
+    msg('saveMsg', R.save, 'bad');
+    summary();
+    return;
+  }
+  const t0 = now();
+  try {
+    const handle = await out.getFileHandle(name, {create: true});
+    const writer = await handle.createWritable();
+    await writer.write(new Blob([text], {type: 'text/plain'}));
+    await writer.close();
+    const back = await (await handle.getFile()).text();
+    if (!back.includes('AOI Photo Sorter')) throw new Error('다시 읽은 내용이 다릅니다');
+    R.save = `성공: ${out.name}\\${name} (${(now() - t0).toFixed(0)} ms)`;
+    msg('saveMsg', '✓ ' + R.save, 'ok');
+  } catch (err) {
+    R.save = `실패: ${err.name}: ${err.message}`;
+    msg('saveMsg', R.save, 'bad');
+  }
+  summary();
+}
+
+// ------------------------------------------------------------------ summary to send back
+function summaryText() {
+  const lines = [];
+  const d = R.started;
+  lines.push(`AOI Photo Sorter 브라우저 속도 시험 결과 (${d.toLocaleString('ko-KR')})`);
+  lines.push(`브라우저: ${env.edge ? 'Edge ' + env.edge : env.chrome ? 'Chrome ' + env.chrome : navigator.userAgent} · 열린 방식: ${env.protocol} · 보안 컨텍스트: ${env.secure} · 폴더 접근 기능: ${env.fsa ? '있음' : '없음'}`);
+  if (R.pickError) lines.push(`폴더 열기 오류: ${R.pickError}`);
+  if (R.count) {
+    lines.push(`폴더: ${R.folder} · 사진 ${fmt(R.count)}장${R.tiff ? ` (TIFF ${fmt(R.tiff)})` : ''} · 방식: ${R.method}`);
+    lines.push(`목록 읽기: ${R.listMs == null ? '측정 불가' : sec(R.listMs)} · 첫 사진 표시까지: ${R.firstPaintMs == null ? '—' : sec(R.firstPaintMs)}`);
+  }
+  if (R.bench.length) {
+    lines.push('동시 읽기 측정:');
+    for (const b of R.bench) {
+      lines.push(`  동시 ${b.conc}: ${b.count}장 ${b.secs.toFixed(2)}초 → ${b.perSec.toFixed(1)}장/초, ${b.mbPerSec.toFixed(1)} MB/초, 1장 ${b.p50.toFixed(0)} ms (95% ${b.p95.toFixed(0)} ms), 평균 ${b.avgKB.toFixed(0)} KB` + (b.errors ? `, 오류 ${b.errors}` : ''));
+    }
+  }
+  if (S.n) {
+    const reads = S.done.map(x => x.ms), sp = recentSpeed();
+    lines.push(`넘겨 보기 (동시 ${S.conc}, 미리 읽기 ${S.ahead}장, 연속 넘김 ${$('repeat').checked ? '켬' : '끔'}): 본 사진 ${fmt(S.seen.size)}장, ` +
+      `키→화면 ${S.keyLat.length ? `중간값 ${pct(S.keyLat, .5).toFixed(0)} ms / 95% ${pct(S.keyLat, .95).toFixed(0)} ms` : '—'}, ` +
+      `"불러오는 중" 대기 ${S.waits}번, 1장 읽기 ${reads.length ? `중간값 ${pct(reads, .5).toFixed(0)} ms / 95% ${pct(reads, .95).toFixed(0)} ms` : '—'}, ` +
+      `최근 읽기 ${sp.perSec.toFixed(1)}장/초, 오류 ${S.errors}`);
+  }
+  lines.push(`결과 저장 시험: ${R.save || '안 함'}`);
+  return lines.join('\n');
+}
+function summary() { $('summary').value = summaryText(); }
+
+async function copySummary() {
+  summary();
+  try {
+    await navigator.clipboard.writeText($('summary').value);
+  } catch (err) {
+    $('summary').select();
+    document.execCommand('copy');
+  }
+  $('copyMsg').textContent = '복사했습니다. 채팅에 붙여 넣어 보내 주세요.';
+}
+
+// ------------------------------------------------------------------ wiring
+$('pick').onclick = () => (env.fsa ? pickFolder() : pickOldWay());
+$('pickOld').onclick = () => pickOldWay();
+$('bench').onclick = () => bench();
+$('save').onclick = () => saveTest();
+$('copy').onclick = () => copySummary();
+$('conc').onchange = () => { S.conc = +$('conc').value; pump(); };
+$('ahead').onchange = () => { S.ahead = +$('ahead').value; plan(); pump(); };
+$('stage').addEventListener('mousedown', () => { if (document.activeElement) document.activeElement.blur(); });
+window.__speedTest = {S, R, summaryText};  // read by the automated test
+summary();
+</script>
+</body>
+</html>
