@@ -507,3 +507,19 @@ v4는 결과를 `<폴더명>_GOOD.txt` / `_REJECT.txt`에 덮어쓰면서 `_GOOD
 | 앱 | `app.py`의 `PORTABLE`(실행 Python이 `..\runtime`): .exe처럼 venv 복구(setup_env --repair)를 하지 않고, 패키지가 없으면 "ZIP 전체를 다시 압축 해제" 오류 |
 | .exe | 계속 빌드·자체 시험·첨부(Windows에서 앱 코드를 검증하는 유일한 CI 단계). README는 ZIP을 권장 |
 | 한계 | 서명된 Python이라도 Defender 판정은 PC 정책에 달려 있어 100% 보장은 불가. 포터블 runtime의 실제 Windows 실행은 CI에서 시험하지 않음(워크플로 변경 필요) |
+
+## 19. HTML 버전 (Edge만으로 실행, 설치 없음)
+
+v6~v10에서 배포 방식(.exe, 포터블 Python)이 백신 오탐·SOC 탐지에 계속 걸려, 회사가 이미 승인한 Edge 안에서만 동작하는 단일 HTML 파일을 만들었습니다. 브라우저 속도 시험(`experiments/browser_speed_test`)으로 네트워크 폴더 읽기 속도를 확인한 뒤 진행했습니다.
+
+| 항목 | 내용 |
+|---|---|
+| 구조 | 화면 `src/app.js`는 Python 버전 화면을 그대로 쓰고, Python `engine.py`/`server.py`가 하던 일은 `src/backend.js`가 페이지 안에서 합니다. `api(name)` 요청과 응답 모양이 같습니다. |
+| 폴더 | File System Access API(`showDirectoryPicker`). 사진 폴더는 읽기, 결과 폴더는 읽기/쓰기 권한. 고른 폴더는 이름(또는 그 위에 입력한 전체 경로)으로 표시하고, 하위 폴더는 `<표시>\<하위>` |
+| 미리 읽기 | ImageCache와 같은 규칙: 앞 200장/뒤 50장(384/128 MB), 8개 동시, 가까운 것부터, 창 밖 요청은 급행. 읽기 실패 시 폴더 자체를 확인해 끊김이면 오프라인(2초마다 재확인, 자동 재개, F5) |
+| 결과 | n차리뷰 규칙·파일 형식(UTF-8, CRLF, GOOD 마지막)이 Python 버전과 같아 서로의 결과를 읽음. 쓰기는 `createWritable`(임시 파일 후 교체) |
+| 진행 상황 | IndexedDB(세션, 설정, 최근 작업, 고른 폴더 핸들). 같은 폴더를 다시 고르거나 그 안/바깥을 고르면 `isSameEntry`/`resolve`로 같은 진행 상황을 찾음 |
+| TIFF | UTIF.js + pako를 파일 안에 포함, Worker에서 디코딩(없으면 페이지에서) |
+| 보안 | CSP `connect-src 'none'` 등으로 외부 통신 불가, 외부 파일을 불러오지 않음 |
+| 시험 | `tests/e2e_html_sorter.py`: 고른 폴더 대신 OPFS 핸들로 실제 코드를 Chromium에서 실행. 정리·회차·추가 검토, 빠른 키+느린 공유 폴더, 상위 폴더 끝→다음 폴더→전체 결과, 다시 열어 이어하기, 끊김 자동 복구, TIFF, Python 버전과 결과 호환, 외부 통신 차단, 1만 장 |
+| 한계 | 브라우저를 다시 열 때마다 폴더 접근 허용 클릭, 탐색기 열기 없음, 회사 Edge 정책이 기능을 막으면 실행 불가 |
