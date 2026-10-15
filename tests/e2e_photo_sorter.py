@@ -666,6 +666,90 @@ class RapidInputTest(unittest.TestCase):
         self.assertEqual(self.shown_index(), 20)
 
 
+    def test_folder_end_goes_on_and_overview(self):
+        """v8: the last photo of a subfolder asks to save and go on (Enter: next folder), after the
+        last folder every saved GOOD / REJECT is shown at once; the path is shown on the left."""
+        parent = tempfile.mkdtemp(prefix='LOTV_')
+        self.addCleanup(shutil.rmtree, parent, True)
+        for sub, first in (('A', 0), ('B', 10)):
+            os.makedirs(os.path.join(parent, sub))
+            for i in range(first, first + 3):
+                shutil.copy(os.path.join(self.photos, 'IMG_%04d.jpg' % i), os.path.join(parent, sub))
+        label = os.path.basename(parent)
+        page, keyboard = self.page, self.page.keyboard
+        page.goto(self.web.url)
+        page.fill('#folder', parent)
+        page.fill('#output', self.out)
+        page.wait_for_function("document.querySelectorAll('#subsList .sub').length === 2 && "
+                               "!document.getElementById('startBtn').disabled")
+        keyboard.press('Enter')
+        page.wait_for_function('window.__sorter.S.painted === 0', timeout=30000)
+        # the path on the left: selectable text, the file name follows the photo
+        self.assertTrue(page.is_visible('#side'))
+        self.assertEqual(page.inner_text('#sFolder'), os.path.join(parent, 'A'))
+        self.assertEqual(page.inner_text('#sFile'), 'IMG_0000.jpg')
+        self.assertEqual(page.eval_on_selector('#side', 'el => getComputedStyle(el).userSelect'), 'text')
+        self.assertIn('2. B', page.inner_text('#sTreeList'))
+        time.sleep(0.2)
+        keyboard.press('Space')  # A/IMG_0000 GOOD
+        self.wait_painted()
+        page.wait_for_function("document.getElementById('sFile').textContent === 'IMG_0001.jpg'")
+        self.assertEqual(page.inner_text('#sPath'), os.path.join(parent, 'A', 'IMG_0001.jpg').replace('\\', '/'))
+        keyboard.press('ArrowRight')
+        self.wait_painted()
+        keyboard.press('ArrowRight')  # past the last photo: the window
+        page.wait_for_selector('#modal:not(.hidden)')
+        self.assertIn('다음 폴더: B', page.inner_text('#mButtons'))
+        keyboard.press('Escape')  # stay
+        page.wait_for_selector('#modal', state='hidden')
+        self.assertEqual(os.listdir(self.out), [])
+        keyboard.press('Enter')  # Enter at the last photo: the same window
+        page.wait_for_selector('#modal:not(.hidden)')
+        keyboard.press('Enter')  # save A, open B
+        page.wait_for_function("window.__sorter.S.painted === 0 && window.__sorter.S.parts.join() === 'B'", timeout=30000)
+        self.assertEqual(self.shown_index(), 10)
+        self.assertIn('1차리뷰 저장 완료', page.inner_text('#fNote'))
+        good = [f for f in os.listdir(self.out) if f.endswith('_GOOD.txt')]
+        self.assertEqual(len(good), 1)
+        self.assertTrue(good[0].startswith('%s_A_1차리뷰_' % label))
+        self.assertEqual(Path(self.out, good[0]).read_bytes(), b'IMG_0000.jpg\r\n')
+        time.sleep(0.2)
+        keyboard.press('ArrowRight')
+        self.wait_painted()
+        time.sleep(0.2)
+        keyboard.press('Space')  # B/IMG_0011 GOOD
+        self.wait_painted()
+        time.sleep(0.2)
+        keyboard.press('Space')  # B/IMG_0012 (last) GOOD: the window, now the last folder
+        page.wait_for_selector('#modal:not(.hidden)')
+        self.assertIn('전체 결과 보기', page.inner_text('#mButtons'))
+        keyboard.press('Enter')
+        page.wait_for_selector('#overview.show')
+        page.wait_for_function("document.querySelectorAll('#oGridInner .cell').length === 3")
+        self.assertIn('GOOD 3', page.inner_text('#oTabGood'))
+        self.assertIn('REJECT 3', page.inner_text('#oTabReject'))
+        self.assertEqual(page.locator('#oGridInner .cell .cname').all_inner_texts(), ['IMG_0000.jpg', 'IMG_0011.jpg', 'IMG_0012.jpg'])
+        page.wait_for_function("Array.from(document.querySelectorAll('#oGridInner .cell img')).every(i => i.complete && i.naturalWidth > 0)")
+        keyboard.press('Digit2')
+        page.wait_for_function("document.querySelector('#oGridInner .cell .cname') && "
+                               "document.querySelector('#oGridInner .cell .cname').textContent === 'IMG_0001.jpg'")
+        self.assertEqual(page.locator('#oGridInner .cell .cname').all_inner_texts(), ['IMG_0001.jpg', 'IMG_0002.jpg', 'IMG_0010.jpg'])
+        keyboard.press('PageDown')  # folder A only
+        page.wait_for_function("document.querySelectorAll('#oGridInner .cell').length === 2")
+        keyboard.press('ArrowRight')
+        self.assertEqual(page.inner_text('#oSel'), os.path.join(parent, 'A', 'IMG_0002.jpg'))
+        keyboard.press('Enter')  # large view
+        page.wait_for_selector('#oView:not(.hidden)')
+        page.wait_for_function("document.getElementById('oImg').complete && document.getElementById('oImg').naturalWidth === 640")
+        keyboard.press('Escape')
+        page.wait_for_selector('#oView', state='hidden')
+        keyboard.press('Escape')  # back to the folder list
+        page.wait_for_selector('#start.show')
+        page.wait_for_function("document.querySelectorAll('#subsList .sub.done').length === 2")
+        page.click('#subsAll')  # the overview from the folder list too
+        page.wait_for_function("document.querySelectorAll('#oGridInner .cell').length === 3")
+
+
 @unittest.skipIf(sync_playwright is None, 'playwright / Pillow not installed')
 class TenThousandTest(unittest.TestCase):
     def test_ten_thousand_photos(self):

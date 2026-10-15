@@ -813,6 +813,53 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'error'))
         self.assertIn('하위 폴더', self.api('state')[1]['message'])
 
+    def test_overview_of_a_parent_folder(self):
+        """v8: every subfolder's latest saved GOOD / REJECT at once; photos by index only."""
+        parent = tempfile.mkdtemp(prefix='LOTO_')
+        self.addCleanup(shutil.rmtree, parent, True)
+        for sub, count in (('Top', 3), ('Bottom', 2)):
+            os.makedirs(os.path.join(parent, sub))
+            for i in range(count):
+                Path(parent, sub, 'IMG_%d.jpg' % i).write_bytes(Path(self.photos, 'IMG_%d.jpg' % i).read_bytes())
+        self.assertFalse(self.api('overview', {'folder': parent + '_nope', 'output_dir': self.out})[1]['ok'])
+        self.assertFalse(self.api('overview', {'folder': parent, 'output_dir': self.out + '_nope'})[1]['ok'])
+        self.assertTrue(wait_until(lambda: self.api('overview', {'folder': parent, 'output_dir': self.out})[1]['state'] == 'done'))
+        view = self.api('overview', {'folder': parent, 'output_dir': self.out})[1]
+        self.assertEqual([(f['parts'], f['round'], f['good'], f['reject']) for f in view['folders']],
+                         [(['Bottom'], 0, [], []), (['Top'], 0, [], [])])
+        top = view['folders'][1]['path']
+        self.api('start', {'folder': top, 'output_dir': self.out, 'resume': False, 'root': parent})
+        self.assertTrue(wait_until(lambda: self.api('state')[1]['phase'] == 'ready'))
+        job = self.api('state')[1]['job']
+        response, data = self.request('GET', '/%s/file/%s/2' % (self.web.token, job), raw=True)
+        self.assertEqual((response.status, response.getheader('Content-Type'), data),
+                         (200, 'image/jpeg', Path(top, 'IMG_2.jpg').read_bytes()))  # dragged out as it is
+        self.assertEqual(self.request('GET', '/%s/file/%s/9' % (self.web.token, job))[0], 404)
+        self.assertTrue(self.api('save', {'job': job, 'good': [1]})[1]['ok'])
+
+        view = self.api('overview', {'folder': parent, 'output_dir': self.out})[1]
+        bottom, top_row = view['folders']
+        self.assertEqual((bottom['round'], bottom['first'], top_row['round'], top_row['first']), (0, 0, 1, 0))
+        self.assertEqual((top_row['good'], top_row['reject']), (['IMG_1.jpg'], ['IMG_0.jpg', 'IMG_2.jpg']))
+        self.assertEqual(top_row['session']['saved']['good'], 1)
+        # index = first + k for GOOD, first + len(good) + k for REJECT
+        status, thumb = self.request('GET', '/%s/othumb/%s/0' % (self.web.token, view['id']))
+        self.assertEqual((status, thumb[:2]), (200, b'\xff\xd8'))
+        response, data = self.request('GET', '/%s/oimg/%s/2' % (self.web.token, view['id']), raw=True)
+        self.assertEqual((response.status, data), (200, Path(top, 'IMG_2.jpg').read_bytes()))
+        self.assertEqual(self.request('GET', '/%s/othumb/%s/3' % (self.web.token, view['id']))[0], 404)
+        self.assertEqual(self.request('GET', '/%s/othumb/%s/0' % (self.web.token, 'stale'))[0], 404)
+        os.remove(os.path.join(top, 'IMG_0.jpg'))  # gone since it was saved: a clear error, not a crash
+        response, data = self.request('GET', '/%s/othumb/%s/1' % (self.web.token, view['id']), raw=True)
+        self.assertEqual(response.status, 503)
+
+    def test_path_panel_switch_is_kept(self):
+        self.assertTrue(self.api('home')[1]['config']['path_panel'])
+        self.assertFalse(self.api('options', {'path_panel': False})[1]['config']['path_panel'])
+        self.controller.close()
+        self.controller = server.Controller(self.base)
+        self.assertFalse(self.controller.home()['config']['path_panel'])
+
     def test_empty_folder(self):
         empty = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, empty, True)

@@ -68,7 +68,20 @@ button.toggle.on{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
 .dot.green{background:var(--good)}.dot.yellow{background:var(--warn)}.dot.red{background:var(--reject)}
 .bar{height:4px;flex:none;background:#1e293b;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent);transform-origin:left;transform:scaleX(0);will-change:transform}
-.stage{position:relative;flex:1;min-height:0;background:#05080f;overflow:hidden;contain:strict}
+.sbody{flex:1;min-height:0;display:flex}
+/* v8: path of the photo on screen, selectable and draggable (the rest of the sorting screen is not) */
+.side{width:280px;flex:none;contain:strict;overflow-y:auto;padding:10px 12px;background:#0d1528;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:2px;user-select:text;cursor:auto}
+.sideh{display:flex;align-items:center;gap:8px;margin-bottom:6px;user-select:none}
+.sk{color:var(--muted);font-size:11px;margin-top:8px;user-select:none}
+.sv{font:13px Consolas,"Malgun Gothic",monospace;word-break:break-all;white-space:pre-wrap;color:var(--text)}
+.sdrag{margin-top:14px;padding:10px;border:1px dashed #3b82f6;border-radius:8px;color:#bfdbfe;text-align:center;cursor:grab;user-select:none;background:#10203f}
+.shelp{margin-top:8px;font-size:11px;user-select:none}
+.stree{margin-top:10px;border-top:1px solid var(--line);padding-top:4px}
+.stree div.sf{font-size:12px;padding:2px 6px;border-radius:4px;color:var(--muted);word-break:break-all}
+.stree div.sf.cur{background:#1b2d52;color:var(--text);font-weight:700}
+.stree div.sf.done{color:#86efac}
+.selectable{user-select:text}
+.stage{position:relative;flex:1;min-width:0;min-height:0;background:#05080f;overflow:hidden;contain:strict}
 .stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .stage.zoomed{cursor:grab}
 /* GOOD state of the photo on screen: one small static label, no border or animation */
@@ -105,6 +118,30 @@ button.toggle.on{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
 .rfoot{display:flex;align-items:center;gap:14px;padding:12px 18px;border-top:1px solid var(--line);background:#0f172a;flex:none}
 .dest{color:var(--muted);max-width:55vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* overview: every saved GOOD / REJECT under a parent folder */
+#overview{flex-direction:column}
+.oroot{max-width:40vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:text}
+button.tab{background:transparent;border:1px solid var(--line);color:var(--muted);font-weight:700}
+button.tab.on.g{background:#123d24;border-color:#22c55e;color:#86efac}
+button.tab.on.r{background:#3f1d1d;border-color:#ef4444;color:#fca5a5}
+.obody{flex:1;min-height:0;display:flex}
+.ofolders{width:300px;flex:none;overflow-y:auto;border-right:1px solid var(--line);background:#0d1528}
+.of{display:flex;flex-direction:column;padding:7px 12px;cursor:pointer;border-left:3px solid transparent;user-select:none}
+.of:hover{background:#13203a}
+.of.sel{background:#1b2d52;border-left-color:var(--accent)}
+.of .ofn{font-weight:600;word-break:break-all}
+.of .ofc{font-size:12px;color:var(--muted)}.of .ofc .g{color:#86efac}.of .ofc .r{color:#fca5a5}
+.of.unsaved .ofn{color:var(--muted)}
+.obody .grid{flex:1}
+.cell.ocell{height:240px}
+.cell .cdir{display:block;padding:0 8px;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#overview .cell{border-color:#14532d}#overview.rej .cell{border-color:#3f1d1d}
+#overview .cell .ctag{background:var(--good);color:#03200d}#overview.rej .cell .ctag{background:var(--reject);color:#fff}
+.oview{position:absolute;inset:0;z-index:4;background:#05080f;display:flex;flex-direction:column}
+.oview img{flex:1;min-height:0;width:100%;object-fit:contain}
+.ocap{display:flex;align-items:center;gap:14px;padding:10px 18px;background:#0f172a;border-top:1px solid var(--line);font:600 14px Consolas,"Malgun Gothic",monospace}
+#overview{position:relative}
+
 /* network folder state: fixed overlay, no layout change */
 .netbar{position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:5;padding:8px 18px;border-radius:8px;font-weight:700;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.45);white-space:nowrap}
 .netbar.off{background:#7f1d1d;color:#fecaca}
@@ -116,3 +153,4 @@ button.toggle.on{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
 .modal h3{margin:0 0 10px;color:var(--text);font-size:17px}
 .modal p{margin:0 0 20px;white-space:pre-wrap;color:var(--muted)}
 .modal button.sel{outline:2px solid #93c5fd}
+.cell .cerr{width:184px;height:184px;display:flex;align-items:center;justify-content:center;color:#fca5a5;background:#05080f;font-size:12px}

@@ -21,6 +21,10 @@
 // Parent folder (v6): the photo folders at and below the folder typed on the start screen
 // are listed (T); each one is opened, saved and resumed on its own, and "다음 폴더" opens
 // the next one in the list.
+// v8: at the last photo of a folder opened through its parent folder a window asks to save and
+// go on: Enter saves and opens the next folder, after the last one the overview (O) shows every
+// saved GOOD / REJECT photo of all the folders at once. The sorting screen shows the photo's
+// path on the left (selectable, copyable, the photo file can be dragged out).
 
 const $ = id => document.getElementById(id);
 const fmt = n => Number(n || 0).toLocaleString('ko-KR');
@@ -30,7 +34,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const now = () => performance.now();
 const labelOf = p => (String(p).split(/[\\/]+/).filter(Boolean).pop() || p);
 
-let cfg = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3};
+let cfg = {arrow_repeat: false, arrow_repeat_ms: 100, space_min_view_ms: 120, decode_ahead: 5, decode_behind: 3, path_panel: true};
+const sepOf = folder => /\\/.test(folder) || !String(folder).includes('/') ? '\\' : '/';
+const joinPath = (folder, name) => String(folder).replace(/[\\/]+$/, '') + sepOf(folder) + name;
+const MIME = {jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff'};
+const mimeOf = name => MIME[String(name).split('.').pop().toLowerCase()] || 'application/octet-stream';
+
+// Clipboard: the async API needs a click (it has one: the copy buttons); the old command is the fallback.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (err) { /* below */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+  ta.remove();
+  return ok;
+}
 
 async function api(name, body) {
   const init = body === undefined ? {cache: 'no-store'}
@@ -91,6 +113,7 @@ async function loadHome() {
   const home = await api('home');
   Object.assign(cfg, home.config || {});
   renderRepeat();
+  renderSide();
   if (home.title) { document.title = home.title; $('ver').textContent = home.title.replace(/^AOI Photo Sorter\s*/, ''); }
   if (!$('output').value) $('output').value = home.output_dir || '';
   renderRecent(home.recent || []);
@@ -309,6 +332,9 @@ function moveSelection(code) {
   selectEntry(code === 'Home' ? 0 : code === 'End' ? T.entries.length - 1 : k + d);
 }
 
+// The folder open now was picked from the subfolder list of its parent folder (a folder typed
+// directly also has itself as root, without a list).
+const inParent = () => !!S.root && S.root === T.root && listShown();
 // The folder after the one open now, in the list of its parent folder.
 function nextEntry() {
   if (!S.root || S.root !== T.root) return null;
@@ -409,8 +435,11 @@ function beginSort(s) {
   R.items = null;
   $('hFolder').textContent = folderTitle();
   $('hOut').textContent = '저장: ' + S.output;
+  $('sFolder').textContent = S.folder;
+  renderSideTree();
   show('sort');
-  if (s.added || s.removed) note(`폴더 변경: 추가 ${fmt(s.added)}장(미확인), 삭제 ${fmt(s.removed)}장 제외`, 6000);
+  if (savedNote) { note(savedNote, 5000); savedNote = ''; }
+  else if (s.added || s.removed) note(`폴더 변경: 추가 ${fmt(s.added)}장(미확인), 삭제 ${fmt(s.removed)}장 제외`, 6000);
   else if (S.extra) {
     const fresh = S.extra.fresh.length, missing = S.extra.missing;
     note(`추가 GOOD 검토: 이전 REJECT ${fmt(S.n - fresh)}장` + (fresh ? ` + 신규 ${fmt(fresh)}장` : '') +
@@ -616,6 +645,10 @@ function renderHud() {
   put('hMode', 'text', S.listName + ' — Esc: 메뉴');
   put('stage', 'class', 'stage' + (good ? ' good' : '') + (S.zoom ? ' zoomed' : ''));
   put('fName', 'text', S.names[i] || '');
+  if (cfg.path_panel) {
+    put('sFile', 'text', S.names[i] || '');
+    put('sPath', 'text', S.names[i] ? joinPath(S.folder, S.names[i]) : '');
+  }
   put('fTag', 'text', good ? 'GOOD' : 'REJECT');
   put('fTag', 'class', good ? 'tag good' : 'tag');
   put('fNote', 'text', S.note);
@@ -696,6 +729,7 @@ function move(d, e) {
   if (np < 0 || np >= len()) {
     record({type: 'ignored', key, reason: 'edge', i: from});
     if (np < 0) note('첫 사진입니다');
+    else if (!S.list && inParent() && !(e && e.repeat)) folderEnd();
     else lastPhotoNote();
     return;
   }
@@ -730,8 +764,78 @@ async function toggleRepeat() {
   }
 }
 
+// 경로 패널 button: the photo's path on the left of the sorting screen. Kept like 연속 넘김.
+function renderSide() {
+  $('hSide').textContent = '경로 패널 ' + (cfg.path_panel ? 'ON' : 'OFF');
+  $('hSide').classList.toggle('on', !!cfg.path_panel);
+  $('side').classList.toggle('hidden', !cfg.path_panel);
+  shown.delete('sFile.text'); shown.delete('sPath.text');
+  hud();
+}
+async function toggleSide() {
+  cfg.path_panel = !cfg.path_panel;
+  renderSide();
+  try {
+    const r = await api('options', {path_panel: cfg.path_panel});
+    if (!r.ok) throw new Error(r.error || 'save failed');
+  } catch (err) {
+    note('경로 패널 설정을 저장하지 못했습니다 (이번 실행에만 적용)', 3000);
+  }
+}
+// The photo folders of the parent folder, the one open now marked (folder opened through its parent).
+function renderSideTree() {
+  const on = inParent() && T.entries.length > 1;
+  $('sTree').classList.toggle('hidden', !on);
+  if (!on) return;
+  $('sTreeList').innerHTML = T.entries.map((e, k) => {
+    const kind = e.path === S.folder ? ' cur' : e.results ? ' done' : '';
+    return `<div class="sf${kind}" title="${esc(e.path)}">${k + 1}. ${esc(entryName(e))}${e.results ? ` · ${e.results.round}차리뷰` : ''}</div>`;
+  }).join('');
+  const el = $('sTreeList').querySelector('.cur');
+  if (el) el.scrollIntoView({block: 'nearest'});
+}
+async function copyPath() {
+  if (!S.job) return;
+  const path = joinPath(S.folder, S.names[cur()]);
+  note(await copyText(path) ? '경로를 복사했습니다: ' + path : '복사하지 못했습니다 — 글자를 끌어 선택한 뒤 Ctrl+C', 3000);
+}
+
+// v8: the last photo of a folder opened through its parent folder. Enter saves this folder and
+// opens the next one; after the last folder it opens the overview of all of them.
+let advancing = false, savedNote = '';
+async function folderEnd() {
+  if (modal || advancing || opening) return;
+  const next = nextEntry();
+  const unseen = S.n - S.seenCount;
+  const extra = S.mode === 'extra';
+  const text = `${folderTitle()}\n확인 ${fmt(S.seenCount)} / ${fmt(S.n)} · ${extra ? '추가 ' : ''}GOOD ${fmt(S.goodCount)}` +
+    (unseen ? `\n화면에 한 번도 표시되지 않은 미확인 사진 ${fmt(unseen)}장은 REJECT로 저장됩니다.` : '') +
+    (next ? `\n\nEnter: ${S.round}차리뷰로 저장하고 다음 폴더(${entryName(next)})로 넘어갑니다.`
+      : `\n\n마지막 폴더입니다. Enter: ${S.round}차리뷰로 저장하고 모든 하위 폴더의 GOOD / REJECT를 한 화면에서 봅니다.`);
+  const a = await ask('이 폴더의 마지막 사진입니다', text, [
+    {label: next ? `저장 → 다음 폴더: ${entryName(next)} (Enter)` : '저장 → 전체 결과 보기 (Enter)', value: 'go', keys: ['Enter', 'NumpadEnter'], primary: true},
+    {label: '확인 화면으로 (C)', value: 'review', keys: ['KeyC']},
+    {label: '계속 보기 (Esc)', value: 'stay', keys: ['Escape']}]);
+  if (a === 'review') { openReview(false); return; }
+  if (a !== 'go') return;
+  advancing = true;
+  try {
+    const r = await save({ask: false, done: false});
+    if (!r) return;
+    const where = S.parts.length ? S.parts.join('\\') : labelOf(S.folder);
+    if (next) {
+      savedNote = `이전 폴더 ${where}: ${r.round}차리뷰 저장 완료 (GOOD ${fmt(r.good_count)} / REJECT ${fmt(r.reject_count)})`;
+      await openNext();
+    } else {
+      await openOverview(S.root, S.output);
+    }
+  } finally {
+    advancing = false;
+  }
+}
+
 function lastPhotoNote() {
-  note(S.list ? '마지막 사진입니다 — Esc: 메뉴' : '마지막 사진입니다 — Enter: 확인 화면으로', 3000);
+  note(S.list ? '마지막 사진입니다 — Esc: 메뉴' : inParent() ? '마지막 사진입니다 — Enter: 저장하고 다음 폴더로' : '마지막 사진입니다 — Enter: 확인 화면으로', 3000);
 }
 
 // Space: GOOD (REJECT again if it already was GOOD), then straight to the next photo.
@@ -742,7 +846,7 @@ function goodAndNext(e) {
   if (now() - S.paintedAt < cfg.space_min_view_ms) { record({type: 'ignored', key: 'space', reason: 'too-soon', i}); return; }
   toggle(i);
   if (S.pos + 1 < len()) step(1, 'space', e.timeStamp);
-  else { hud(); lastPhotoNote(); }
+  else { hud(); if (!S.list && inParent()) folderEnd(); else lastPhotoNote(); }
 }
 
 function jump(p) {
@@ -848,6 +952,7 @@ async function openMenu() {
     ? [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true}, refresh, {label: '계속 (Esc)', value: 'stay', keys: ['Escape']}]
     : [{label: '확인 화면으로 (Enter)', value: 'review', keys: ['Enter', 'NumpadEnter'], primary: true}, refresh,
        ...(next ? [{label: `다음 폴더: ${entryName(next)} (N)`, value: 'next', keys: ['KeyN']}] : []),
+       ...(inParent() ? [{label: '전체 결과 보기 (O)', value: 'overview', keys: ['KeyO']}] : []),
        {label: S.root ? '폴더 목록으로' : '처음 화면으로', value: 'home'}, {label: '계속 (Esc)', value: 'stay', keys: ['Escape']}];
   const text = S.list ? `${S.listName}: ${fmt(S.pos + 1)} / ${fmt(len())}`
     : `확인 ${fmt(S.seenCount)} / ${fmt(S.n)} · ${S.mode === 'extra' ? '추가 ' : ''}GOOD ${fmt(S.goodCount)}\n진행 상황은 자동 저장됩니다.`;
@@ -855,6 +960,7 @@ async function openMenu() {
   if (a === 'review') { const keep = !!S.list; if (S.list) leaveList(); openReview(keep); }
   else if (a === 'home') goHome();
   else if (a === 'next') openNext();
+  else if (a === 'overview') openOverview(S.root, S.output);
   else if (a === 'refresh') refreshNow();
 }
 
@@ -1011,34 +1117,47 @@ function reviewKey(e) {
   else if ((c === 'Enter' || c === 'NumpadEnter') && !e.repeat) enterList(R.items, R.sel, 'GOOD만 보기');
 }
 
-async function save() {
-  if (modal) return;
+// opts.ask false: the caller already told about unseen photos; opts.done false: no done screen.
+// Returns the saved result, or null when nothing was saved.
+async function save(opts = {}) {
+  if (modal || saving) return null;
+  saving = true;
+  try { return await saveNow(opts); } finally { saving = false; }
+}
+let saving = false;
+async function saveNow({ask: confirmUnseen = true, done = true} = {}) {
   const unseen = S.n - S.seenCount;
-  if (unseen > 0) {
+  if (unseen > 0 && confirmUnseen) {
     const a = await ask('미확인 사진이 있습니다', `화면에 한 번도 표시되지 않은 사진 ${fmt(unseen)}장은 REJECT로 저장됩니다.\n저장할까요?`,
       [{label: '저장 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
-    if (a !== 'ok') return;
+    if (a !== 'ok') return null;
   }
   await flushSync();
   let outputDir = S.output;
   let overwrite = false;
   for (;;) {
     const r = await api('save', {job: S.job, good: goodIndices(), overwrite, output_dir: outputDir});
-    if (r.ok) { S.output = r.output_dir; S.round = r.round; $('hOut').textContent = '저장: ' + S.output; showDone(r); return; }
+    if (r.ok) {
+      S.output = r.output_dir; S.round = r.round; $('hOut').textContent = '저장: ' + S.output;
+      const e = T.entries.find(x => x.path === S.folder);
+      if (e && S.root === T.root) e.results = {round: r.round, time: r.time, legacy: false};
+      if (done) showDone(r);
+      return r;
+    }
     if (r.changed) {
       const a = await ask('다른 곳에서 먼저 저장된 회차가 있습니다', `${outputDir}\n이 추가 검토를 시작한 뒤에 ${r.latest_round}차리뷰가 저장되었습니다(다른 PC 등).\n` +
         `그 결과의 GOOD에 이번 추가 GOOD을 합쳐 ${r.latest_round + 1}차리뷰로 저장할까요? (이전 회차 파일은 그대로 둡니다)`,
         [{label: '합쳐서 저장 (Enter)', value: 'ok', keys: ['Enter', 'NumpadEnter'], primary: true}, {label: '취소 (Esc)', value: 'no', keys: ['Escape']}]);
-      if (a !== 'ok') return;
+      if (a !== 'ok') return null;
       overwrite = true;
       continue;
     }
     const buttons = [{label: '취소 (Esc)', value: 'no', keys: ['Escape', 'Enter']}];
     if (bridge()) buttons.unshift({label: '다른 위치 선택', value: 'pick', primary: true});
     const a = await ask('저장하지 못했습니다', (r.error || '알 수 없는 오류') + '\n\n진행 상황은 자동 저장되어 있습니다.', buttons);
-    if (a !== 'pick') return;
+    if (a !== 'pick') return null;
     const dir = await bridge().choose_folder(outputDir);
-    if (!dir) return;
+    if (!dir) return null;
     outputDir = dir;
     overwrite = false;
   }
@@ -1050,6 +1169,7 @@ function showDone(r) {
   $('doneNext').classList.toggle('hidden', !next);
   if (next) $('doneNext').textContent = `다음 폴더: ${entryName(next)} (Enter)`;
   $('doneNew').textContent = S.root ? '폴더 목록으로' : '새 작업';
+  $('doneAll').classList.toggle('hidden', !inParent());
   $('doneFiles').innerHTML =
     (r.added_path ? `<div><span class="g">추가GOOD</span> <b>${fmt(r.added_count)}</b>장 — 이번 회차에서 새로 GOOD<br><small class="muted">${esc(r.added_path)}</small></div>` : '') +
     `<div><span class="g">GOOD</span> <b>${fmt(r.good_count)}</b>장` + (r.added_path ? ` — 누적 (이전 ${fmt(r.base_count)} + 추가 ${fmt(r.added_count)})` : '') +
@@ -1059,12 +1179,225 @@ function showDone(r) {
   show('done');
 }
 
+// ------------------------------------------------------------------ overview (v8): every folder's results at once
+// The latest saved round of each photo folder under the parent folder, GOOD or REJECT photos of all
+// of them (or of one, picked on the left) in one grid. Python keeps the photo list; thumbnails are
+// asked for by index (othumb/<id>/<index>), like the review screen.
+const O = {id: '', root: '', output: '', folders: [], failed: 0, tab: 'good', folder: -1, items: [], sel: 0, cols: 1,
+  cells: new Map(), viewing: false, seq: 0, timer: null};
+const OCELL_H = 248;
+
+async function openOverview(root, output) {
+  if (!root || !output) return;
+  if (S.job) {
+    await flushSync();
+    await api('new', {});
+    S.job = null;
+    dropAll();
+  }
+  Object.assign(O, {root, output, id: '', folders: [], failed: 0, folder: -1, items: [], sel: 0, viewing: false});
+  O.cells.forEach(el => el.remove());
+  O.cells.clear();
+  $('oView').classList.add('hidden');
+  $('oRoot').textContent = root;
+  show('overview');
+  renderOverview();
+  loadOverview(false);
+}
+
+async function loadOverview(rescan) {
+  const seq = ++O.seq;
+  clearTimeout(O.timer);
+  if (!O.id) overviewMessage('결과 파일 읽는 중…');
+  let r;
+  try { r = await api('overview', {folder: O.root, output_dir: O.output, rescan}); } catch (err) { r = {ok: false, error: String(err.message || err)}; }
+  if (seq !== O.seq || page !== 'overview') return;
+  if (!r.ok) { O.id = ''; O.folders = []; buildItems(); renderOverview(); overviewMessage(r.error || '결과를 읽을 수 없습니다.'); return; }
+  if (r.state === 'running') {
+    overviewMessage(`하위 폴더 찾는 중… (폴더 ${fmt(r.listed)}개 확인, 사진 폴더 ${fmt(r.found)}개)`);
+    O.timer = setTimeout(() => loadOverview(false), 300);
+    return;
+  }
+  const keep = O.folder >= 0 && O.folders[O.folder] ? O.folders[O.folder].path : '';
+  O.id = r.id; O.folders = r.folders; O.failed = r.failed;
+  O.folder = keep ? O.folders.findIndex(f => f.path === keep) : -1;
+  buildItems();
+  renderOverview();
+}
+
+function overviewMessage(text) {
+  $('oEmpty').textContent = text;
+  $('oEmpty').classList.remove('hidden');
+}
+
+function buildItems() {
+  const items = [];
+  O.folders.forEach((f, k) => {
+    if (O.folder >= 0 && O.folder !== k) return;
+    const names = O.tab === 'good' ? f.good : f.reject;
+    const base = f.first + (O.tab === 'good' ? 0 : f.good.length);
+    names.forEach((name, j) => items.push([base + j, k, name]));
+  });
+  O.items = items;
+  O.sel = 0;
+  O.cells.forEach(el => el.remove());
+  O.cells.clear();
+  $('oGrid').scrollTop = 0;
+}
+
+const oName = f => f.parts.length ? f.parts.join('\\') : '(이 폴더)';
+const oPath = item => joinPath(O.folders[item[1]].path, item[2]);
+
+function renderOverview() {
+  const saved = O.folders.filter(f => f.round);
+  const good = saved.reduce((a, f) => a + f.good.length, 0), reject = saved.reduce((a, f) => a + f.reject.length, 0);
+  $('oTabGood').textContent = `GOOD ${fmt(good)} (1)`;
+  $('oTabReject').textContent = `REJECT ${fmt(reject)} (2)`;
+  $('oTabGood').className = 'tab g' + (O.tab === 'good' ? ' on' : '');
+  $('oTabReject').className = 'tab r' + (O.tab === 'reject' ? ' on' : '');
+  $('overview').classList.toggle('rej', O.tab === 'reject');
+  const row = (k, name, info, kind) => `<div class="of${kind}" data-k="${k}"><span class="ofn">${esc(name)}</span><span class="ofc">${info}</span></div>`;
+  const counts = f => `${f.round}차리뷰 · <span class="g">GOOD ${fmt(f.good.length)}</span> · <span class="r">REJECT ${fmt(f.reject.length)}</span>`;
+  $('oFolders').innerHTML = !O.folders.length ? '' :
+    row(-1, `전체 (폴더 ${fmt(O.folders.length)}개 · 저장 ${fmt(saved.length)}개)`,
+      `<span class="g">GOOD ${fmt(good)}</span> · <span class="r">REJECT ${fmt(reject)}</span>` + (O.failed ? ` · 열 수 없는 폴더 ${fmt(O.failed)}개` : ''),
+      O.folder === -1 ? ' sel' : '') +
+    O.folders.map((f, k) => {
+      const s = f.session;
+      const info = f.round ? counts(f) + (f.time ? ` · ${esc(f.time.slice(5))}` : '')
+        : '저장 안 됨' + (s && !s.saved ? ` · 진행 중 ${fmt(s.seen)}/${fmt(s.total)}` : '') + ` · 사진 ${fmt(f.count)}장`;
+      return row(k, `${k + 1}. ${oName(f)}`, info, (O.folder === k ? ' sel' : '') + (f.round ? '' : ' unsaved'));
+    }).join('');
+  const sel = $('oFolders').querySelector('.sel');
+  if (sel) sel.scrollIntoView({block: 'nearest'});
+  const empty = !O.items.length;
+  $('oEmpty').classList.toggle('hidden', !empty);
+  if (empty && O.id) {
+    const f = O.folder >= 0 ? O.folders[O.folder] : null;
+    $('oEmpty').textContent = !O.folders.length ? '사진 폴더가 없습니다.'
+      : f && !f.round ? `${oName(f)}: 아직 저장한 결과가 없습니다.`
+      : !saved.length ? `저장한 결과가 없습니다. 결과 저장 위치: ${O.output}`
+      : `${O.tab === 'good' ? 'GOOD' : 'REJECT'} 사진이 없습니다.`;
+  }
+  renderOGrid(true);
+}
+
+function renderOGrid(scrollToSel) {
+  const grid = $('oGrid'), inner = $('oGridInner');
+  const cols = Math.max(1, Math.floor((grid.clientWidth - 24) / CELL_W));
+  if (cols !== O.cols) { O.cells.forEach(el => el.remove()); O.cells.clear(); O.cols = cols; }
+  const rows = Math.ceil(O.items.length / cols);
+  inner.style.height = rows * OCELL_H + 'px';
+  if (scrollToSel) {
+    const row = Math.floor(O.sel / cols);
+    if (row * OCELL_H < grid.scrollTop) grid.scrollTop = row * OCELL_H;
+    else if ((row + 1) * OCELL_H > grid.scrollTop + grid.clientHeight - 24) grid.scrollTop = (row + 1) * OCELL_H - grid.clientHeight + 24;
+  }
+  const r0 = Math.max(0, Math.floor(grid.scrollTop / OCELL_H) - 2);
+  const r1 = Math.min(rows, Math.ceil((grid.scrollTop + grid.clientHeight) / OCELL_H) + 2);
+  const visible = new Set();
+  for (let p = r0 * cols; p < Math.min(O.items.length, r1 * cols); p++) {
+    visible.add(p);
+    if (O.cells.has(p)) continue;
+    const [g, k, name] = O.items[p];
+    const el = document.createElement('div');
+    el.className = 'cell ocell';
+    el.style.transform = `translate(${(p % cols) * CELL_W}px, ${Math.floor(p / cols) * OCELL_H}px)`;
+    el.innerHTML = `<img alt="" decoding="async" src="othumb/${O.id}/${g}"><span class="cname">${esc(name)}</span>` +
+      `<span class="cdir">${esc(oName(O.folders[k]))}</span><span class="ctag">${O.tab === 'good' ? 'GOOD' : 'REJECT'}</span>`;
+    el.title = joinPath(O.folders[k].path, name);
+    el.querySelector('img').onerror = ev => { ev.target.replaceWith(Object.assign(document.createElement('div'), {className: 'cerr', textContent: '읽을 수 없음'})); };
+    el.onclick = () => { O.sel = p; updateOCells(); };
+    el.ondblclick = () => { O.sel = p; openOView(); };
+    inner.appendChild(el);
+    O.cells.set(p, el);
+  }
+  for (const [p, el] of O.cells) if (!visible.has(p)) { el.remove(); O.cells.delete(p); }
+  updateOCells();
+}
+
+function updateOCells() {
+  for (const [p, el] of O.cells) el.classList.toggle('sel', p === O.sel);
+  const item = O.items[O.sel];
+  $('oSel').textContent = item ? oPath(item) : '';
+  $('oCopy').disabled = !item;
+}
+$('oGrid').addEventListener('scroll', () => { if (page === 'overview') renderOGrid(false); }, {passive: true});
+new ResizeObserver(() => { if (page === 'overview') renderOGrid(false); }).observe($('oGrid'));
+
+function setTab(tab) {
+  if (tab === O.tab) return;
+  O.tab = tab;
+  buildItems();
+  renderOverview();
+}
+function setFolder(k) {
+  k = Math.max(-1, Math.min(O.folders.length - 1, k));
+  if (k === O.folder) return;
+  O.folder = k;
+  buildItems();
+  renderOverview();
+}
+
+function openOView() {
+  const item = O.items[O.sel];
+  if (!item) return;
+  O.viewing = true;
+  $('oImg').src = `oimg/${O.id}/${item[0]}`;
+  $('oCap').textContent = `${fmt(O.sel + 1)} / ${fmt(O.items.length)} · ${O.tab === 'good' ? 'GOOD' : 'REJECT'} · ${oPath(item)}`;
+  $('oView').classList.remove('hidden');
+}
+function closeOView() {
+  O.viewing = false;
+  $('oView').classList.add('hidden');
+  $('oImg').removeAttribute('src');
+  renderOGrid(true);
+}
+
+function overviewKey(e) {
+  const c = e.code;
+  if (e.ctrlKey && (c === 'KeyC' || c === 'Insert')) return;  // copy the selected text
+  if (['Space', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Enter', 'NumpadEnter', 'Escape', 'Home', 'End', 'PageUp', 'PageDown',
+    'Tab', 'Digit1', 'Digit2', 'Numpad1', 'Numpad2', 'Backspace'].includes(c) || e.ctrlKey || e.altKey) e.preventDefault();
+  if (O.viewing) {
+    if (['Escape', 'Enter', 'NumpadEnter'].includes(c)) { if (!e.repeat) closeOView(); }
+    else if (c === 'ArrowRight' || c === 'ArrowLeft' || c === 'Space') {
+      const p = Math.max(0, Math.min(O.items.length - 1, O.sel + (c === 'ArrowLeft' ? -1 : 1)));
+      if (p !== O.sel) { O.sel = p; openOView(); }
+    }
+    return;
+  }
+  if (c === 'Escape') { if (!e.repeat) closeOverview(); return; }
+  if (c === 'Digit1' || c === 'Numpad1') { setTab('good'); return; }
+  if (c === 'Digit2' || c === 'Numpad2') { setTab('reject'); return; }
+  if (c === 'Tab') { setTab(O.tab === 'good' ? 'reject' : 'good'); return; }
+  if (c === 'PageDown' || c === 'PageUp') { setFolder(O.folder + (c === 'PageDown' ? 1 : -1)); return; }
+  if (!O.items.length) return;
+  const last = O.items.length - 1;
+  const moves = {ArrowRight: 1, ArrowLeft: -1, ArrowDown: O.cols, ArrowUp: -O.cols};
+  if (c in moves) { O.sel = Math.max(0, Math.min(last, O.sel + moves[c])); renderOGrid(true); }
+  else if (c === 'Home') { O.sel = 0; renderOGrid(true); }
+  else if (c === 'End') { O.sel = last; renderOGrid(true); }
+  else if ((c === 'Enter' || c === 'NumpadEnter') && !e.repeat) openOView();
+}
+
+function closeOverview() {
+  O.seq++;
+  clearTimeout(O.timer);
+  closeOView();
+  O.cells.forEach(el => el.remove());
+  O.cells.clear();
+  if ($('folder').value.trim() !== O.root) $('folder').value = O.root;
+  backToStart();
+}
+
 // ------------------------------------------------------------------ keyboard
 const SORT_KEYS = new Set(['Space', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown',
   'Enter', 'NumpadEnter', 'Escape', 'KeyF', 'KeyR', 'Tab', 'Backspace', 'F5']);
 
 function sortKey(e) {
   const c = e.code;
+  if (e.ctrlKey && (c === 'KeyC' || c === 'Insert')) return;  // copy the path selected on the left
   if (SORT_KEYS.has(c) || e.ctrlKey || e.altKey) e.preventDefault();
   if (!S.job) return;
   switch (c) {
@@ -1076,7 +1409,7 @@ function sortKey(e) {
     case 'KeyF': if (!e.repeat) toggleZoom(); break;
     case 'KeyR': if (!e.repeat) refreshNow(); break;
     case 'Enter': case 'NumpadEnter':
-      if (!e.repeat && !S.list && S.pos === len() - 1 && S.painted === cur()) openReview(false);
+      if (!e.repeat && !S.list && S.pos === len() - 1 && S.painted === cur()) { if (inParent()) folderEnd(); else openReview(false); }
       break;
     case 'Escape': if (!e.repeat) openMenu(); break;
   }
@@ -1089,10 +1422,12 @@ window.addEventListener('keydown', e => {
     if (e.repeat) return;
     if (page === 'sort' || page === 'review') refreshNow();
     else if (page === 'start') { scheduleCheck(); pollTree(true); }
+    else if (page === 'overview' && !O.viewing) loadOverview(true);
     return;
   }
   if (page === 'sort') sortKey(e);
   else if (page === 'review') reviewKey(e);
+  else if (page === 'overview') overviewKey(e);
   else if (page === 'start') {
     const inField = document.activeElement && document.activeElement.tagName === 'INPUT';
     if ((e.code === 'Enter' || e.code === 'NumpadEnter') && !e.repeat) { e.preventDefault(); startOrWait(); }
@@ -1107,7 +1442,8 @@ window.addEventListener('keydown', e => {
 // Space on a focused button fires on keyup: swallow it outside the start screen.
 window.addEventListener('keyup', e => { if (page !== 'start' && e.code === 'Space') e.preventDefault(); }, true);
 window.addEventListener('focus', () => { if (page !== 'start' && document.activeElement) document.activeElement.blur(); });
-document.addEventListener('contextmenu', e => { if (page !== 'start') e.preventDefault(); });
+// right click → 복사 stays available on the path texts
+document.addEventListener('contextmenu', e => { if (page !== 'start' && !(e.target.closest && e.target.closest('.side, .selectable'))) e.preventDefault(); });
 
 // ------------------------------------------------------------------ wiring
 for (const b of document.querySelectorAll('button')) {
@@ -1139,6 +1475,32 @@ $('doneOpen').onclick = () => { const b = bridge(); if (b) b.open_path(S.output)
 $('doneReview').onclick = () => openReview(true);
 $('doneNew').onclick = () => goHome();
 $('hRepeat').onclick = () => toggleRepeat();
+$('hSide').onclick = () => toggleSide();
+$('sideCopy').onclick = () => copyPath();
+$('sDrag').addEventListener('dragstart', ev => {
+  // Chromium copies the file where it is dropped (Explorer, desktop) from DownloadURL; text targets get the path.
+  if (!S.job) { ev.preventDefault(); return; }
+  const i = cur(), name = S.names[i];
+  ev.dataTransfer.effectAllowed = 'copy';
+  ev.dataTransfer.setData('DownloadURL', `${mimeOf(name)}:${name}:${new URL(`file/${S.job}/${i}`, location.href).href}`);
+  ev.dataTransfer.setData('text/plain', joinPath(S.folder, name));
+});
+$('doneAll').onclick = () => openOverview(S.root, S.output);
+$('subsAll').onclick = () => {
+  if (lastCheck && lastCheck.output_ok) openOverview(T.root, $('output').value.trim());
+  else setMsg('outputMsg', '결과 저장 위치를 먼저 지정하세요.', 'bad');
+};
+$('oTabGood').onclick = () => setTab('good');
+$('oTabReject').onclick = () => setTab('reject');
+$('oReload').onclick = () => loadOverview(true);
+$('oBack').onclick = () => closeOverview();
+$('oOpen').onclick = () => { const b = bridge(); if (b) b.open_path(O.output); };
+$('oCopy').onclick = async () => {
+  const item = O.items[O.sel];
+  if (item) $('oSel').textContent = (await copyText(oPath(item)) ? '복사함: ' : '복사 실패: ') + oPath(item);
+};
+$('oFolders').addEventListener('click', ev => { const el = ev.target.closest('.of'); if (el) setFolder(+el.dataset.k); });
+$('oView').addEventListener('click', ev => { if (ev.target === $('oImg')) closeOView(); });
 $('doneNext').onclick = () => openNext();
 $('subsRescan').onclick = () => pollTree(true);
 $('subsList').addEventListener('click', ev => { const el = ev.target.closest('.sub'); if (el) selectEntry(+el.dataset.k); });

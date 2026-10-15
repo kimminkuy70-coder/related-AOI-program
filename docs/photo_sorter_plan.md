@@ -475,3 +475,15 @@ v4는 결과를 `<폴더명>_GOOD.txt` / `_REJECT.txt`에 덮어쓰면서 `_GOOD
 | 한계 | 코드 서명 없음: 처음 실행 때 SmartScreen 경고가 뜰 수 있음. onefile은 실행할 때마다 임시 폴더에 풀어 1~3초 더 걸림 |
 | 오탐 완화(v7) | 미서명 onefile .exe가 Windows Defender에 `Trojan:Win32/Wacatac` 등으로 오탐되던 문제(일부 PC, 한 번 격리되면 같은 해시 재다운로드도 즉시 차단) 완화. `build_exe.py`가 ① PyInstaller bootloader를 빌드 머신에서 소스로 재컴파일(`PYINSTALLER_COMPILE_BOOTLOADER=1`, `--no-binary pyinstaller`)해 공용 스텁과 바이트를 다르게, ② `--version-file`로 Windows 버전 리소스 삽입(회사·제품·버전), ③ `--noupx`. 근본 해결은 코드 서명 또는 배포처 Defender 허용 등록 |
 
+
+## 16. v8: 폴더 끝에서 다음 폴더로, 전체 결과 보기, 사진 경로 패널
+
+| 항목 | 규칙 |
+|---|---|
+| 폴더 끝 창 | 상위 폴더 목록에서 연 폴더(`inParent()`: `S.root === T.root`이고 하위 폴더 목록이 있음)에서만. 마지막 사진에서 → / Space / Enter(auto-repeat 제외) → `folderEnd()` 창: Enter = `save({ask: false, done: false})` 후 다음 폴더 `openNext()`(이어하기), 마지막 폴더면 전체 결과. C = 확인 화면, Esc = 계속. 직접 지정한 폴더(root = 자기 자신, 목록 없음)는 v7과 같음 |
+| 전체 결과 | `api/overview`(folder, output_dir, rescan): `FolderTree` 목록이 끝날 때까지 `state: running`, 끝나면 폴더마다 `read_results`의 최신 회차 GOOD / REJECT 이름과 세션 요약. 사진 경로 목록은 서버에만 두고(폴더 순, 폴더 안에서는 GOOD 다음 REJECT) 화면은 `othumb/<id>/<번호>`, `oimg/<id>/<번호>`로 요청(경로를 화면에서 받지 않음). 썸네일은 최근 3000개 메모리 보관 |
+| 화면 | `#overview`: GOOD/REJECT 탭(1 / 2 / Tab), 왼쪽 폴더 목록(전체 / 폴더별, PageUp/PageDown), 가상 스크롤 썸네일 격자(확인 화면과 같은 방식), Enter 크게 보기(← →), 아래쪽 선택 경로(선택·복사 가능) |
+| 경로 패널 | 선별 화면 왼쪽 `#side`(`contain: strict`, 폴더 / 파일 / 전체 경로, HUD 갱신과 같은 `put()`으로 바뀐 값만 기록). `user-select: text`, Ctrl+C와 오른쪽 클릭은 이 패널과 `.selectable`에서만 허용. `path_panel` 설정(`Settings.OPTIONS`)으로 켜고 끔 |
+| 파일 끌어 놓기 | `#sDrag`의 dragstart에 `DownloadURL`(`<mime>:<이름>:<file/<job>/<번호> URL>`)과 `text/plain`(전체 경로). `file/<job>/<번호>`는 변환 없는 원본 바이트. WebView2에서 탐색기로 복사되는지는 Windows 실기 확인 필요 |
+
+시험: 단위(`test_overview_of_a_parent_folder`, `test_path_panel_switch_is_kept`), E2E(`test_folder_end_goes_on_and_overview`).

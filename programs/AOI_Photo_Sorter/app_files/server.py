@@ -7,7 +7,10 @@ Instead the page and the photos come from this server, on the same origin, so
 Chromium's local network access rules and CORS never apply. The server listens on
 127.0.0.1 only, on a port the OS picks, every URL carries a per-run random token,
 and photos are addressed by index (no file paths from the page). Standard library only.
+The overview of a parent folder (v8, all GOOD / REJECT results at once) works the same way:
+its photo list stays here and the page asks for thumbnails by index.
 """
+import collections
 import http.server
 import json
 import logging
@@ -78,6 +81,8 @@ class Controller:
         self._index = (None, 0.0, {})  # (output_dir, time, engine.results_index) for the subfolder list
         self._summaries = {}  # session file -> (mtime, size, summary)
         self._opened = set()
+        self._overview = None  # (id, [photo paths]) of the overview on screen
+        self._othumbs = collections.OrderedDict()  # (overview id, index) -> thumbnail, most recent last
         self.closing = False
         self._stop = threading.Event()
         self._saver = threading.Thread(target=self._autosave, name='session-autosave', daemon=True)
@@ -121,10 +126,11 @@ class Controller:
 
     def _config(self):
         cfg = self.settings.data
-        return {key: cfg[key] for key in ('arrow_repeat', 'arrow_repeat_ms', 'space_min_view_ms', 'decode_ahead', 'decode_behind')}
+        return {key: cfg[key] for key in ('arrow_repeat', 'arrow_repeat_ms', 'space_min_view_ms', 'decode_ahead', 'decode_behind',
+                                          'path_panel')}
 
     def options(self, payload):
-        """A switch on the screen (연속 넘김): kept in settings.json for the next start."""
+        """A switch on the screen (연속 넘김, 경로 패널): kept in settings.json for the next start."""
         for key, value in payload.items():
             self.settings.set_option(key, value)
         return {'ok': True, 'config': self._config()}
@@ -153,13 +159,7 @@ class Controller:
         ok, message = engine.check_folder(folder)
         if not ok:
             return {'ok': False, 'error': message}
-        with self._lock:
-            tree = self._tree
-            if tree is None or tree.key != engine.path_key(folder) or rescan or tree.state in ('stopped', 'error'):
-                if tree is not None:
-                    tree.cancel()
-                tree = self._tree = engine.FolderTree(folder)
-        out = tree.snapshot()
+        out = self._folder_tree(folder, rescan).snapshot()
         index = self._results_index(output_dir, fresh=rescan)
         for entry in out['entries']:
             entry['label'] = engine.result_label(entry['path'], folder)
@@ -169,6 +169,103 @@ class Controller:
             entry['extra_session'] = extra if extra and not extra.get('saved') else None
         out.update(ok=True, root=folder)
         return out
+
+    def _folder_tree(self, folder, rescan=False):
+        with self._lock:
+            tree = self._tree
+            if tree is None or tree.key != engine.path_key(folder) or rescan or tree.state in ('stopped', 'error'):
+                if tree is not None:
+                    tree.cancel()
+                tree = self._tree = engine.FolderTree(folder)
+            return tree
+
+    def overview(self, folder, output_dir, rescan=False):
+        """Every result under a parent folder at once (v8): the latest saved round of each
+        photo folder in its list, with the names of its GOOD and REJECT photos. Folders not
+        saved yet are listed without photos. The page asks again while state is 'running'
+        (the folder list is still being found). Photos are then asked for by their index in
+        the order of the folders, GOOD before REJECT within a folder."""
+        folder = (folder or '').strip()
+        output_dir = (output_dir or '').strip()
+        ok, message = engine.check_folder(folder)
+        if not ok:
+            return {'ok': False, 'error': message}
+        if not output_dir or not os.path.isdir(output_dir):
+            return {'ok': False, 'error': '결과 저장 위치 폴더가 없거나 접근할 수 없습니다.'}
+        tree = self._folder_tree(folder, rescan)
+        snap = tree.snapshot()
+        if snap['state'] == 'running':
+            return {'ok': True, 'state': 'running', 'listed': snap['listed'], 'found': len(snap['entries'])}
+        index = engine.results_index(output_dir)
+        folders, paths = [], []
+        for entry in snap['entries']:
+            label = engine.result_label(entry['path'], folder)
+            results = engine.read_results(output_dir, entry['path'], label) if label.casefold() in index else None
+            row = {'path': entry['path'], 'parts': entry['parts'], 'count': entry['count'], 'label': label,
+                   'first': len(paths), 'good': [], 'reject': [], 'round': 0, 'time': '',
+                   'session': self._summary(entry['path'])}
+            if results:
+                row.update(good=results['good'], reject=results['reject'], round=results['round'], time=results['time'])
+                paths.extend(os.path.join(entry['path'], name) for name in results['good'] + results['reject'])
+            folders.append(row)
+        with self._lock:
+            view_id = secrets.token_hex(4)
+            self._overview = (view_id, paths)
+            self._othumbs.clear()
+        self._allow_open(output_dir)
+        return {'ok': True, 'state': snap['state'], 'id': view_id, 'root': folder, 'output_dir': output_dir,
+                'folders': folders, 'failed': snap['failed']}
+
+    def _overview_path(self, view_id, index):
+        with self._lock:
+            view = self._overview
+        if view is None or view[0] != view_id or not 0 <= index < len(view[1]):
+            raise LookupError('전체 결과 목록이 바뀌었습니다.')
+        return view[1][index]
+
+    def _read_photo(self, path):
+        try:
+            return engine.photo_bytes(path, self._reader)
+        except OSError as exc:
+            raise engine.ReadError('읽기 실패: %s' % (exc.strerror or exc))
+        except Exception as exc:
+            raise engine.ReadError('표시할 수 없는 사진: %s' % exc)
+
+    def overview_image(self, view_id, index):
+        return self._read_photo(self._overview_path(view_id, index))
+
+    def overview_thumbnail(self, view_id, index):
+        key = (view_id, index)
+        with self._lock:
+            thumb = self._othumbs.get(key)
+            if thumb is not None:
+                self._othumbs.move_to_end(key)
+                return thumb, 'image/jpeg'
+        path = self._overview_path(view_id, index)
+        try:
+            thumb = engine.make_thumbnail(self._reader(path), self.settings['thumb_size'])
+        except OSError as exc:
+            raise engine.ReadError('읽기 실패: %s' % (exc.strerror or exc))
+        except Exception as exc:
+            raise engine.ReadError('표시할 수 없는 사진: %s' % exc)
+        with self._lock:
+            self._othumbs[key] = thumb
+            while len(self._othumbs) > 3000:  # ~15 KB each
+                self._othumbs.popitem(last=False)
+        return thumb, 'image/jpeg'
+
+    def original(self, job_id, index):
+        """The photo file as it is (a photo dragged out of the window is copied from this)."""
+        job = self._current(job_id)
+        if not 0 <= index < len(job.names):
+            raise LookupError('없는 사진입니다.')
+        path = os.path.join(job.folder, job.names[index])
+        try:
+            data = self._reader(path)
+        except OSError as exc:
+            raise engine.ReadError('읽기 실패: %s' % (exc.strerror or exc))
+        ext = os.path.splitext(path)[1].lower()
+        return data, engine.MIME.get(ext, 'image/tiff' if ext in engine.CONVERT_EXTS else 'application/octet-stream')
 
     def _results_index(self, output_dir, fresh=False):
         # the list is asked for every 250 ms while folders are being found: one listing per 2 s
@@ -418,6 +515,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # pythonw has no stderr; errors are logged where they happen
 
+    GETTERS = {'img': 'image', 'thumb': 'thumbnail', 'file': 'original', 'oimg': 'overview_image',
+               'othumb': 'overview_thumbnail'}
+
     @property
     def app(self):
         return self.server.app
@@ -465,9 +565,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             if parts == ['']:
                 self._send(200, self.app.html, 'text/html; charset=utf-8')
-            elif len(parts) == 3 and parts[0] in ('img', 'thumb'):
-                getter = controller.image if parts[0] == 'img' else controller.thumbnail
-                data, mime = getter(parts[1], int(parts[2]))
+            elif len(parts) == 3 and parts[0] in self.GETTERS:
+                data, mime = getattr(controller, self.GETTERS[parts[0]])(parts[1], int(parts[2]))
                 self._send(200, data, mime)
             elif parts == ['api', 'home']:
                 self._json(controller.home())
@@ -502,6 +601,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(controller.options(payload))
             elif name == 'tree':
                 self._json(controller.tree(payload.get('folder'), payload.get('output_dir'), bool(payload.get('rescan'))))
+            elif name == 'overview':
+                self._json(controller.overview(payload.get('folder'), payload.get('output_dir'), bool(payload.get('rescan'))))
             elif name == 'start':
                 self._json(controller.start(payload.get('folder'), payload.get('output_dir'), payload.get('resume'),
                                             payload.get('mode') or '', payload.get('root')))
