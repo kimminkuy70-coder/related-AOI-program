@@ -3,15 +3,17 @@
 PC needs nothing installed but the WebView2 Runtime that Windows 10/11 already has.
 
     python tools/build_exe.py --install --test                                # every program with "exe": true
-    python tools/build_exe.py --release AOI_Photo_Sorter_v6 --install --test  # the program of one release
+    python tools/build_exe.py --release AOI_Photo_Sorter_v7 --install --test  # the program of one release
 
---install  pip install the program's requirements (constraints.txt) and PyInstaller first
+--install  pip install the program's requirements (constraints.txt) and PyInstaller first,
+           PyInstaller with its launcher stub compiled here from source (see install())
 --test     run the built .exe's self-test: --selftest, then --selftest-window (WebView2)
 Output: dist/<release>.exe. In GitHub Actions it also sets the step output built=true|false.
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -19,6 +21,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PYINSTALLER = 'pyinstaller>=6.10,<7'
+COMPANY = 'AOI Tools'
 
 
 def programs(release):
@@ -29,8 +32,47 @@ def programs(release):
 
 
 def install(app_files):
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check',
-                           '-c', str(app_files / 'constraints.txt'), '-r', str(app_files / 'requirements.txt'), PYINSTALLER])
+    pip = [sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check']
+    subprocess.check_call(pip + ['-c', str(app_files / 'constraints.txt'), '-r', str(app_files / 'requirements.txt')])
+    # Known PyInstaller false positive: Windows Defender flags one-file .exe built with the
+    # prebuilt launcher stub that pip ships (shared, unchanged across many packages), as
+    # "Trojan:Win32/Wacatac" on some machines and not others. PyInstaller's own FAQ recommends
+    # rebuilding that stub from source so each build is distinct; the result is a clean .exe of
+    # this project's own code. Needs a C toolchain (the Windows runner's MSVC).
+    started = time.time()
+    subprocess.check_call(pip + ['--no-cache-dir', '--force-reinstall', '--no-binary', 'pyinstaller', PYINSTALLER],
+                          env=dict(os.environ, PYINSTALLER_COMPILE_BOOTLOADER='1'))
+    stub = Path(subprocess.check_output(
+        [sys.executable, '-c', 'import PyInstaller, os; print(os.path.dirname(PyInstaller.__file__))'],
+        universal_newlines=True).strip()) / 'bootloader' / 'Windows-64bit-intel' / 'runw.exe'
+    if not stub.is_file() or stub.stat().st_mtime < started - 5:
+        raise SystemExit('PyInstaller launcher stub was not rebuilt from source: %s' % stub)
+    print('PyInstaller launcher stub rebuilt from source: %s' % stub)
+
+
+def version_file(data, work):
+    """Windows version resource (file properties -> Details). An unsigned internal .exe with no
+    version info looks more suspect to antivirus heuristics; filling in the company, product and
+    version from the release name (AOI_Photo_Sorter_v7 -> 7.0.0.0) makes the file self-describing."""
+    found = re.search(r'_v(\d+)(?:\.(\d+))?(?:\.(\d+))?$', data['release'])
+    numbers = (tuple(int(part or 0) for part in found.groups()) + (0,)) if found else (0, 0, 0, 0)
+    text = '.'.join(str(number) for number in numbers)
+    strings = [('CompanyName', COMPANY), ('FileDescription', data['title']), ('FileVersion', text),
+               ('InternalName', data['app_id']), ('LegalCopyright', COMPANY + ' (internal use)'),
+               ('OriginalFilename', data['release'] + '.exe'), ('ProductName', data['title']), ('ProductVersion', text)]
+    work.mkdir(parents=True, exist_ok=True)
+    path = work / 'version_info.txt'
+    path.write_text(
+        'VSVersionInfo(\n'
+        '  ffi=FixedFileInfo(filevers=%r, prodvers=%r, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),\n'
+        '  kids=[\n'
+        '    StringFileInfo([StringTable(%r, [%s])]),\n'
+        '    VarFileInfo([VarStruct(%r, [1042, 1200])])\n'
+        '  ]\n'
+        ')\n' % (numbers, numbers, '041204B0',
+                 ', '.join('StringStruct(%r, %r)' % pair for pair in strings), 'Translation'),
+        encoding='utf-8')
+    return path
 
 
 def build(app_files, data):
@@ -41,6 +83,8 @@ def build(app_files, data):
     command = [
         sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--log-level', 'WARN',
         '--onefile', '--windowed',  # one file to hand out; no console window
+        '--noupx',  # UPX-compressed executables are flagged by antivirus far more often
+        '--version-file', str(version_file(data, work)),
         '--name', data['release'], '--distpath', str(exe.parent), '--workpath', str(work), '--specpath', str(work),
         '--add-data', '%s%s.' % (app_files / 'app_manifest.json', os.pathsep),
         '--add-data', '%s%sui' % (app_files / 'ui', os.pathsep),

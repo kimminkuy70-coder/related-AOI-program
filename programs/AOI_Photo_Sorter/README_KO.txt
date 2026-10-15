@@ -1,15 +1,15 @@
-﻿AOI Photo Sorter v6 (GOOD 처리 사진 선별기)
+﻿AOI Photo Sorter v7 (GOOD 처리 사진 선별기)
 
 용도
 - 네트워크 폴더의 Reject 사진(폴더당 최대 1만 장)을 한 장씩 넘겨 보면서
   GOOD 처리할 사진만 Space로 골라내고, GOOD 목록 / REJECT 목록을 텍스트 파일 2개로 저장합니다.
 
 실행 파일 (둘 중 하나)
-- AOI_Photo_Sorter_v6.exe   설치 없이 바로 실행 (권장: 다른 사람에게 줄 때는 이 파일 하나만)
-- AOI_Photo_Sorter_v6.vbs   ZIP 버전: 공용 Python 환경(AOI Matcher 등과 공유)을 써서 실행
+- AOI_Photo_Sorter_v7.exe   설치 없이 바로 실행 (권장: 다른 사람에게 줄 때는 이 파일 하나만)
+- AOI_Photo_Sorter_v7.vbs   ZIP 버전: 공용 Python 환경(AOI Matcher 등과 공유)을 써서 실행
 
 .exe 로 실행 (설치 없음)
-1. 릴리스에서 AOI_Photo_Sorter_v6.exe 를 받아 아무 로컬 폴더(바탕화면 등)에 둡니다.
+1. 릴리스에서 AOI_Photo_Sorter_v7.exe 를 받아 아무 로컬 폴더(바탕화면 등)에 둡니다.
 2. 더블클릭합니다. Python, 패키지 설치가 필요 없습니다. (Windows 10/11에 기본으로 있는
    Microsoft Edge WebView2 Runtime만 사용)
 3. 처음 실행할 때 Windows에 "Windows의 PC 보호" (SmartScreen) 창이 뜨면 [추가 정보] → [실행]을 누릅니다.
@@ -21,7 +21,7 @@
 
 .vbs 로 실행 (ZIP)
 1. ZIP 전체를 새 로컬 폴더에 압축 해제합니다.
-2. AOI_Photo_Sorter_v6.vbs 를 더블클릭합니다.
+2. AOI_Photo_Sorter_v7.vbs 를 더블클릭합니다.
 3. 최초 1회만 "실행 환경 설치" 창이 나타납니다. AOI Matcher / Wafer Map Converter를 이미 쓰고 있다면
    같은 공용 환경을 재사용하므로 설치가 몇 초 만에 끝납니다.
 

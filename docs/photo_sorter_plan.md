@@ -473,4 +473,5 @@ v4는 결과를 `<폴더명>_GOOD.txt` / `_REJECT.txt`에 덮어쓰면서 `_GOOD
 | 검증 | `selftest.py`: `.exe --selftest`(패키지·화면 파일·서버·사진 폴더 정리·저장), `--selftest-window`(WebView2 창에서 app.js 실행, 버전 표시 확인). 결과는 JSON 파일 + 종료 코드 |
 | CI | `.github/workflows/build-exe.yml`(Windows, PR·수동·릴리스에서 호출) → 아티팩트. `release.yml`이 불러 `"exe": true`인 프로그램은 `<릴리스>.exe`를 ZIP과 함께 게시(없으면 실패) |
 | 한계 | 코드 서명 없음: 처음 실행 때 SmartScreen 경고가 뜰 수 있음. onefile은 실행할 때마다 임시 폴더에 풀어 1~3초 더 걸림 |
+| 오탐 완화(v7) | 미서명 onefile .exe가 Windows Defender에 `Trojan:Win32/Wacatac` 등으로 오탐되던 문제(일부 PC, 한 번 격리되면 같은 해시 재다운로드도 즉시 차단) 완화. `build_exe.py`가 ① PyInstaller bootloader를 빌드 머신에서 소스로 재컴파일(`PYINSTALLER_COMPILE_BOOTLOADER=1`, `--no-binary pyinstaller`)해 공용 스텁과 바이트를 다르게, ② `--version-file`로 Windows 버전 리소스 삽입(회사·제품·버전), ③ `--noupx`. 근본 해결은 코드 서명 또는 배포처 Defender 허용 등록 |
 
