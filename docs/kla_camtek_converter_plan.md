@@ -1,5 +1,6 @@
 # KLA-Camtek Converter — 개발 계획서 v4
 
+- 데모: `programs/KLA_Camtek_Converter/demo/KLA_Camtek_Converter_Demo.html` (예시 데이터로 화면·흐름 확인, 2026-10-16)
 - 상태: **계획.** 회사 PC 환경 시험 통과 (2026-10-16: 네트워크 경로 제한 없음, 시험 항목 전부 통과)
 - 브랜치: `ccr-0b38d41f-r1uk33` · 프로그램 폴더: `programs/KLA_Camtek_Converter/`
 - 실행 방식: **HTML 파일 1개를 Edge로 열기** (설치·exe·Python 없음. 결정 이유는 [11장](#11-보류결정-기록))

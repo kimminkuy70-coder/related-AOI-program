@@ -8,6 +8,11 @@
 - HTML 파일 1개를 Edge로 열어 쓰는 프로그램입니다. 설치할 것도, 실행되는 프로그램(.exe, Python)도 없습니다.
   회사 PC 보안에서 숨겨진 Python 실행이 문제가 되어 Python·exe 방식은 쓰지 않습니다.
 
+데모 (완성 모습 미리 보기)
+- 파일: demo\KLA_Camtek_Converter_Demo.html  (Edge로 열기)
+- 예시 Lot(DEMO1, DEMO2)으로 Map Merge · Map 변환 · 업로드 이력 · 관리자 설정 화면을 눌러 볼 수 있습니다.
+- 파일을 실제로 읽거나 저장하지 않습니다. 업로드·폴더 연결은 흉내만 냅니다.
+
 회사 PC 환경 시험 (2026-10-16 통과: 네트워크 경로 제한 없음. 다시 시험할 때)
 - 파일: test\KLA_Camtek_Env_Test.html
 1. GitHub에서 파일을 받습니다. (파일 화면 오른쪽 위 다운로드 버튼 "Download raw file")
