@@ -1,19 +1,20 @@
-﻿KLA-Camtek Converter v1 (개발 준비 중)
+﻿KLA-Camtek Converter (개발 중)
 
 용도
-- KLA 와 Camtek 장비 사이의 AOI 데이터 파일 변환 (변환 방향과 형식은 정해지는 대로 기록)
+- KLA 맵 TXT 와 Camtek 맵 TXT 를 서로의 양식으로 변환(양방향)하고, 지정한 네트워크 경로에 올립니다.
 - 개발 계획과 확인할 항목: docs/kla_camtek_converter_plan.md
 
-현재 상태
-- 프로그램 뼈대만 있습니다. 창이 뜨고 폴더를 고를 수 있지만 아직 변환은 하지 않습니다.
+방식
+- HTML 파일 1개를 Edge로 열어 쓰는 프로그램입니다. 설치할 것도, 실행되는 프로그램(.exe, Python)도 없습니다.
+  회사 PC 보안에서 숨겨진 Python 실행이 문제가 되어 Python·exe 방식은 쓰지 않습니다.
 
-실행 방법 (ZIP, Python 설치 필요 없음)
-1. 릴리스에서 KLA_Camtek_Converter_v1.zip 을 받아 ZIP 전체를 새 로컬 폴더에 압축 해제합니다.
-   - 네트워크 폴더나 ZIP 안에서 바로 실행하지 마세요.
-2. KLA_Camtek_Converter_v1.vbs 를 더블클릭합니다.
-- 압축 해제한 폴더 구성
-     KLA_Camtek_Converter_v1.vbs   실행 (runtime\pythonw.exe 로 app_files\app.py 를 켜는 짧은 런처)
-     runtime\                      실행용 Python 3.12 + 필요한 패키지
-     app_files\                    프로그램
-- 필요 조건: Windows 10/11, Microsoft Edge WebView2 Runtime (Windows 10/11 기본 포함)
-- 로그: %LOCALAPPDATA%\AOI_Tools\logs\KLA_Camtek_Converter.log
+지금 할 일: 회사 PC 환경 시험
+- 파일: test\KLA_Camtek_Env_Test.html
+1. GitHub에서 파일을 받습니다. (파일 화면 오른쪽 위 다운로드 버튼 "Download raw file")
+2. 회사 PC에서 더블클릭해 Edge로 엽니다. 가능하면 네트워크 공유 폴더에 두고 거기서도 한 번 열어 봅니다.
+3. 화면의 "시험 순서"대로 진행합니다. 가장 중요한 것은 "2 네트워크 폴더 쓰기 시험"입니다.
+   - 드라이브 문자(Z:\...)로 고른 폴더, UNC 주소(\\서버\공유\...)로 고른 폴더, 실제 업로드 폴더를 각각 시험합니다.
+   - 시험 파일(__kla_camtek_write_test_....tmp)은 쓰고 다시 읽어 비교한 뒤 바로 지웁니다.
+4. Edge를 완전히 닫았다가 다시 열어, 지정한 폴더와 권한이 남아 있는지 확인합니다.
+5. [결과 저장] 으로 만든 결과 TXT 파일(또는 [결과 복사] 내용)을 보내 주세요.
+- 이 시험 파일은 인터넷에 연결하지 않고, 파일을 외부로 보내지 않습니다.

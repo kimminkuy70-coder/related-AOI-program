@@ -1,35 +1,51 @@
-# KLA-Camtek Converter — 개발 계획서 (준비)
+# KLA-Camtek Converter — 개발 계획서
 
-- 상태: **뼈대만 있음.** 변환 방향과 파일 형식이 정해지면 구현을 시작
+- 상태: **회사 PC 환경 시험 중** (`programs/KLA_Camtek_Converter/test/KLA_Camtek_Env_Test.html`)
 - 브랜치: `ccr-0b38d41f-r1uk33`
 - 프로그램 폴더: `programs/KLA_Camtek_Converter/`
-- 릴리스 이름: `KLA_Camtek_Converter_v1` (태그를 푸시하면 Release 워크플로가 ZIP을 게시)
 
-## 1. 지금 들어 있는 것
+## 1. 요구사항
 
 | 항목 | 내용 |
 |---|---|
-| 실행 방식 | AOI Photo Sorter v10과 같은 **포터블 ZIP** (`"portable": true`). ZIP 안의 `runtime\` Python으로 실행, PC에 Python 설치 필요 없음 |
-| 화면 | pywebview + WebView2, 인라인 HTML (Wafer Map Converter와 같은 구조). 지금은 "준비 중" 화면과 폴더 선택만 있음 |
-| 엔진 | `engine.py`: `discover()`(하위 폴더 포함 파일 검색)만 동작. `inspect()` / `convert()`는 형식이 정해지면 구현 |
-| 공용 파일 | `runtime.py`, `setup_env.py`, `constraints.txt` — 다른 AOI 도구와 바이트 단위로 같아야 함 (`tools/build_release.py`, `tests/test_startup.py`가 검사) |
-| 실행기 | `KLA_Camtek_Converter_v1.vbs` — `python tools/build_release.py`가 `tools/launcher_portable.vbs`로 생성 (직접 고치지 않음) |
+| 변환 | KLA 맵 TXT ⇄ Camtek 맵 TXT, **양방향** |
+| 업로드 | 변환 결과를 지정한 네트워크 경로(KLA 쪽 / Camtek 쪽)에 저장 |
+| 배포 | Windows만 설치된 회사 PC에서 그대로 사용. 최대한 간단하게 |
+| 파일 넣기 | 탐색기에서 끌어다 놓기, 열기 창에서 경로를 직접 지정 |
+| 화면 | 맵을 화면에 그리고, 옵션을 바꾸면 결과 맵이 바로 바뀌어 보임 |
 
-## 2. 정해야 할 것 (구현 전에 필요)
+## 2. 실행 방식 결정: HTML 파일 1개 (Edge로 열기)
 
-1. **변환 방향**: KLA → Camtek, Camtek → KLA, 또는 양방향
-2. **입력 파일 형식**: 예) KLA KLARF(`.klarf`, `.000` 등) 결함 파일, KLA 웨이퍼 맵, Camtek 검사 결과/맵 파일
-   - 샘플 파일 2~3개 (가능하면 실제 장비에서 나온 것, 민감 정보는 가려도 됨)
-3. **출력 파일 형식**: 받는 쪽 장비/시스템이 읽는 형식과 그 샘플 (정답 예시가 있으면 가장 좋음)
-4. **옮길 정보**: 웨이퍼 맵(die 좌표·Bin), 결함 목록(좌표·크기·분류 코드), 헤더(LOT, WAFER, DEVICE, 레시피 등) 중 무엇을 옮기는지
-5. **좌표 기준**: 원점 위치(중심/좌하단 등), 축 방향, 노치(Flat) 방향, die pitch 단위(µm/mm)
-6. **코드 매핑**: KLA 분류 코드(ClassNumber) ↔ Camtek Defect/Bin 코드 대응표
-7. **작업 단위**: 파일 하나씩 / 폴더 일괄(하위 폴더 포함), 결과 저장 위치(원본과 같은 폴더 / 다른 위치)
-8. **결과 확인**: 변환 후 맵 이미지·요약(개수 비교)이 필요한지
+| 후보 | 결과 | 이유 |
+|---|---|---|
+| Python (포터블 ZIP, PyInstaller exe) | **제외** | Photo Sorter v10 ZIP 실행 시 숨겨진 Python 실행으로 회사 보안 메일 발송 |
+| C# WPF / WinForms, Go 단일 exe | 제외 | 회사에 등록되지 않은 서명 없는 exe라 같은 이유로 걸릴 위험 |
+| PowerShell + WinForms | 제외 | 보안 솔루션이 가장 많이 감시하는 대상, 실행 정책 |
+| **HTML (Edge)** | **채택** | 새 프로그램을 실행하지 않고 회사가 허용한 Edge 안에서만 동작. 파일 하나를 네트워크 공유에 두면 배포·업데이트 끝. 코드가 그대로 보여 IT 검토 쉬움 |
 
-## 3. 구현 순서 (형식이 정해진 뒤)
+HTML의 제약과 대응:
 
-1. `engine.py`: 입력 파서 → 공통 데이터 구조 → 출력 작성기, 샘플 파일로 왕복 테스트(`tests/test_kla_camtek_engine.py`)
-2. `app.py` / `ui/`: Wafer Map Converter의 단계 화면(방향 → 폴더 → 파일 선택 → 진행 → 완료)을 기준으로 구성
-3. 필요한 패키지를 `requirements.txt`와 `app_manifest.json`의 `"modules"`에 추가 (범위는 공용 `constraints.txt`)
-4. `docs/releases/KLA_Camtek_Converter_v1.md` 릴리스 노트 작성 후 태그 푸시
+- **지정 경로 저장**: File System Access API. 업로드 폴더를 한 번 지정해 두면 [업로드]로 바로 저장. Edge를 다시 열면 권한 확인을 한 번 눌러야 할 수 있음 → 환경 시험으로 확인
+- **전체 경로 표시 불가**: 브라우저 보안상 파일 이름(끌어 놓은 폴더 안의 경로)만 보임
+- **CP949 쓰기**: 브라우저 기본 기능은 UTF-8로만 인코딩 → 원본 바이트를 그대로 보존하거나 CP949 표를 직접 만들어 씀
+
+## 3. 회사 PC 환경 시험 (`test/KLA_Camtek_Env_Test.html`)
+
+| 시험 | 확인하는 것 |
+|---|---|
+| 1 환경 정보 | Edge 버전, Windows 10/11, 파일을 연 위치(로컬 / 드라이브 문자 / UNC), 필요한 브라우저 기능 유무 |
+| 2 네트워크 폴더 쓰기 | 연결 방식(드라이브 문자 / UNC / 기타)별로: 권한 확인 창 여부, 목록 읽기, 74 KB 쓰기, 바이트 단위 비교(CP949·UTF-8 한글, CRLF), 있는/없는 파일 구분, 덮어쓰기, 임시 파일(.crswap) 정리, 하위 폴더 만들기·지우기, 시험 파일 지우기 |
+| 다시 열기 | Edge를 닫았다 연 뒤 지정 폴더 기억 여부와 권한 상태 (IndexedDB) |
+| 3 대체 저장 | 저장 창으로 네트워크 폴더에 저장, 다운로드 |
+| 4 파일 넣기 | 끌어 놓기(파일·폴더, 하위 폴더 포함), 열기 창, 인코딩·줄바꿈 판별, 네트워크 파일 읽기 시간 |
+| 5 맵 화면 | 100×100 ~ 1000×1000 가짜 맵, 회전·뒤집기·Bin 바꾸기 즉시 반영, 확대·이동·die 정보, 5초 실시간 갱신 속도 |
+
+이 컨테이너의 Chromium 141에서 확인한 결과: 쓰기 시험 9단계 모두 성공(시험 폴더에 남는 파일 없음), 다시 열었을 때 폴더·권한 기억, 끌어 놓은 CP949/UTF-8 파일 판별, 1000×1000(die 약 78만 개) 실시간 갱신 초당 약 50회, 외부 요청 0건. 실제 회사 PC·네트워크 경로 결과는 시험 결과 파일로 받아 여기에 기록한다.
+
+## 4. 시험 후 정할 것
+
+1. 양쪽 맵 TXT 샘플 2~3개씩 (KLA / Camtek), 가능하면 서로 변환된 정답 예시
+2. 헤더 항목 대응 (LOT, WAFER, DEVICE, 크기 등), Bin 코드 대응표
+3. 좌표 기준: 원점, 축 방향, 노치(Flat) 방향 → 회전·뒤집기 기본값
+4. 업로드 경로 (KLA 쪽 / Camtek 쪽 UNC 주소)와 같은 이름 파일이 있을 때의 처리 (묻기 / 백업 / 덮어쓰기)
+5. 결과 파일 이름 규칙

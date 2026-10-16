@@ -1,5 +1,0 @@
-# Version ranges live in constraints.txt (shared by every AOI tool).
-# Add the packages the converter needs (openpyxl, numpy, ...) once the formats are settled,
-# and list their import names in app_manifest.json "modules".
-pywebview
-pythonnet; sys_platform == "win32"
