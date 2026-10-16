@@ -1,0 +1,9 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KLA-Camtek Converter v1</title><link rel="stylesheet" href="styles.css"></head><body>
+<div id="boot"><b>KLA-CAMTEK CONVERTER</b><p id="bridge">Python API 연결 준비 중...</p></div>
+<div class="app"><aside><div class="brand">KLA-CAMTEK CONVERTER<small>AOI DATA CONVERSION · v1</small></div><div class="guard">● SOURCE GUARD<small>원본 읽기 전용</small></div></aside>
+<main><header><div><small>AOI DATA OPERATIONS</small><h1>KLA ⇄ CAMTEK</h1></div><b id="status">초기화 중</b></header>
+<section class="panel"><h2>준비 중</h2><p>변환 방향과 파일 형식이 정해지면 이 화면에 변환 단계가 들어갑니다.</p>
+<button id="choose" disabled>폴더 선택</button><div class="path" id="rootPath">선택하지 않음</div>
+<div class="actions"><button class="ghost" onclick="pywebview.api.new_job()">새 작업</button></div></section>
+</main></div>
+<script src="app.js"></script></body></html>

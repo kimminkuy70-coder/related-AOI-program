@@ -1,0 +1,14 @@
+{
+  "app_id": "KLA_Camtek_Converter",
+  "title": "KLA-Camtek Converter v1",
+  "release": "KLA_Camtek_Converter_v1",
+  "env_revision": 1,
+  "entry": "app.py",
+  "portable": true,
+  "modules": [
+    "webview"
+  ],
+  "windows_modules": [
+    "clr"
+  ]
+}

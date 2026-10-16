@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PROGRAMS = [REPO / 'programs' / 'AOI_Color_Gray_Matcher', REPO / 'programs' / 'Wafer_Map_Converter',
-            REPO / 'programs' / 'AOI_Photo_Sorter']
+            REPO / 'programs' / 'AOI_Photo_Sorter', REPO / 'programs' / 'KLA_Camtek_Converter']
 SHARED = ['setup_env.py', 'runtime.py', 'constraints.txt']
 TEMPLATE = REPO / 'tools' / 'launcher_template.vbs'
 PORTABLE_TEMPLATE = REPO / 'tools' / 'launcher_portable.vbs'

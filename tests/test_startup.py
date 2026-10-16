@@ -16,10 +16,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PROGRAMS = {'aoi': REPO / 'programs' / 'AOI_Color_Gray_Matcher' / 'app_files',
-            'wafer': REPO / 'programs' / 'Wafer_Map_Converter' / 'app_files'}
+            'wafer': REPO / 'programs' / 'Wafer_Map_Converter' / 'app_files',
+            'kla_camtek': REPO / 'programs' / 'KLA_Camtek_Converter' / 'app_files'}
 JS_CALLS = {'aoi': {'choose_folder', 'cancel_scan', 'choose_output', 'start', 'get_state', 'cancel_job', 'open_result', 'new_job'},
             'wafer': {'choose_folder', 'choose_output', 'get_state', 'start', 'cancel_job', 'open_root', 'new_job',
-                      'open_file', 'show_in_folder', 'get_image', 'open_source'}}
+                      'open_file', 'show_in_folder', 'get_image', 'open_source'},
+            'kla_camtek': {'choose_folder', 'get_state', 'new_job'}}
 os.environ.setdefault('AOI_TOOLS_HOME', tempfile.mkdtemp(prefix='aoi_tools_test_'))
 
 
