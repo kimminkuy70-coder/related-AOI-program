@@ -162,3 +162,4 @@ button.tab.on.r{background:#3f1d1d;border-color:#ef4444;color:#fca5a5}
 .donecopy{margin:-8px 0 20px;background:#0d1528;border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre-line}
 .donecopy .row{margin-top:8px}
 #hCopy.bad{color:#fca5a5}
+.wm{position:fixed;right:10px;bottom:6px;z-index:20;font-size:11px;color:rgba(148,163,184,.55);pointer-events:none;user-select:none}

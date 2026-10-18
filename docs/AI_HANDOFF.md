@@ -16,7 +16,11 @@
 - 연쇄 수정: `tests/e2e_html_sorter.py`(Python 엔진과 결과 파일 교환 시험 삭제), `tests/test_startup.py`, `.github/workflows/release.yml`(constraints 경로, sorter e2e 단계).
 - 이전 버전은 git history(커밋 `26aab3a` 등)에 남아 있어 필요하면 되살릴 수 있음.
 
+## 워터마크 (요청: 개발자 워터마크)
+- HTML v1 화면 오른쪽 아래에 `Developed by kimminkuy70-coder`(작은 회색 글씨, 클릭 방해 없음)와 `<meta name="author">`를 넣음 (`src/index.html`, `src/styles.css`, 빌드 결과 포함). headless Chromium 화면으로 표시 확인.
+
 ## 내가 정한 해석 (소유자 확인 전)
+- 워터마크의 개발자 이름은 GitHub 계정 `kimminkuy70-coder`로 함 (다른 이름이면 알려주세요).
 - "브랜치 ...로 합쳐"는 HTML v1 브랜치를 현재 작업 브랜치에 합치는 것으로 보았고, `claude/cool-meitner-n7uz0l`에는 push하지 않았습니다.
 - "다른 버전"은 sorter의 Python/.exe 버전만으로 보고, 다른 두 프로그램과 속도 시험 페이지는 남겼습니다.
 - `tools/build_exe.py`, `.github/workflows/build-exe.yml`은 다른 프로그램도 쓸 수 있는 도구라 남겼습니다.
