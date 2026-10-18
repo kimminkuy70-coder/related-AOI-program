@@ -189,7 +189,7 @@ class SetupEnvUnitTest(unittest.TestCase):
 
 
 # Every program in the release, including ones without the API(webview, engine) layout above.
-ALL_PROGRAMS = list(PROGRAMS.values()) + [REPO / 'programs' / 'AOI_Photo_Sorter' / 'app_files']
+ALL_PROGRAMS = list(PROGRAMS.values())
 
 
 class SharedFilesTest(unittest.TestCase):

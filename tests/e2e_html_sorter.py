@@ -36,15 +36,6 @@ VERSION = json.loads((PROGRAM / 'version.json').read_text(encoding='utf-8'))
 PAGE = VERSION['release'] + '.html'
 
 
-def load_engine():
-    """The Python version's engine, to check that both versions read each other's result files."""
-    os.environ.setdefault('AOI_TOOLS_HOME', tempfile.mkdtemp(prefix='aoi_tools_test_'))
-    spec = importlib.util.spec_from_file_location('photo_sorter_engine', REPO / 'programs' / 'AOI_Photo_Sorter' / 'app_files' / 'engine.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def color_of(i):
     return ((i % 8) * 32 + 16, ((i // 8) % 8) * 32 + 16, ((i // 64) % 8) * 32 + 16)
 
@@ -501,37 +492,6 @@ class HtmlSorterTest(unittest.TestCase):
         keyboard.press('Enter')
         page.wait_for_selector('#review.show')
         page.wait_for_function("[...document.querySelectorAll('.cell img')].filter(i => i.naturalWidth > 0).length === 3")
-
-    def test_results_shared_with_the_python_version(self):
-        """A 1차 saved by the Python version is the previous result here; the 2차 saved here is the
-        latest result for the Python version."""
-        engine = load_engine()
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        names = ['IMG_%04d.jpg' % i for i in range(12)]
-        first = engine.save_round(str(tmp), r'\\srv\aoi\LOT_A', names, ['IMG_0003.jpg'])
-        for name in os.listdir(tmp):
-            self.put('out/' + name, (tmp / name).read_bytes())
-        self.photos('photos/LOT_A', 12)
-        self.pick('folder', 'photos/LOT_A')
-        self.pick('output', 'out')
-        page = self.page
-        page.wait_for_selector('#extra:not(.hidden)')
-        self.assertIn('1차리뷰', page.inner_text('#extra'))
-        self.assertIn('GOOD 1 / REJECT 11', page.inner_text('#extra'))
-        page.click('#extraBtn')
-        self.wait_painted()
-        time.sleep(0.2)
-        page.keyboard.press('Space')  # IMG_0000 added
-        self.wait_painted()
-        self.save_from_sort()
-        back = tmp / 'back'
-        back.mkdir()
-        for name, data in self.read_dir('out').items():
-            (back / name).write_bytes(data)
-        latest = engine.read_results(str(back), r'\\srv\aoi\LOT_A')
-        self.assertEqual((latest['round'], latest['good']), (2, ['IMG_0000.jpg', 'IMG_0003.jpg']))
-        self.assertEqual(first['round'], 1)
 
     def test_ten_thousand_photos(self):
         """10,000 photos in one folder: listed and on screen quickly, paging stays one frame per key."""
