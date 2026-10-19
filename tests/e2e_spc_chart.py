@@ -539,6 +539,23 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(r['out']['changes'][0]['row'], 30)  # the 7th point of the run
         self.assertNotIn('R2', r['flags'])
 
+    # the 7th point of a run cannot move alone: across CL it starts a 7-point trend with the next point
+    def test_run_point_that_only_another_run_point_can_fix(self):
+        vals = [6.9, 6.2, 6.8, 6.3, 6.7, 6.25] * 3 + [6.49, 6.74, 7.56, 5.78, 6.58, 6.93, 6.91, 6.69, 6.62, 6.56, 6.91, 5.04, 6.94, 6.59, 6.82, 6.28, 6.85]
+        r = self.js("""(vals) => { const n = vals.length, c = v => vals.map(() => v);
+            const it = {name: 't', values: vals, labels: vals.map(String), cols: {UCL: c(8.234), CL: c(6.52), LCL: c(4.805)}};
+            const opts = {}, rules = SPC.FIX_RULES, row = 28;
+            const out = SPC.fixAll(it, opts, rules), v = vals.slice(); out.changes.forEach(ch => { v[ch.row] = ch.value; });
+            return {flags: SPC.analyze(it, opts).flags, own: SPC.suggest(it, opts, row, rules), change: SPC.suggestChange(it, opts, row, rules),
+                    out, after: SPC.analyze(Object.assign({}, it, {values: v}), opts).flags}; }""", vals)
+        self.assertEqual(r['flags']['R2'], [28])
+        self.assertIsNone(r['own'])  # 6.91 -> any value: still R2 above CL, or R3 (200..206 falling) below it
+        self.assertIn(r['change']['row'], range(22, 28))  # another point of the run
+        self.assertEqual(r['out']['failed'], 0)
+        self.assertEqual(len(r['out']['changes']), 1)
+        for rule in ('R2', 'R3'):
+            self.assertNotIn(rule, r['after'])
+
     # issue #24: a long period scrolls sideways instead of being cut; auto refresh is off by default
     def test_long_period_scrolls_sideways(self):
         self.assertFalse(self.page.is_checked('#liveChk'))

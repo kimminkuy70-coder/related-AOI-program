@@ -664,7 +664,7 @@
   }
 
   function fixOne() {
-    var row = selectedRow, rules = fixRules(), made = 0, tried = 0;
+    var row = selectedRow, rules = fixRules(), made = 0, tried = 0, moved = [];
     if (!row || settings.subgroup > 1) return;
     fixItems.forEach(function (it, j) {
       var k = it.excelRows.indexOf(row);
@@ -673,21 +673,22 @@
       res.points.forEach(function (p, i) { if (p.row === k) pi = i; });
       if (pi < 0) return;
       // XBAR (EXT_MV) and SIGMA (EXT_SIGMA) of the row each get the value that clears that chart (#25)
-      if (SPC.flagged(res, rules)[pi]) {
+      // When no value of this row works, another point of the same run / trend is changed instead.
+      var apply = function (ch, col, name) {
         tried++;
-        var v = SPC.suggest(it, optsFor(it.name), k, rules);
-        if (v !== null) { setEdit(row, it.col, v); made++; }
-      }
-      if (res.sigma && sigmaFlagMap(res)[pi]) {
-        tried++;
-        var sv = SPC.suggest(sigmaItem(it), sigmaOpts(), k, sigmaRules());
-        if (sv !== null) { setEdit(row, it.sigma.col, sv); made++; }
-      }
+        if (!ch) return;
+        var r = it.excelRows[ch.row];
+        setEdit(r, col, ch.value);
+        made++;
+        if (r !== row) moved.push(name + ' ' + r + '행');
+      };
+      if (SPC.flagged(res, rules)[pi]) apply(SPC.suggestChange(it, optsFor(it.name), k, rules), it.col, table.headers[it.col]);
+      if (res.sigma && sigmaFlagMap(res)[pi]) apply(SPC.suggestChange(sigmaItem(it), sigmaOpts(), k, sigmaRules()), it.sigma.col, table.headers[it.sigma.col]);
     });
     if (!tried) setStatus(row + '행은 OCAP · 7run이 없습니다 (이미 수정됐거나 정상)', 'warn');
     else if (!made) setStatus(row + '행: 다른 점을 새로 걸리게 하지 않는 추천값을 찾지 못했습니다', 'warn');
     else if (made < tried) { afterEdits(row + '행에 추천값 ' + made + '칸 입력 · ' + (tried - made) + '칸은 찾지 못함'); setStatus($('status').textContent, 'warn'); }
-    else afterEdits(row + '행에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
+    else afterEdits((moved.length ? row + '행 값만으로는 안 풀려 같은 런의 ' + moved.join(', ') : row + '행') + '에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
   }
 
   function fixAll() {

@@ -270,24 +270,19 @@
     return Math.max(0, Math.min(10, d));
   }
 
-  // Recommended value for item.values[row] (I-MR only): the point no longer breaks `rules` and no other
-  // point starts breaking them; never below opts.min when given. Tried in order: moving toward CL (staying inside ±2σ and the spec),
-  // just across CL, then anything inside ±2σ nearest the old value. null if the point is fine or nothing works.
-  function suggest(item, opts, row, rules) {
-    if ((opts.subgroup | 0) > 1) return null;
-    var res = analyze(item, opts), pi = -1;
-    for (var k = 0; k < res.points.length; k++) if (res.points[k].row === row) { pi = k; break; }
-    if (pi < 0) return null;
-    var before = flagged(res, rules);
-    if (!before[pi]) return null;
-    var L = res.limits, cl = L.CL.values ? L.CL.values[pi] : res.stats.mean, sw = res.stats.sigmaW;
-    var up = L.UCL.values ? (L.UCL.values[pi] - cl) / 3 : sw, dn = L.LCL.values ? (cl - L.LCL.values[pi]) / 3 : sw;
+  // Value for point pj that clears point pi of `rules` without any other point starting to break them
+  // (pj = pi normally; another point of the same run / trend when pi alone cannot be fixed). Tried in order:
+  // moving toward CL (staying inside ±2σ and the spec), just across CL, then anything inside ±2σ nearest
+  // the old value; never below opts.min when given. null if nothing works.
+  function valueFor(item, opts, res, before, pi, pj, rules) {
+    var L = res.limits, cl = L.CL.values ? L.CL.values[pj] : res.stats.mean, sw = res.stats.sigmaW;
+    var up = L.UCL.values ? (L.UCL.values[pj] - cl) / 3 : sw, dn = L.LCL.values ? (cl - L.LCL.values[pj]) / 3 : sw;
     if (!(up > 0)) up = sw;
     if (!(dn > 0)) dn = sw;
     if (!isNum(cl) || !(up > 0) || !(dn > 0)) return null;
-    var x0 = item.values[row], d = x0 - cl, side = d >= 0 ? 1 : -1, other = side > 0 ? dn : up;
+    var row = res.points[pj].row, x0 = item.values[row], d = x0 - cl, side = d >= 0 ? 1 : -1, other = side > 0 ? dn : up;
     var digits = decimals(item.values, Math.min(up, dn)), f = Math.pow(10, digits);
-    var usl = L.USL.values ? L.USL.values[pi] : null, lsl = L.LSL.values ? L.LSL.values[pi] : null;
+    var usl = L.USL.values ? L.USL.values[pj] : null, lsl = L.LSL.values ? L.LSL.values[pj] : null;
     var cands = [], t;
     for (t = 1; t <= 9; t++) cands.push(cl + d * (1 - t / 10));
     [0.25, 0.5, 0.75, 1].forEach(function (z) { cands.push(cl - side * z * other); });
@@ -308,12 +303,47 @@
       vals[row] = v;
       var after = flagged(analyze(Object.assign({}, item, {values: vals}), opts), rules);
       if (after[pi] || Object.keys(after).some(function (i) { return !before[i]; })) continue;
-      return v;
+      return {value: v, z: Math.abs(v - x0) / (v >= x0 ? up : dn)};
     }
     return null;
   }
 
-  // Every point breaking `rules`, oldest first, gets its recommended value (a fixed run point usually
+  // Recommended change for the point on item.values[row] (I-MR only): {row, value}, where row is that row,
+  // or — when no value of that point works (e.g. moving the 7th point of a run across CL starts a 7-point
+  // trend with the next point) — another point of the same run / trend, the one needing the smallest move.
+  // null if the point is fine or nothing works.
+  function suggestChange(item, opts, row, rules) {
+    if ((opts.subgroup | 0) > 1) return null;
+    var res = analyze(item, opts), pi = -1;
+    for (var k = 0; k < res.points.length; k++) if (res.points[k].row === row) { pi = k; break; }
+    if (pi < 0) return null;
+    var before = flagged(res, rules);
+    if (!before[pi]) return null;
+    var own = valueFor(item, opts, res, before, pi, pi, rules);
+    if (own) return {row: row, value: own.value};
+    var inRun = ['R2', 'R3'].filter(function (id) { return rules.indexOf(id) >= 0 && (res.flags[id] || []).indexOf(pi) >= 0; });
+    var span = 0;
+    inRun.forEach(function (id) { span = Math.max(span, ruleN(id, opts) - 1); });
+    var best = null;
+    for (var j = pi - 1; j >= Math.max(0, pi - span); j--) {
+      var got = valueFor(item, opts, res, before, pi, j, rules);
+      if (got && (!best || got.z < best.z)) best = {row: res.points[j].row, value: got.value, z: got.z};
+    }
+    return best ? {row: best.row, value: best.value} : null;
+  }
+
+  function ruleN(id, opts) {
+    var d = RULES.filter(function (r) { return r.id === id; })[0].n, v = (opts.n || {})[id] | 0;
+    return v >= 2 ? v : d;
+  }
+
+  // Recommended value for item.values[row] itself (null if only another point could fix it).
+  function suggest(item, opts, row, rules) {
+    var ch = suggestChange(item, opts, row, rules);
+    return ch && ch.row === row ? ch.value : null;
+  }
+
+  // Every point breaking `rules`, oldest first, gets its recommended change (a fixed run point usually
   // clears the rest of the run). Returns {changes: [{row, value}], failed: point count without a value}.
   function fixAll(item, opts, rules) {
     var vals = item.values.slice(), changes = [], failed = {};
@@ -321,14 +351,15 @@
       var it = Object.assign({}, item, {values: vals}), res = analyze(it, opts), f = flagged(res, rules);
       var next = Object.keys(f).map(Number).sort(function (a, b) { return a - b; }).filter(function (i) { return !failed[i]; })[0];
       if (next === undefined) break;
-      var row = res.points[next].row, v = suggest(it, opts, row, rules);
-      if (v === null) { failed[next] = 1; continue; }
+      var ch = suggestChange(it, opts, res.points[next].row, rules);
+      if (!ch) { failed[next] = 1; continue; }
       vals = vals.slice();
-      vals[row] = v;
-      changes.push({row: row, value: v});
+      vals[ch.row] = ch.value;
+      changes = changes.filter(function (c) { return c.row !== ch.row; });
+      changes.push({row: ch.row, value: ch.value});
     }
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, fixAll: fixAll, mean: mean, sd: sd};
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, mean: mean, sd: sd};
 })();

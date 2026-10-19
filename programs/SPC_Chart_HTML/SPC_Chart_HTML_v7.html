@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v6"><title>SPC Chart HTML v6</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v7"><title>SPC Chart HTML v7</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -1019,24 +1019,19 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return Math.max(0, Math.min(10, d));
   }
 
-  // Recommended value for item.values[row] (I-MR only): the point no longer breaks `rules` and no other
-  // point starts breaking them; never below opts.min when given. Tried in order: moving toward CL (staying inside ±2σ and the spec),
-  // just across CL, then anything inside ±2σ nearest the old value. null if the point is fine or nothing works.
-  function suggest(item, opts, row, rules) {
-    if ((opts.subgroup | 0) > 1) return null;
-    var res = analyze(item, opts), pi = -1;
-    for (var k = 0; k < res.points.length; k++) if (res.points[k].row === row) { pi = k; break; }
-    if (pi < 0) return null;
-    var before = flagged(res, rules);
-    if (!before[pi]) return null;
-    var L = res.limits, cl = L.CL.values ? L.CL.values[pi] : res.stats.mean, sw = res.stats.sigmaW;
-    var up = L.UCL.values ? (L.UCL.values[pi] - cl) / 3 : sw, dn = L.LCL.values ? (cl - L.LCL.values[pi]) / 3 : sw;
+  // Value for point pj that clears point pi of `rules` without any other point starting to break them
+  // (pj = pi normally; another point of the same run / trend when pi alone cannot be fixed). Tried in order:
+  // moving toward CL (staying inside ±2σ and the spec), just across CL, then anything inside ±2σ nearest
+  // the old value; never below opts.min when given. null if nothing works.
+  function valueFor(item, opts, res, before, pi, pj, rules) {
+    var L = res.limits, cl = L.CL.values ? L.CL.values[pj] : res.stats.mean, sw = res.stats.sigmaW;
+    var up = L.UCL.values ? (L.UCL.values[pj] - cl) / 3 : sw, dn = L.LCL.values ? (cl - L.LCL.values[pj]) / 3 : sw;
     if (!(up > 0)) up = sw;
     if (!(dn > 0)) dn = sw;
     if (!isNum(cl) || !(up > 0) || !(dn > 0)) return null;
-    var x0 = item.values[row], d = x0 - cl, side = d >= 0 ? 1 : -1, other = side > 0 ? dn : up;
+    var row = res.points[pj].row, x0 = item.values[row], d = x0 - cl, side = d >= 0 ? 1 : -1, other = side > 0 ? dn : up;
     var digits = decimals(item.values, Math.min(up, dn)), f = Math.pow(10, digits);
-    var usl = L.USL.values ? L.USL.values[pi] : null, lsl = L.LSL.values ? L.LSL.values[pi] : null;
+    var usl = L.USL.values ? L.USL.values[pj] : null, lsl = L.LSL.values ? L.LSL.values[pj] : null;
     var cands = [], t;
     for (t = 1; t <= 9; t++) cands.push(cl + d * (1 - t / 10));
     [0.25, 0.5, 0.75, 1].forEach(function (z) { cands.push(cl - side * z * other); });
@@ -1057,12 +1052,47 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       vals[row] = v;
       var after = flagged(analyze(Object.assign({}, item, {values: vals}), opts), rules);
       if (after[pi] || Object.keys(after).some(function (i) { return !before[i]; })) continue;
-      return v;
+      return {value: v, z: Math.abs(v - x0) / (v >= x0 ? up : dn)};
     }
     return null;
   }
 
-  // Every point breaking `rules`, oldest first, gets its recommended value (a fixed run point usually
+  // Recommended change for the point on item.values[row] (I-MR only): {row, value}, where row is that row,
+  // or — when no value of that point works (e.g. moving the 7th point of a run across CL starts a 7-point
+  // trend with the next point) — another point of the same run / trend, the one needing the smallest move.
+  // null if the point is fine or nothing works.
+  function suggestChange(item, opts, row, rules) {
+    if ((opts.subgroup | 0) > 1) return null;
+    var res = analyze(item, opts), pi = -1;
+    for (var k = 0; k < res.points.length; k++) if (res.points[k].row === row) { pi = k; break; }
+    if (pi < 0) return null;
+    var before = flagged(res, rules);
+    if (!before[pi]) return null;
+    var own = valueFor(item, opts, res, before, pi, pi, rules);
+    if (own) return {row: row, value: own.value};
+    var inRun = ['R2', 'R3'].filter(function (id) { return rules.indexOf(id) >= 0 && (res.flags[id] || []).indexOf(pi) >= 0; });
+    var span = 0;
+    inRun.forEach(function (id) { span = Math.max(span, ruleN(id, opts) - 1); });
+    var best = null;
+    for (var j = pi - 1; j >= Math.max(0, pi - span); j--) {
+      var got = valueFor(item, opts, res, before, pi, j, rules);
+      if (got && (!best || got.z < best.z)) best = {row: res.points[j].row, value: got.value, z: got.z};
+    }
+    return best ? {row: best.row, value: best.value} : null;
+  }
+
+  function ruleN(id, opts) {
+    var d = RULES.filter(function (r) { return r.id === id; })[0].n, v = (opts.n || {})[id] | 0;
+    return v >= 2 ? v : d;
+  }
+
+  // Recommended value for item.values[row] itself (null if only another point could fix it).
+  function suggest(item, opts, row, rules) {
+    var ch = suggestChange(item, opts, row, rules);
+    return ch && ch.row === row ? ch.value : null;
+  }
+
+  // Every point breaking `rules`, oldest first, gets its recommended change (a fixed run point usually
   // clears the rest of the run). Returns {changes: [{row, value}], failed: point count without a value}.
   function fixAll(item, opts, rules) {
     var vals = item.values.slice(), changes = [], failed = {};
@@ -1070,16 +1100,17 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       var it = Object.assign({}, item, {values: vals}), res = analyze(it, opts), f = flagged(res, rules);
       var next = Object.keys(f).map(Number).sort(function (a, b) { return a - b; }).filter(function (i) { return !failed[i]; })[0];
       if (next === undefined) break;
-      var row = res.points[next].row, v = suggest(it, opts, row, rules);
-      if (v === null) { failed[next] = 1; continue; }
+      var ch = suggestChange(it, opts, res.points[next].row, rules);
+      if (!ch) { failed[next] = 1; continue; }
       vals = vals.slice();
-      vals[row] = v;
-      changes.push({row: row, value: v});
+      vals[ch.row] = ch.value;
+      changes = changes.filter(function (c) { return c.row !== ch.row; });
+      changes.push({row: ch.row, value: ch.value});
     }
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, fixAll: fixAll, mean: mean, sd: sd};
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, mean: mean, sd: sd};
 })();
 
 </script>
@@ -1750,7 +1781,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   }
 
   function fixOne() {
-    var row = selectedRow, rules = fixRules(), made = 0, tried = 0;
+    var row = selectedRow, rules = fixRules(), made = 0, tried = 0, moved = [];
     if (!row || settings.subgroup > 1) return;
     fixItems.forEach(function (it, j) {
       var k = it.excelRows.indexOf(row);
@@ -1759,21 +1790,22 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       res.points.forEach(function (p, i) { if (p.row === k) pi = i; });
       if (pi < 0) return;
       // XBAR (EXT_MV) and SIGMA (EXT_SIGMA) of the row each get the value that clears that chart (#25)
-      if (SPC.flagged(res, rules)[pi]) {
+      // When no value of this row works, another point of the same run / trend is changed instead.
+      var apply = function (ch, col, name) {
         tried++;
-        var v = SPC.suggest(it, optsFor(it.name), k, rules);
-        if (v !== null) { setEdit(row, it.col, v); made++; }
-      }
-      if (res.sigma && sigmaFlagMap(res)[pi]) {
-        tried++;
-        var sv = SPC.suggest(sigmaItem(it), sigmaOpts(), k, sigmaRules());
-        if (sv !== null) { setEdit(row, it.sigma.col, sv); made++; }
-      }
+        if (!ch) return;
+        var r = it.excelRows[ch.row];
+        setEdit(r, col, ch.value);
+        made++;
+        if (r !== row) moved.push(name + ' ' + r + '행');
+      };
+      if (SPC.flagged(res, rules)[pi]) apply(SPC.suggestChange(it, optsFor(it.name), k, rules), it.col, table.headers[it.col]);
+      if (res.sigma && sigmaFlagMap(res)[pi]) apply(SPC.suggestChange(sigmaItem(it), sigmaOpts(), k, sigmaRules()), it.sigma.col, table.headers[it.sigma.col]);
     });
     if (!tried) setStatus(row + '행은 OCAP · 7run이 없습니다 (이미 수정됐거나 정상)', 'warn');
     else if (!made) setStatus(row + '행: 다른 점을 새로 걸리게 하지 않는 추천값을 찾지 못했습니다', 'warn');
     else if (made < tried) { afterEdits(row + '행에 추천값 ' + made + '칸 입력 · ' + (tried - made) + '칸은 찾지 못함'); setStatus($('status').textContent, 'warn'); }
-    else afterEdits(row + '행에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
+    else afterEdits((moved.length ? row + '행 값만으로는 안 풀려 같은 런의 ' + moved.join(', ') : row + '행') + '에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
   }
 
   function fixAll() {
