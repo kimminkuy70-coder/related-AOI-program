@@ -11,7 +11,7 @@
 - 시험 (2026-10-19, Linux):
   - `python -m unittest tests.e2e_html_sorter`: 11개 통과 (pip로 `playwright==1.56.0`, `pillow`를 넣어야 함. 1.56.0이 `/opt/pw-browsers`의 chromium-1194와 맞음. 최신 playwright는 없는 브라우저를 찾다 실패).
   - `tests.test_startup`, `tests.test_wafer_engine`: 8개 오류, 모두 `webview`/`openpyxl` 없음 (변경 전과 같음). pytest 없음.
-- 릴리스: HTML sorter는 `release.yml`(app_manifest.json 기준)이 다루지 않아, #20에서 REST로 GitHub Release `AOI_Photo_Sorter_HTML_v2`를 만들고 HTML 파일을 asset으로 올림 (결과는 아래 이슈 이력과 이슈 댓글).
+- 릴리스: **없음**. HTML sorter는 `release.yml`(app_manifest.json 기준)이 다루지 않음. #20에서 REST로 GitHub Release `AOI_Photo_Sorter_HTML_v2`를 만들려 했으나 막힘: `Creating, editing, or deleting releases is not permitted for this session type. (HTTP 403)`. 태그도 만들지 않음 (`*_v*` 태그를 push하면 release.yml이 돌다 "no program has the release name"으로 실패하므로). 프로그램 파일은 기본 브랜치의 `programs/AOI_Photo_Sorter_HTML/AOI_Photo_Sorter_HTML_v2.html`에서 바로 내려받으면 됨.
 
 ## 이슈 이력
 | 날짜 | 이슈 | 요청 | 결과 |
@@ -28,11 +28,11 @@
 ## 내가 정한 해석 (확인 전)
 - "HTML v1 수정"은 기본 브랜치에 없던 HTML sorter를 고치는 일이라, 그 브랜치를 기본 브랜치로 fast-forward 하고 거기서 고침. 이로써 2026-10-18의 "Python/.exe sorter 삭제"도 기본 브랜치에 들어감.
 - 수정 뒤 이름을 v2로 올림 (sorter는 이슈마다 버전을 올려 옴).
-- 릴리스 이름은 `version.json`의 release(`AOI_Photo_Sorter_HTML_v2`)를 그대로 태그로 씀 (routine 지시의 X.Y.Z 형식 대신 이 저장소 관례).
 
 ## 남은 일 / 소유자에게 물은 것
 - **브랜치 이름 정리 (#20, 답 기다림)**: routine 규칙상 브랜치 삭제·이름 변경은 하지 않음. 제안: ① 기본 브랜치 `claude/program-startup-performance-pjltyn` → `main`으로 이름 변경 (Settings → Branches, GitHub가 열린 PR·기본 브랜치 설정을 옮겨 줌), ② 다 합쳐진 `claude/relaxed-goldberg-dnf5nt`, `claude/cool-meitner-n7uz0l` 삭제, ③ `ccr-0b38d41f-r1uk33`(KLA-Camtek Converter 초기 작업, 지금은 KLA-CAMTEK-CONVERTER 저장소로 옮겨짐) 삭제 또는 `archive/...`로 이름 변경. 프로그램별 브랜치를 따로 두기보다 한 브랜치(`main`)에 `programs/<이름>/` 폴더로 나누는 지금 구조를 유지하자고 제안. 소유자가 직접 바꾸거나 허락하면 진행. 기본 브랜치 이름을 바꾸면 routine 지시문(작업 브랜치 = 기본 브랜치)은 그대로 맞음.
 - Windows/Edge에서 HTML v2 실제 확인은 아직 안 됨.
+- HTML sorter 릴리스 방법: 소유자가 GitHub 화면에서 Release를 만들거나, release.yml이 `version.json`도 읽도록 고치는 것을 허락하면 다음 run이 처리 (routine은 workflow를 이슈 요청 없이 고치지 않음).
 
 ## 소유자 선호
 - 한국어로 답, 영어 표현은 영어 그대로. .exe는 Defender 오탐으로 고생해서 쓰지 않는 방향.
