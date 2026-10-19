@@ -1,0 +1,1560 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
+     the Excel file is only read from the file picked in Edge's file dialog. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v1"><title>SPC Chart HTML v1</title><style>
+:root {
+  --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
+  --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
+  --usl: #dc2626; --ucl: #ea580c; --cl: #16a34a; --zone: #9aa3b2;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", "Malgun Gothic", sans-serif; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.spacer { flex: 1; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: #fff; font-size: 12px; }
+button { font: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--text); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+button.ghost:hover:not(:disabled) { background: #eef2f8; }
+button.small { padding: 3px 9px; font-size: 12px; }
+input, select, textarea { font: inherit; border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; background: #fff; color: var(--text); }
+input[type=number] { width: 72px; }
+.chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+
+.dev { position: fixed; top: 6px; right: 12px; font-size: 12px; color: #9aa3b2; pointer-events: none; z-index: 50; }
+
+.top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 22px 16px 10px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
+.top h1 { margin: 0 8px 0 0; font-size: 19px; }
+.top h1 small { font-size: 12px; color: var(--muted); font-weight: normal; }
+.status { margin-left: 6px; }
+.status.err { color: var(--bad); }
+.status.warn { color: var(--warn); }
+
+.alarm { display: flex; align-items: center; gap: 8px; margin: 10px 16px 0; padding: 10px 14px; border-radius: 8px; background: #fde8e8; border: 1px solid #f5b5b5; color: #8b1111; animation: blink 1s ease-in-out 3; }
+@keyframes blink { 50% { background: #fbc8c8; } }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.controls label { display: inline-flex; align-items: center; gap: 6px; }
+.values { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; flex-basis: 100%; }
+.values label { gap: 3px; }
+
+main { padding: 12px 16px 40px; }
+.empty { max-width: 860px; margin: 40px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px 28px; }
+.empty h2 { margin-top: 0; }
+.sample { border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+.sample th, .sample td { border: 1px solid var(--line); padding: 3px 9px; }
+.sample th { background: #eef2f8; }
+
+.summary { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; margin-bottom: 12px; overflow-x: auto; }
+table.grid { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.grid th, table.grid td { padding: 5px 8px; border-bottom: 1px solid #edf0f4; text-align: right; white-space: nowrap; }
+table.grid th { color: var(--muted); font-weight: 600; }
+table.grid th:first-child, table.grid td:first-child { text-align: left; }
+table.grid td.l, table.grid th.l { text-align: left; }
+table.grid tr.click { cursor: pointer; }
+table.grid tr.click:hover td { background: #f3f6fb; }
+table.grid tr.new td { background: #fff1f1; }
+table.grid tr.done td { color: var(--muted); }
+
+.badge { display: inline-block; border-radius: 10px; padding: 1px 9px; font-size: 12px; font-weight: 600; color: #fff; }
+.badge.ok { background: var(--ok); }
+.badge.warn { background: var(--warn); }
+.badge.bad { background: var(--bad); }
+.rule { display: inline-block; border-radius: 4px; padding: 0 6px; font-size: 12px; background: #fff3e0; color: #9a3412; border: 1px solid #fed7aa; }
+.rule.OOS { background: #fde8e8; color: #991b1b; border-color: #fecaca; }
+
+.cards { display: flex; flex-direction: column; gap: 12px; }
+.item-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.ihead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.ihead b { font-size: 15px; }
+.istats { color: var(--muted); font-size: 13px; }
+.item-card canvas { display: block; width: 100%; }
+.cx { height: 300px; }
+.isub { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: 6px; }
+.cr, .ch { height: 150px; }
+.note { font-size: 12px; color: var(--muted); }
+
+.events { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 14px; }
+.ehead { display: flex; align-items: center; gap: 12px; }
+.ehead h2 { font-size: 16px; margin: 6px 0; }
+
+.tip { position: fixed; z-index: 60; pointer-events: none; background: rgba(20, 24, 32, .92); color: #fff; padding: 6px 9px; border-radius: 6px; font-size: 12px; max-width: 320px; white-space: pre-line; }
+
+.modal-back { position: fixed; inset: 0; background: rgba(15, 20, 30, .45); z-index: 70; display: flex; align-items: center; justify-content: center; }
+.modal { background: #fff; border-radius: 10px; padding: 18px 22px; width: min(760px, 94vw); max-height: 90vh; overflow: auto; box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+.modal h3 { margin: 0 0 10px; }
+.modal .row { display: flex; gap: 10px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.modal .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.modal textarea { width: 100%; min-height: 64px; }
+.modal .ruleset { border-top: 1px solid #edf0f4; padding: 8px 0; }
+.modal .ruleset .row { margin: 2px 0; }
+.lim { display: grid; grid-template-columns: 70px 120px 1fr; gap: 6px 10px; align-items: center; }
+.steps { white-space: pre-line; background: #f6f8fb; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; }
+
+</style></head><body>
+
+<div class="dev">개발자 : 김민규</div>
+
+<header class="top">
+  <h1>SPC Chart <small id="ver"></small></h1>
+  <button id="openBtn" class="primary">엑셀 열기</button>
+  <button id="recentBtn" class="ghost hidden">최근 파일 다시 열기</button>
+  <button id="reloadBtn" class="ghost" disabled title="파일을 지금 다시 읽기 (F5 대신)">새로고침</button>
+  <label class="chk" title="저장된 엑셀 파일이 바뀌면 자동으로 다시 읽어 차트를 바꿉니다"><input type="checkbox" id="liveChk" checked> 실시간</label>
+  <span id="status" class="status muted">엑셀 파일을 열거나 이 창에 끌어 놓으세요</span>
+  <span class="spacer"></span>
+  <button id="demoBtn" class="ghost">예제 보기</button>
+  <button id="settingsBtn" class="ghost">규칙 · OCAP 설정</button>
+</header>
+
+<div id="alarm" class="alarm hidden"><b id="alarmText"></b><span class="spacer"></span><button id="alarmOcap" class="primary small">OCAP 보기</button><button id="alarmClose" class="ghost small">닫기</button></div>
+
+<section id="controls" class="controls hidden">
+  <label>시트 <select id="sheetSel"></select></label>
+  <label title="X축에 쓸 열 (날짜, Lot, Wafer 등)">X축 <select id="labelSel"></select></label>
+  <label title="한 열에 여러 측정 항목이 섞여 있으면 그 항목 이름 열을 고릅니다">항목 열 <select id="itemSel"></select></label>
+  <label title="1 = I-MR 차트, 2 이상 = 연속 n개를 묶은 Xbar-R 차트">subgroup <input id="sizeIn" type="number" min="1" max="25" value="1"></label>
+  <label title="관리한계를 처음 몇 점으로 계산할지 (0 = 전체). 기준 구간을 정하면 새 데이터가 들어와도 한계가 바뀌지 않습니다">한계 계산 점 수 <input id="baseIn" type="number" min="0" value="0"></label>
+  <label title="차트에 보여 줄 최근 점 수 (0 = 전체)">표시 점 수 <input id="winIn" type="number" min="0" value="100"></label>
+  <label>보기 <select id="viewSel"></select></label>
+  <div class="values"><span class="muted">측정값 열</span><span id="valueBox"></span></div>
+</section>
+
+<main id="main">
+  <section id="empty" class="empty">
+    <h2>엑셀 데이터를 실시간 SPC 차트로</h2>
+    <ol>
+      <li><b>[엑셀 열기]</b>로 .xlsx 파일을 고릅니다 (.xlsm, .csv도 가능). Edge가 파일 보기를 물으면 [허용].</li>
+      <li>첫 줄(제목 줄) 아래에 데이터가 있으면 숫자 열이 자동으로 차트가 됩니다.</li>
+      <li>엑셀에서 데이터를 고치고 <kbd>Ctrl</kbd>+<kbd>S</kbd>로 저장하면 몇 초 안에 차트가 바뀝니다.</li>
+    </ol>
+    <table class="sample">
+      <tr><th>날짜</th><th>Lot</th><th>두께</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>CL</th></tr>
+      <tr><td>2026-10-01</td><td>LOT001</td><td>10.02</td><td>10.5</td><td>9.5</td><td></td><td></td><td></td></tr>
+      <tr><td>2026-10-01</td><td>LOT002</td><td>9.98</td><td></td><td></td><td></td><td></td><td></td></tr>
+    </table>
+    <p class="muted">USL · LSL · UCL · LCL · CL(Target) 열은 있으면 쓰고, 없으면 관리한계(UCL · CL · LCL)는 데이터로 계산합니다. 항목별로 [한계 설정]에서 직접 넣을 수도 있습니다.<br>
+      여러 측정 항목이 한 열에 섞인 형식(항목 · 값)도 됩니다: [항목 열]에서 항목 이름 열을 고르세요.<br>
+      판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(7점 연속 상승·하강), 2/3 &gt; 2σ, 4/5 &gt; 1σ 등. 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
+    <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 엑셀 파일은 읽기만 하고 고치지 않습니다.</p>
+  </section>
+  <section id="summary" class="summary hidden"></section>
+  <section id="cards" class="cards"></section>
+  <section id="eventsBox" class="events hidden">
+    <div class="ehead"><h2>이상 목록 · OCAP</h2><label class="chk"><input type="checkbox" id="openOnly"> 미조치만</label><span class="spacer"></span><button id="csvBtn" class="ghost small">CSV로 저장</button></div>
+    <table id="events"></table>
+  </section>
+</main>
+
+<div id="tip" class="tip hidden"></div>
+<input id="fileIn" type="file" accept=".xlsx,.xlsm,.csv,.txt" class="hidden">
+
+<div id="modalBack" class="modal-back hidden"><div class="modal" id="modal"></div></div>
+
+<script>
+!function(e){if("object"==typeof exports&&"undefined"!=typeof module)module.exports=e();else if("function"==typeof define&&define.amd)define([],e);else{("undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof self?self:this).pako=e()}}(function(){return function r(o,s,f){function l(t,e){if(!s[t]){if(!o[t]){var i="function"==typeof require&&require;if(!e&&i)return i(t,!0);if(d)return d(t,!0);var n=new Error("Cannot find module '"+t+"'");throw n.code="MODULE_NOT_FOUND",n}var a=s[t]={exports:{}};o[t][0].call(a.exports,function(e){return l(o[t][1][e]||e)},a,a.exports,r,o,s,f)}return s[t].exports}for(var d="function"==typeof require&&require,e=0;e<f.length;e++)l(f[e]);return l}({1:[function(e,t,i){"use strict";var n="undefined"!=typeof Uint8Array&&"undefined"!=typeof Uint16Array&&"undefined"!=typeof Int32Array;i.assign=function(e){for(var t,i,n=Array.prototype.slice.call(arguments,1);n.length;){var a=n.shift();if(a){if("object"!=typeof a)throw new TypeError(a+"must be non-object");for(var r in a)t=a,i=r,Object.prototype.hasOwnProperty.call(t,i)&&(e[r]=a[r])}}return e},i.shrinkBuf=function(e,t){return e.length===t?e:e.subarray?e.subarray(0,t):(e.length=t,e)};var a={arraySet:function(e,t,i,n,a){if(t.subarray&&e.subarray)e.set(t.subarray(i,i+n),a);else for(var r=0;r<n;r++)e[a+r]=t[i+r]},flattenChunks:function(e){var t,i,n,a,r,o;for(t=n=0,i=e.length;t<i;t++)n+=e[t].length;for(o=new Uint8Array(n),t=a=0,i=e.length;t<i;t++)r=e[t],o.set(r,a),a+=r.length;return o}},r={arraySet:function(e,t,i,n,a){for(var r=0;r<n;r++)e[a+r]=t[i+r]},flattenChunks:function(e){return[].concat.apply([],e)}};i.setTyped=function(e){e?(i.Buf8=Uint8Array,i.Buf16=Uint16Array,i.Buf32=Int32Array,i.assign(i,a)):(i.Buf8=Array,i.Buf16=Array,i.Buf32=Array,i.assign(i,r))},i.setTyped(n)},{}],2:[function(e,t,i){"use strict";var f=e("./common"),a=!0,r=!0;try{String.fromCharCode.apply(null,[0])}catch(e){a=!1}try{String.fromCharCode.apply(null,new Uint8Array(1))}catch(e){r=!1}for(var l=new f.Buf8(256),n=0;n<256;n++)l[n]=252<=n?6:248<=n?5:240<=n?4:224<=n?3:192<=n?2:1;function d(e,t){if(t<65534&&(e.subarray&&r||!e.subarray&&a))return String.fromCharCode.apply(null,f.shrinkBuf(e,t));for(var i="",n=0;n<t;n++)i+=String.fromCharCode(e[n]);return i}l[254]=l[254]=1,i.string2buf=function(e){var t,i,n,a,r,o=e.length,s=0;for(a=0;a<o;a++)55296==(64512&(i=e.charCodeAt(a)))&&a+1<o&&56320==(64512&(n=e.charCodeAt(a+1)))&&(i=65536+(i-55296<<10)+(n-56320),a++),s+=i<128?1:i<2048?2:i<65536?3:4;for(t=new f.Buf8(s),a=r=0;r<s;a++)55296==(64512&(i=e.charCodeAt(a)))&&a+1<o&&56320==(64512&(n=e.charCodeAt(a+1)))&&(i=65536+(i-55296<<10)+(n-56320),a++),i<128?t[r++]=i:(i<2048?t[r++]=192|i>>>6:(i<65536?t[r++]=224|i>>>12:(t[r++]=240|i>>>18,t[r++]=128|i>>>12&63),t[r++]=128|i>>>6&63),t[r++]=128|63&i);return t},i.buf2binstring=function(e){return d(e,e.length)},i.binstring2buf=function(e){for(var t=new f.Buf8(e.length),i=0,n=t.length;i<n;i++)t[i]=e.charCodeAt(i);return t},i.buf2string=function(e,t){var i,n,a,r,o=t||e.length,s=new Array(2*o);for(i=n=0;i<o;)if((a=e[i++])<128)s[n++]=a;else if(4<(r=l[a]))s[n++]=65533,i+=r-1;else{for(a&=2===r?31:3===r?15:7;1<r&&i<o;)a=a<<6|63&e[i++],r--;1<r?s[n++]=65533:a<65536?s[n++]=a:(a-=65536,s[n++]=55296|a>>10&1023,s[n++]=56320|1023&a)}return d(s,n)},i.utf8border=function(e,t){var i;for((t=t||e.length)>e.length&&(t=e.length),i=t-1;0<=i&&128==(192&e[i]);)i--;return i<0?t:0===i?t:i+l[e[i]]>t?i:t}},{"./common":1}],3:[function(e,t,i){"use strict";t.exports=function(e,t,i,n){for(var a=65535&e|0,r=e>>>16&65535|0,o=0;0!==i;){for(i-=o=2e3<i?2e3:i;r=r+(a=a+t[n++]|0)|0,--o;);a%=65521,r%=65521}return a|r<<16|0}},{}],4:[function(e,t,i){"use strict";t.exports={Z_NO_FLUSH:0,Z_PARTIAL_FLUSH:1,Z_SYNC_FLUSH:2,Z_FULL_FLUSH:3,Z_FINISH:4,Z_BLOCK:5,Z_TREES:6,Z_OK:0,Z_STREAM_END:1,Z_NEED_DICT:2,Z_ERRNO:-1,Z_STREAM_ERROR:-2,Z_DATA_ERROR:-3,Z_BUF_ERROR:-5,Z_NO_COMPRESSION:0,Z_BEST_SPEED:1,Z_BEST_COMPRESSION:9,Z_DEFAULT_COMPRESSION:-1,Z_FILTERED:1,Z_HUFFMAN_ONLY:2,Z_RLE:3,Z_FIXED:4,Z_DEFAULT_STRATEGY:0,Z_BINARY:0,Z_TEXT:1,Z_UNKNOWN:2,Z_DEFLATED:8}},{}],5:[function(e,t,i){"use strict";var s=function(){for(var e,t=[],i=0;i<256;i++){e=i;for(var n=0;n<8;n++)e=1&e?3988292384^e>>>1:e>>>1;t[i]=e}return t}();t.exports=function(e,t,i,n){var a=s,r=n+i;e^=-1;for(var o=n;o<r;o++)e=e>>>8^a[255&(e^t[o])];return-1^e}},{}],6:[function(e,t,i){"use strict";t.exports=function(){this.text=0,this.time=0,this.xflags=0,this.os=0,this.extra=null,this.extra_len=0,this.name="",this.comment="",this.hcrc=0,this.done=!1}},{}],7:[function(e,t,i){"use strict";t.exports=function(e,t){var i,n,a,r,o,s,f,l,d,c,u,h,b,m,w,k,_,g,v,p,x,y,S,E,Z;i=e.state,n=e.next_in,E=e.input,a=n+(e.avail_in-5),r=e.next_out,Z=e.output,o=r-(t-e.avail_out),s=r+(e.avail_out-257),f=i.dmax,l=i.wsize,d=i.whave,c=i.wnext,u=i.window,h=i.hold,b=i.bits,m=i.lencode,w=i.distcode,k=(1<<i.lenbits)-1,_=(1<<i.distbits)-1;e:do{b<15&&(h+=E[n++]<<b,b+=8,h+=E[n++]<<b,b+=8),g=m[h&k];t:for(;;){if(h>>>=v=g>>>24,b-=v,0===(v=g>>>16&255))Z[r++]=65535&g;else{if(!(16&v)){if(0==(64&v)){g=m[(65535&g)+(h&(1<<v)-1)];continue t}if(32&v){i.mode=12;break e}e.msg="invalid literal/length code",i.mode=30;break e}p=65535&g,(v&=15)&&(b<v&&(h+=E[n++]<<b,b+=8),p+=h&(1<<v)-1,h>>>=v,b-=v),b<15&&(h+=E[n++]<<b,b+=8,h+=E[n++]<<b,b+=8),g=w[h&_];i:for(;;){if(h>>>=v=g>>>24,b-=v,!(16&(v=g>>>16&255))){if(0==(64&v)){g=w[(65535&g)+(h&(1<<v)-1)];continue i}e.msg="invalid distance code",i.mode=30;break e}if(x=65535&g,b<(v&=15)&&(h+=E[n++]<<b,(b+=8)<v&&(h+=E[n++]<<b,b+=8)),f<(x+=h&(1<<v)-1)){e.msg="invalid distance too far back",i.mode=30;break e}if(h>>>=v,b-=v,(v=r-o)<x){if(d<(v=x-v)&&i.sane){e.msg="invalid distance too far back",i.mode=30;break e}if(S=u,(y=0)===c){if(y+=l-v,v<p){for(p-=v;Z[r++]=u[y++],--v;);y=r-x,S=Z}}else if(c<v){if(y+=l+c-v,(v-=c)<p){for(p-=v;Z[r++]=u[y++],--v;);if(y=0,c<p){for(p-=v=c;Z[r++]=u[y++],--v;);y=r-x,S=Z}}}else if(y+=c-v,v<p){for(p-=v;Z[r++]=u[y++],--v;);y=r-x,S=Z}for(;2<p;)Z[r++]=S[y++],Z[r++]=S[y++],Z[r++]=S[y++],p-=3;p&&(Z[r++]=S[y++],1<p&&(Z[r++]=S[y++]))}else{for(y=r-x;Z[r++]=Z[y++],Z[r++]=Z[y++],Z[r++]=Z[y++],2<(p-=3););p&&(Z[r++]=Z[y++],1<p&&(Z[r++]=Z[y++]))}break}}break}}while(n<a&&r<s);n-=p=b>>3,h&=(1<<(b-=p<<3))-1,e.next_in=n,e.next_out=r,e.avail_in=n<a?a-n+5:5-(n-a),e.avail_out=r<s?s-r+257:257-(r-s),i.hold=h,i.bits=b}},{}],8:[function(e,t,i){"use strict";var z=e("../utils/common"),R=e("./adler32"),N=e("./crc32"),O=e("./inffast"),C=e("./inftrees"),I=1,D=2,T=0,U=-2,F=1,n=852,a=592;function L(e){return(e>>>24&255)+(e>>>8&65280)+((65280&e)<<8)+((255&e)<<24)}function r(){this.mode=0,this.last=!1,this.wrap=0,this.havedict=!1,this.flags=0,this.dmax=0,this.check=0,this.total=0,this.head=null,this.wbits=0,this.wsize=0,this.whave=0,this.wnext=0,this.window=null,this.hold=0,this.bits=0,this.length=0,this.offset=0,this.extra=0,this.lencode=null,this.distcode=null,this.lenbits=0,this.distbits=0,this.ncode=0,this.nlen=0,this.ndist=0,this.have=0,this.next=null,this.lens=new z.Buf16(320),this.work=new z.Buf16(288),this.lendyn=null,this.distdyn=null,this.sane=0,this.back=0,this.was=0}function o(e){var t;return e&&e.state?(t=e.state,e.total_in=e.total_out=t.total=0,e.msg="",t.wrap&&(e.adler=1&t.wrap),t.mode=F,t.last=0,t.havedict=0,t.dmax=32768,t.head=null,t.hold=0,t.bits=0,t.lencode=t.lendyn=new z.Buf32(n),t.distcode=t.distdyn=new z.Buf32(a),t.sane=1,t.back=-1,T):U}function s(e){var t;return e&&e.state?((t=e.state).wsize=0,t.whave=0,t.wnext=0,o(e)):U}function f(e,t){var i,n;return e&&e.state?(n=e.state,t<0?(i=0,t=-t):(i=1+(t>>4),t<48&&(t&=15)),t&&(t<8||15<t)?U:(null!==n.window&&n.wbits!==t&&(n.window=null),n.wrap=i,n.wbits=t,s(e))):U}function l(e,t){var i,n;return e?(n=new r,(e.state=n).window=null,(i=f(e,t))!==T&&(e.state=null),i):U}var d,c,u=!0;function H(e){if(u){var t;for(d=new z.Buf32(512),c=new z.Buf32(32),t=0;t<144;)e.lens[t++]=8;for(;t<256;)e.lens[t++]=9;for(;t<280;)e.lens[t++]=7;for(;t<288;)e.lens[t++]=8;for(C(I,e.lens,0,288,d,0,e.work,{bits:9}),t=0;t<32;)e.lens[t++]=5;C(D,e.lens,0,32,c,0,e.work,{bits:5}),u=!1}e.lencode=d,e.lenbits=9,e.distcode=c,e.distbits=5}function j(e,t,i,n){var a,r=e.state;return null===r.window&&(r.wsize=1<<r.wbits,r.wnext=0,r.whave=0,r.window=new z.Buf8(r.wsize)),n>=r.wsize?(z.arraySet(r.window,t,i-r.wsize,r.wsize,0),r.wnext=0,r.whave=r.wsize):(n<(a=r.wsize-r.wnext)&&(a=n),z.arraySet(r.window,t,i-n,a,r.wnext),(n-=a)?(z.arraySet(r.window,t,i-n,n,0),r.wnext=n,r.whave=r.wsize):(r.wnext+=a,r.wnext===r.wsize&&(r.wnext=0),r.whave<r.wsize&&(r.whave+=a))),0}i.inflateReset=s,i.inflateReset2=f,i.inflateResetKeep=o,i.inflateInit=function(e){return l(e,15)},i.inflateInit2=l,i.inflate=function(e,t){var i,n,a,r,o,s,f,l,d,c,u,h,b,m,w,k,_,g,v,p,x,y,S,E,Z=0,B=new z.Buf8(4),A=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];if(!e||!e.state||!e.output||!e.input&&0!==e.avail_in)return U;12===(i=e.state).mode&&(i.mode=13),o=e.next_out,a=e.output,f=e.avail_out,r=e.next_in,n=e.input,s=e.avail_in,l=i.hold,d=i.bits,c=s,u=f,y=T;e:for(;;)switch(i.mode){case F:if(0===i.wrap){i.mode=13;break}for(;d<16;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(2&i.wrap&&35615===l){B[i.check=0]=255&l,B[1]=l>>>8&255,i.check=N(i.check,B,2,0),d=l=0,i.mode=2;break}if(i.flags=0,i.head&&(i.head.done=!1),!(1&i.wrap)||(((255&l)<<8)+(l>>8))%31){e.msg="incorrect header check",i.mode=30;break}if(8!=(15&l)){e.msg="unknown compression method",i.mode=30;break}if(d-=4,x=8+(15&(l>>>=4)),0===i.wbits)i.wbits=x;else if(x>i.wbits){e.msg="invalid window size",i.mode=30;break}i.dmax=1<<x,e.adler=i.check=1,i.mode=512&l?10:12,d=l=0;break;case 2:for(;d<16;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(i.flags=l,8!=(255&i.flags)){e.msg="unknown compression method",i.mode=30;break}if(57344&i.flags){e.msg="unknown header flags set",i.mode=30;break}i.head&&(i.head.text=l>>8&1),512&i.flags&&(B[0]=255&l,B[1]=l>>>8&255,i.check=N(i.check,B,2,0)),d=l=0,i.mode=3;case 3:for(;d<32;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}i.head&&(i.head.time=l),512&i.flags&&(B[0]=255&l,B[1]=l>>>8&255,B[2]=l>>>16&255,B[3]=l>>>24&255,i.check=N(i.check,B,4,0)),d=l=0,i.mode=4;case 4:for(;d<16;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}i.head&&(i.head.xflags=255&l,i.head.os=l>>8),512&i.flags&&(B[0]=255&l,B[1]=l>>>8&255,i.check=N(i.check,B,2,0)),d=l=0,i.mode=5;case 5:if(1024&i.flags){for(;d<16;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}i.length=l,i.head&&(i.head.extra_len=l),512&i.flags&&(B[0]=255&l,B[1]=l>>>8&255,i.check=N(i.check,B,2,0)),d=l=0}else i.head&&(i.head.extra=null);i.mode=6;case 6:if(1024&i.flags&&(s<(h=i.length)&&(h=s),h&&(i.head&&(x=i.head.extra_len-i.length,i.head.extra||(i.head.extra=new Array(i.head.extra_len)),z.arraySet(i.head.extra,n,r,h,x)),512&i.flags&&(i.check=N(i.check,n,h,r)),s-=h,r+=h,i.length-=h),i.length))break e;i.length=0,i.mode=7;case 7:if(2048&i.flags){if(0===s)break e;for(h=0;x=n[r+h++],i.head&&x&&i.length<65536&&(i.head.name+=String.fromCharCode(x)),x&&h<s;);if(512&i.flags&&(i.check=N(i.check,n,h,r)),s-=h,r+=h,x)break e}else i.head&&(i.head.name=null);i.length=0,i.mode=8;case 8:if(4096&i.flags){if(0===s)break e;for(h=0;x=n[r+h++],i.head&&x&&i.length<65536&&(i.head.comment+=String.fromCharCode(x)),x&&h<s;);if(512&i.flags&&(i.check=N(i.check,n,h,r)),s-=h,r+=h,x)break e}else i.head&&(i.head.comment=null);i.mode=9;case 9:if(512&i.flags){for(;d<16;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(l!==(65535&i.check)){e.msg="header crc mismatch",i.mode=30;break}d=l=0}i.head&&(i.head.hcrc=i.flags>>9&1,i.head.done=!0),e.adler=i.check=0,i.mode=12;break;case 10:for(;d<32;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}e.adler=i.check=L(l),d=l=0,i.mode=11;case 11:if(0===i.havedict)return e.next_out=o,e.avail_out=f,e.next_in=r,e.avail_in=s,i.hold=l,i.bits=d,2;e.adler=i.check=1,i.mode=12;case 12:if(5===t||6===t)break e;case 13:if(i.last){l>>>=7&d,d-=7&d,i.mode=27;break}for(;d<3;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}switch(i.last=1&l,d-=1,3&(l>>>=1)){case 0:i.mode=14;break;case 1:if(H(i),i.mode=20,6!==t)break;l>>>=2,d-=2;break e;case 2:i.mode=17;break;case 3:e.msg="invalid block type",i.mode=30}l>>>=2,d-=2;break;case 14:for(l>>>=7&d,d-=7&d;d<32;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if((65535&l)!=(l>>>16^65535)){e.msg="invalid stored block lengths",i.mode=30;break}if(i.length=65535&l,d=l=0,i.mode=15,6===t)break e;case 15:i.mode=16;case 16:if(h=i.length){if(s<h&&(h=s),f<h&&(h=f),0===h)break e;z.arraySet(a,n,r,h,o),s-=h,r+=h,f-=h,o+=h,i.length-=h;break}i.mode=12;break;case 17:for(;d<14;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(i.nlen=257+(31&l),l>>>=5,d-=5,i.ndist=1+(31&l),l>>>=5,d-=5,i.ncode=4+(15&l),l>>>=4,d-=4,286<i.nlen||30<i.ndist){e.msg="too many length or distance symbols",i.mode=30;break}i.have=0,i.mode=18;case 18:for(;i.have<i.ncode;){for(;d<3;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}i.lens[A[i.have++]]=7&l,l>>>=3,d-=3}for(;i.have<19;)i.lens[A[i.have++]]=0;if(i.lencode=i.lendyn,i.lenbits=7,S={bits:i.lenbits},y=C(0,i.lens,0,19,i.lencode,0,i.work,S),i.lenbits=S.bits,y){e.msg="invalid code lengths set",i.mode=30;break}i.have=0,i.mode=19;case 19:for(;i.have<i.nlen+i.ndist;){for(;k=(Z=i.lencode[l&(1<<i.lenbits)-1])>>>16&255,_=65535&Z,!((w=Z>>>24)<=d);){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(_<16)l>>>=w,d-=w,i.lens[i.have++]=_;else{if(16===_){for(E=w+2;d<E;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(l>>>=w,d-=w,0===i.have){e.msg="invalid bit length repeat",i.mode=30;break}x=i.lens[i.have-1],h=3+(3&l),l>>>=2,d-=2}else if(17===_){for(E=w+3;d<E;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}d-=w,x=0,h=3+(7&(l>>>=w)),l>>>=3,d-=3}else{for(E=w+7;d<E;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}d-=w,x=0,h=11+(127&(l>>>=w)),l>>>=7,d-=7}if(i.have+h>i.nlen+i.ndist){e.msg="invalid bit length repeat",i.mode=30;break}for(;h--;)i.lens[i.have++]=x}}if(30===i.mode)break;if(0===i.lens[256]){e.msg="invalid code -- missing end-of-block",i.mode=30;break}if(i.lenbits=9,S={bits:i.lenbits},y=C(I,i.lens,0,i.nlen,i.lencode,0,i.work,S),i.lenbits=S.bits,y){e.msg="invalid literal/lengths set",i.mode=30;break}if(i.distbits=6,i.distcode=i.distdyn,S={bits:i.distbits},y=C(D,i.lens,i.nlen,i.ndist,i.distcode,0,i.work,S),i.distbits=S.bits,y){e.msg="invalid distances set",i.mode=30;break}if(i.mode=20,6===t)break e;case 20:i.mode=21;case 21:if(6<=s&&258<=f){e.next_out=o,e.avail_out=f,e.next_in=r,e.avail_in=s,i.hold=l,i.bits=d,O(e,u),o=e.next_out,a=e.output,f=e.avail_out,r=e.next_in,n=e.input,s=e.avail_in,l=i.hold,d=i.bits,12===i.mode&&(i.back=-1);break}for(i.back=0;k=(Z=i.lencode[l&(1<<i.lenbits)-1])>>>16&255,_=65535&Z,!((w=Z>>>24)<=d);){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(k&&0==(240&k)){for(g=w,v=k,p=_;k=(Z=i.lencode[p+((l&(1<<g+v)-1)>>g)])>>>16&255,_=65535&Z,!(g+(w=Z>>>24)<=d);){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}l>>>=g,d-=g,i.back+=g}if(l>>>=w,d-=w,i.back+=w,i.length=_,0===k){i.mode=26;break}if(32&k){i.back=-1,i.mode=12;break}if(64&k){e.msg="invalid literal/length code",i.mode=30;break}i.extra=15&k,i.mode=22;case 22:if(i.extra){for(E=i.extra;d<E;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}i.length+=l&(1<<i.extra)-1,l>>>=i.extra,d-=i.extra,i.back+=i.extra}i.was=i.length,i.mode=23;case 23:for(;k=(Z=i.distcode[l&(1<<i.distbits)-1])>>>16&255,_=65535&Z,!((w=Z>>>24)<=d);){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(0==(240&k)){for(g=w,v=k,p=_;k=(Z=i.distcode[p+((l&(1<<g+v)-1)>>g)])>>>16&255,_=65535&Z,!(g+(w=Z>>>24)<=d);){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}l>>>=g,d-=g,i.back+=g}if(l>>>=w,d-=w,i.back+=w,64&k){e.msg="invalid distance code",i.mode=30;break}i.offset=_,i.extra=15&k,i.mode=24;case 24:if(i.extra){for(E=i.extra;d<E;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}i.offset+=l&(1<<i.extra)-1,l>>>=i.extra,d-=i.extra,i.back+=i.extra}if(i.offset>i.dmax){e.msg="invalid distance too far back",i.mode=30;break}i.mode=25;case 25:if(0===f)break e;if(h=u-f,i.offset>h){if((h=i.offset-h)>i.whave&&i.sane){e.msg="invalid distance too far back",i.mode=30;break}h>i.wnext?(h-=i.wnext,b=i.wsize-h):b=i.wnext-h,h>i.length&&(h=i.length),m=i.window}else m=a,b=o-i.offset,h=i.length;for(f<h&&(h=f),f-=h,i.length-=h;a[o++]=m[b++],--h;);0===i.length&&(i.mode=21);break;case 26:if(0===f)break e;a[o++]=i.length,f--,i.mode=21;break;case 27:if(i.wrap){for(;d<32;){if(0===s)break e;s--,l|=n[r++]<<d,d+=8}if(u-=f,e.total_out+=u,i.total+=u,u&&(e.adler=i.check=i.flags?N(i.check,a,u,o-u):R(i.check,a,u,o-u)),u=f,(i.flags?l:L(l))!==i.check){e.msg="incorrect data check",i.mode=30;break}d=l=0}i.mode=28;case 28:if(i.wrap&&i.flags){for(;d<32;){if(0===s)break e;s--,l+=n[r++]<<d,d+=8}if(l!==(4294967295&i.total)){e.msg="incorrect length check",i.mode=30;break}d=l=0}i.mode=29;case 29:y=1;break e;case 30:y=-3;break e;case 31:return-4;case 32:default:return U}return e.next_out=o,e.avail_out=f,e.next_in=r,e.avail_in=s,i.hold=l,i.bits=d,(i.wsize||u!==e.avail_out&&i.mode<30&&(i.mode<27||4!==t))&&j(e,e.output,e.next_out,u-e.avail_out)?(i.mode=31,-4):(c-=e.avail_in,u-=e.avail_out,e.total_in+=c,e.total_out+=u,i.total+=u,i.wrap&&u&&(e.adler=i.check=i.flags?N(i.check,a,u,e.next_out-u):R(i.check,a,u,e.next_out-u)),e.data_type=i.bits+(i.last?64:0)+(12===i.mode?128:0)+(20===i.mode||15===i.mode?256:0),(0===c&&0===u||4===t)&&y===T&&(y=-5),y)},i.inflateEnd=function(e){if(!e||!e.state)return U;var t=e.state;return t.window&&(t.window=null),e.state=null,T},i.inflateGetHeader=function(e,t){var i;return e&&e.state?0==(2&(i=e.state).wrap)?U:((i.head=t).done=!1,T):U},i.inflateSetDictionary=function(e,t){var i,n=t.length;return e&&e.state?0!==(i=e.state).wrap&&11!==i.mode?U:11===i.mode&&R(1,t,n,0)!==i.check?-3:j(e,t,n,n)?(i.mode=31,-4):(i.havedict=1,T):U},i.inflateInfo="pako inflate (from Nodeca project)"},{"../utils/common":1,"./adler32":3,"./crc32":5,"./inffast":7,"./inftrees":9}],9:[function(e,t,i){"use strict";var I=e("../utils/common"),D=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258,0,0],T=[16,16,16,16,16,16,16,16,17,17,17,17,18,18,18,18,19,19,19,19,20,20,20,20,21,21,21,21,16,72,78],U=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577,0,0],F=[16,16,16,16,17,17,18,18,19,19,20,20,21,21,22,22,23,23,24,24,25,25,26,26,27,27,28,28,29,29,64,64];t.exports=function(e,t,i,n,a,r,o,s){var f,l,d,c,u,h,b,m,w,k=s.bits,_=0,g=0,v=0,p=0,x=0,y=0,S=0,E=0,Z=0,B=0,A=null,z=0,R=new I.Buf16(16),N=new I.Buf16(16),O=null,C=0;for(_=0;_<=15;_++)R[_]=0;for(g=0;g<n;g++)R[t[i+g]]++;for(x=k,p=15;1<=p&&0===R[p];p--);if(p<x&&(x=p),0===p)return a[r++]=20971520,a[r++]=20971520,s.bits=1,0;for(v=1;v<p&&0===R[v];v++);for(x<v&&(x=v),_=E=1;_<=15;_++)if(E<<=1,(E-=R[_])<0)return-1;if(0<E&&(0===e||1!==p))return-1;for(N[1]=0,_=1;_<15;_++)N[_+1]=N[_]+R[_];for(g=0;g<n;g++)0!==t[i+g]&&(o[N[t[i+g]]++]=g);if(0===e?(A=O=o,h=19):1===e?(A=D,z-=257,O=T,C-=257,h=256):(A=U,O=F,h=-1),_=v,u=r,S=g=B=0,d=-1,c=(Z=1<<(y=x))-1,1===e&&852<Z||2===e&&592<Z)return 1;for(;;){for(b=_-S,o[g]<h?(m=0,w=o[g]):o[g]>h?(m=O[C+o[g]],w=A[z+o[g]]):(m=96,w=0),f=1<<_-S,v=l=1<<y;a[u+(B>>S)+(l-=f)]=b<<24|m<<16|w|0,0!==l;);for(f=1<<_-1;B&f;)f>>=1;if(0!==f?(B&=f-1,B+=f):B=0,g++,0==--R[_]){if(_===p)break;_=t[i+o[g]]}if(x<_&&(B&c)!==d){for(0===S&&(S=x),u+=v,E=1<<(y=_-S);y+S<p&&!((E-=R[y+S])<=0);)y++,E<<=1;if(Z+=1<<y,1===e&&852<Z||2===e&&592<Z)return 1;a[d=B&c]=x<<24|y<<16|u-r|0}}return 0!==B&&(a[u+B]=_-S<<24|64<<16|0),s.bits=x,0}},{"../utils/common":1}],10:[function(e,t,i){"use strict";t.exports={2:"need dictionary",1:"stream end",0:"","-1":"file error","-2":"stream error","-3":"data error","-4":"insufficient memory","-5":"buffer error","-6":"incompatible version"}},{}],11:[function(e,t,i){"use strict";t.exports=function(){this.input=null,this.next_in=0,this.avail_in=0,this.total_in=0,this.output=null,this.next_out=0,this.avail_out=0,this.total_out=0,this.msg="",this.state=null,this.data_type=2,this.adler=0}},{}],"/lib/inflate.js":[function(e,t,i){"use strict";var c=e("./zlib/inflate"),u=e("./utils/common"),h=e("./utils/strings"),b=e("./zlib/constants"),n=e("./zlib/messages"),a=e("./zlib/zstream"),r=e("./zlib/gzheader"),m=Object.prototype.toString;function o(e){if(!(this instanceof o))return new o(e);this.options=u.assign({chunkSize:16384,windowBits:0,to:""},e||{});var t=this.options;t.raw&&0<=t.windowBits&&t.windowBits<16&&(t.windowBits=-t.windowBits,0===t.windowBits&&(t.windowBits=-15)),!(0<=t.windowBits&&t.windowBits<16)||e&&e.windowBits||(t.windowBits+=32),15<t.windowBits&&t.windowBits<48&&0==(15&t.windowBits)&&(t.windowBits|=15),this.err=0,this.msg="",this.ended=!1,this.chunks=[],this.strm=new a,this.strm.avail_out=0;var i=c.inflateInit2(this.strm,t.windowBits);if(i!==b.Z_OK)throw new Error(n[i]);if(this.header=new r,c.inflateGetHeader(this.strm,this.header),t.dictionary&&("string"==typeof t.dictionary?t.dictionary=h.string2buf(t.dictionary):"[object ArrayBuffer]"===m.call(t.dictionary)&&(t.dictionary=new Uint8Array(t.dictionary)),t.raw&&(i=c.inflateSetDictionary(this.strm,t.dictionary))!==b.Z_OK))throw new Error(n[i])}function s(e,t){var i=new o(t);if(i.push(e,!0),i.err)throw i.msg||n[i.err];return i.result}o.prototype.push=function(e,t){var i,n,a,r,o,s=this.strm,f=this.options.chunkSize,l=this.options.dictionary,d=!1;if(this.ended)return!1;n=t===~~t?t:!0===t?b.Z_FINISH:b.Z_NO_FLUSH,"string"==typeof e?s.input=h.binstring2buf(e):"[object ArrayBuffer]"===m.call(e)?s.input=new Uint8Array(e):s.input=e,s.next_in=0,s.avail_in=s.input.length;do{if(0===s.avail_out&&(s.output=new u.Buf8(f),s.next_out=0,s.avail_out=f),(i=c.inflate(s,b.Z_NO_FLUSH))===b.Z_NEED_DICT&&l&&(i=c.inflateSetDictionary(this.strm,l)),i===b.Z_BUF_ERROR&&!0===d&&(i=b.Z_OK,d=!1),i!==b.Z_STREAM_END&&i!==b.Z_OK)return this.onEnd(i),!(this.ended=!0);s.next_out&&(0!==s.avail_out&&i!==b.Z_STREAM_END&&(0!==s.avail_in||n!==b.Z_FINISH&&n!==b.Z_SYNC_FLUSH)||("string"===this.options.to?(a=h.utf8border(s.output,s.next_out),r=s.next_out-a,o=h.buf2string(s.output,a),s.next_out=r,s.avail_out=f-r,r&&u.arraySet(s.output,s.output,a,r,0),this.onData(o)):this.onData(u.shrinkBuf(s.output,s.next_out)))),0===s.avail_in&&0===s.avail_out&&(d=!0)}while((0<s.avail_in||0===s.avail_out)&&i!==b.Z_STREAM_END);return i===b.Z_STREAM_END&&(n=b.Z_FINISH),n===b.Z_FINISH?(i=c.inflateEnd(this.strm),this.onEnd(i),this.ended=!0,i===b.Z_OK):n!==b.Z_SYNC_FLUSH||(this.onEnd(b.Z_OK),!(s.avail_out=0))},o.prototype.onData=function(e){this.chunks.push(e)},o.prototype.onEnd=function(e){e===b.Z_OK&&("string"===this.options.to?this.result=this.chunks.join(""):this.result=u.flattenChunks(this.chunks)),this.chunks=[],this.err=e,this.msg=this.strm.msg},i.Inflate=o,i.inflate=s,i.inflateRaw=function(e,t){return(t=t||{}).raw=!0,s(e,t)},i.ungzip=s},{"./utils/common":1,"./utils/strings":2,"./zlib/constants":4,"./zlib/gzheader":6,"./zlib/inflate":8,"./zlib/messages":10,"./zlib/zstream":11}]},{},[])("/lib/inflate.js")});
+
+</script>
+<script>
+// Minimal .xlsx / .xlsm / .csv reader: every sheet as rows of cells (number, string, Date or null).
+// Formula cells give the value Excel saved with the file. Needs pako (inflateRaw) for zip entries.
+(function () {
+  'use strict';
+
+  function unzip(buf) {
+    var u8 = new Uint8Array(buf), dv = new DataView(buf), eocd = -1;
+    for (var i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('엑셀 파일 형식이 아닙니다 (zip 끝을 찾지 못함)');
+    var count = dv.getUint16(eocd + 10, true), p = dv.getUint32(eocd + 16, true), files = {};
+    var dec = new TextDecoder('utf-8');
+    for (var k = 0; k < count; k++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('엑셀 파일이 손상되었거나 저장 중입니다');
+      var method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
+      var nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true), commentLen = dv.getUint16(p + 32, true);
+      var local = dv.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
+      files[name.replace(/^\//, '')] = {method: method, size: size, local: local};
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    return {
+      has: function (name) { return !!files[name]; },
+      text: function (name) {
+        var f = files[name];
+        if (!f) return null;
+        var start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
+        var data = u8.subarray(start, start + f.size);
+        if (f.method === 8) data = window.pako.inflateRaw(data);
+        else if (f.method !== 0) throw new Error('지원하지 않는 압축 방식: ' + f.method);
+        return dec.decode(data);
+      }
+    };
+  }
+
+  function xml(text) {
+    var doc = new DOMParser().parseFromString(text, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('엑셀 내부 XML을 읽지 못했습니다');
+    return doc;
+  }
+
+  function tags(node, name) { return node.getElementsByTagNameNS('*', name); }
+
+  function child(node, name) {
+    for (var c = node.firstElementChild; c; c = c.nextElementSibling) if (c.localName === name) return c;
+    return null;
+  }
+
+  // Text of a shared/inline string without phonetic runs (rPh).
+  function stringText(si) {
+    var out = '';
+    (function walk(n) {
+      for (var c = n.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.localName === 'rPh') continue;
+        if (c.localName === 't') out += c.textContent;
+        else walk(c);
+      }
+    })(si);
+    return out;
+  }
+
+  function resolve(base, target) {
+    if (target.charAt(0) === '/') return target.slice(1);
+    var parts = base.split('/');
+    parts.pop();
+    target.split('/').forEach(function (s) {
+      if (s === '..') parts.pop();
+      else if (s && s !== '.') parts.push(s);
+    });
+    return parts.join('/');
+  }
+
+  var DATE_IDS = {14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 19: 1, 20: 1, 21: 1, 22: 1, 45: 1, 46: 1, 47: 1};
+
+  function isDateFormat(code) {
+    var s = code.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '').replace(/\\./g, '');
+    return /[ymdhs]/i.test(s) && !/^general$/i.test(s);
+  }
+
+  function colIndex(ref) {
+    var n = 0;
+    for (var i = 0; i < ref.length; i++) {
+      var c = ref.charCodeAt(i);
+      if (c < 65 || c > 90) break;
+      n = n * 26 + (c - 64);
+    }
+    return n - 1;
+  }
+
+  function readXlsx(buf) {
+    var zip = unzip(buf);
+    var wbPath = 'xl/workbook.xml';
+    if (!zip.has(wbPath)) throw new Error('엑셀 통합 문서(.xlsx)가 아닙니다. .xls 파일은 Excel에서 .xlsx로 저장해 주세요');
+    var wb = xml(zip.text(wbPath));
+    var pr = tags(wb, 'workbookPr')[0], date1904 = pr && /^(1|true)$/.test(pr.getAttribute('date1904') || '');
+    var rels = {}, relText = zip.text('xl/_rels/workbook.xml.rels');
+    if (relText) {
+      var rs = tags(xml(relText), 'Relationship');
+      for (var i = 0; i < rs.length; i++) rels[rs[i].getAttribute('Id')] = resolve(wbPath, rs[i].getAttribute('Target'));
+    }
+    var shared = [], sst = zip.text('xl/sharedStrings.xml');
+    if (sst) {
+      var sis = tags(xml(sst), 'si');
+      for (i = 0; i < sis.length; i++) shared.push(stringText(sis[i]));
+    }
+    var dateStyle = [], styles = zip.text('xl/styles.xml');
+    if (styles) {
+      var sd = xml(styles), custom = {}, nf = tags(sd, 'numFmt');
+      for (i = 0; i < nf.length; i++) custom[nf[i].getAttribute('numFmtId')] = nf[i].getAttribute('formatCode') || '';
+      var xfsNode = tags(sd, 'cellXfs')[0];
+      if (xfsNode) {
+        for (var x = xfsNode.firstElementChild; x; x = x.nextElementSibling) {
+          var id = +x.getAttribute('numFmtId');
+          dateStyle.push(!!DATE_IDS[id] || (custom[id] !== undefined && isDateFormat(custom[id])));
+        }
+      }
+    }
+    var sheets = [], sheetNodes = tags(wb, 'sheet');
+    for (i = 0; i < sheetNodes.length; i++) {
+      var s = sheetNodes[i], rid = s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || s.getAttribute('r:id');
+      var path = rels[rid] || ('xl/worksheets/sheet' + (i + 1) + '.xml');
+      var text = zip.text(path);
+      if (text === null) continue;
+      sheets.push({name: s.getAttribute('name'), rows: readSheet(xml(text), shared, dateStyle, date1904)});
+    }
+    return sheets;
+  }
+
+  function readSheet(doc, shared, dateStyle, date1904) {
+    var rows = [], rowNodes = tags(doc, 'row');
+    for (var r = 0; r < rowNodes.length; r++) {
+      var rn = rowNodes[r], ri = rn.getAttribute('r') ? +rn.getAttribute('r') - 1 : rows.length, row = [], col = 0;
+      for (var c = rn.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.localName !== 'c') continue;
+        var ref = c.getAttribute('r');
+        if (ref) col = colIndex(ref);
+        var t = c.getAttribute('t') || 'n', v = child(c, 'v'), val = null;
+        if (t === 's') val = v ? shared[+v.textContent] : null;
+        else if (t === 'inlineStr') { var is = child(c, 'is'); val = is ? stringText(is) : null; }
+        else if (t === 'str' || t === 'e') val = v ? v.textContent : null;
+        else if (t === 'b') val = v ? (v.textContent === '1' ? 'TRUE' : 'FALSE') : null;
+        else if (v && v.textContent !== '') {
+          val = +v.textContent;
+          if (dateStyle[+(c.getAttribute('s') || 0)] && isFinite(val)) val = serialToDate(val, date1904);
+        }
+        if (typeof val === 'string' && val === '') val = null;
+        row[col] = val;
+        col++;
+      }
+      for (var k = 0; k < row.length; k++) if (row[k] === undefined) row[k] = null;
+      rows[ri] = row;
+    }
+    for (var q = 0; q < rows.length; q++) if (!rows[q]) rows[q] = [];
+    return rows;
+  }
+
+  // Excel serial day -> Date shown in local time with the same wall-clock digits Excel shows.
+  function serialToDate(v, date1904) {
+    var ms = Math.round((v + (date1904 ? 1462 : 0) - 25569) * 86400000);
+    var d = new Date(ms);
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+  }
+
+  function decodeText(buf) {
+    var u8 = new Uint8Array(buf);
+    try {
+      return new TextDecoder('utf-8', {fatal: true}).decode(u8).replace(/^﻿/, '');
+    } catch (e) {
+      return new TextDecoder('euc-kr').decode(u8);  // Korean Excel saves CSV in CP949
+    }
+  }
+
+  function readCsv(buf) {
+    var text = decodeText(buf), first = text.split(/\r?\n/, 1)[0];
+    var delim = [',', '\t', ';'].reduce(function (best, d) { return first.split(d).length > first.split(best).length ? d : best; }, ',');
+    var rows = [], row = [], cell = '', q = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+      if (q) {
+        if (ch === '"') { if (text.charAt(i + 1) === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text.charAt(i + 1) === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return [{name: 'CSV', rows: rows.map(function (r) {
+      return r.map(function (s) {
+        s = s.trim();
+        if (s === '') return null;
+        var n = s.replace(/,/g, '');
+        return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(n) ? +n : s;
+      });
+    })}];
+  }
+
+  // name decides the format; buf is an ArrayBuffer.
+  function read(name, buf) {
+    if (/\.(csv|txt|tsv)$/i.test(name)) return readCsv(buf);
+    if (/\.xls$/i.test(name)) throw new Error('.xls(예전 형식)는 읽을 수 없습니다. Excel에서 .xlsx로 다른 이름으로 저장해 주세요');
+    return readXlsx(buf);
+  }
+
+  window.XLSXLite = {read: read, serialToDate: serialToDate};
+})();
+
+</script>
+<script>
+// SPC engine: control limits (I-MR or Xbar-R), out-of-control rules, capability. No DOM here.
+(function () {
+  'use strict';
+
+  // Xbar-R constants by subgroup size n (2..25).
+  var A2 = [0, 0, 1.880, 1.023, 0.729, 0.577, 0.483, 0.419, 0.373, 0.337, 0.308, 0.285, 0.266, 0.249, 0.235, 0.223, 0.212, 0.203, 0.194, 0.187, 0.180, 0.173, 0.167, 0.162, 0.157, 0.153];
+  var D3 = [0, 0, 0, 0, 0, 0, 0, 0.076, 0.136, 0.184, 0.223, 0.256, 0.283, 0.307, 0.328, 0.347, 0.363, 0.378, 0.391, 0.403, 0.415, 0.425, 0.434, 0.443, 0.451, 0.459];
+  var D4 = [0, 0, 3.267, 2.574, 2.282, 2.114, 2.004, 1.924, 1.864, 1.816, 1.777, 1.744, 1.717, 1.693, 1.672, 1.653, 1.637, 1.622, 1.608, 1.597, 1.585, 1.575, 1.566, 1.557, 1.548, 1.541];
+  var D2 = [0, 0, 1.128, 1.693, 2.059, 2.326, 2.534, 2.704, 2.847, 2.970, 3.078, 3.173, 3.258, 3.336, 3.407, 3.472, 3.532, 3.588, 3.640, 3.689, 3.735, 3.778, 3.819, 3.858, 3.895, 3.931];
+
+  var RULES = [
+    {id: 'OOS', name: '규격 이탈', desc: 'USL/LSL 밖의 값'},
+    {id: 'R1', name: '관리한계 이탈', desc: '1점이 UCL/LCL 밖'},
+    {id: 'R2', name: 'Run', desc: 'N점 연속 중심선 한쪽', n: 7},
+    {id: 'R3', name: 'Trend', desc: 'N점 연속 상승 또는 하강', n: 7},
+    {id: 'R4', name: '2/3 > 2σ', desc: '연속 3점 중 2점이 같은 쪽 2σ 밖'},
+    {id: 'R5', name: '4/5 > 1σ', desc: '연속 5점 중 4점이 같은 쪽 1σ 밖'},
+    {id: 'R6', name: '교대 증감', desc: 'N점 연속 오르내림 반복', n: 14},
+    {id: 'R7', name: '1σ 안 몰림', desc: 'N점 연속 ±1σ 안 (층별 의심)', n: 15},
+    {id: 'R8', name: '1σ 밖 연속', desc: 'N점 연속 ±1σ 밖 (양쪽)', n: 8}
+  ];
+  var DEFAULT_ON = {OOS: true, R1: true, R2: true, R3: true, R4: true, R5: true, R6: false, R7: false, R8: false};
+
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+
+  function mean(a) {
+    var s = 0;
+    for (var i = 0; i < a.length; i++) s += a[i];
+    return a.length ? s / a.length : NaN;
+  }
+
+  function sd(a) {
+    if (a.length < 2) return NaN;
+    var m = mean(a), s = 0;
+    for (var i = 0; i < a.length; i++) s += (a[i] - m) * (a[i] - m);
+    return Math.sqrt(s / (a.length - 1));
+  }
+
+  // Per-point limit from a column: carry the last value forward, the first known value backward.
+  function fillColumn(col) {
+    if (!col) return null;
+    var out = new Array(col.length), last = null, first = null, i;
+    for (i = 0; i < col.length; i++) if (isNum(col[i])) { first = col[i]; break; }
+    if (first === null) return null;
+    for (i = 0; i < col.length; i++) {
+      if (isNum(col[i])) last = col[i];
+      out[i] = last === null ? first : last;
+    }
+    return out;
+  }
+
+  function constant(v, n) {
+    var a = new Array(n);
+    for (var i = 0; i < n; i++) a[i] = v;
+    return a;
+  }
+
+  // item: {name, labels[], values[], cols: {USL:[],LSL:[],UCL:[],LCL:[],CL:[]}} (one entry per row)
+  // opts: {subgroup, baseline, manual: {USL,...}, rules: {R1:true,...}, n: {R2:7,...}}
+  function analyze(item, opts) {
+    opts = opts || {};
+    var size = Math.max(1, Math.min(25, opts.subgroup | 0 || 1));
+    var manual = opts.manual || {};
+    var rows = [];
+    for (var r = 0; r < item.values.length; r++) if (isNum(item.values[r])) rows.push(r);
+
+    // Points: one row each (I-MR) or n consecutive rows each (Xbar-R, an unfinished last subgroup waits).
+    var points = [];
+    for (var p = 0; p + size <= rows.length; p += size) {
+      var idx = rows.slice(p, p + size), raw = idx.map(function (k) { return item.values[k]; });
+      points.push({
+        row: idx[0], rows: idx, label: item.labels[idx[0]], raw: raw, value: size > 1 ? mean(raw) : raw[0],
+        range: size > 1 ? Math.max.apply(null, raw) - Math.min.apply(null, raw) : null
+      });
+    }
+    var n = points.length, x = points.map(function (q) { return q.value; });
+    var base = opts.baseline > 0 ? Math.min(n, opts.baseline | 0) : n;
+
+    // Range chart (MR for n=1, R for n>1) and within-subgroup sigma from the baseline points.
+    var rv = [], rbar, sigmaW;
+    if (size === 1) {
+      for (var i = 0; i < n; i++) rv.push(i ? Math.abs(x[i] - x[i - 1]) : null);
+      rbar = mean(rv.slice(1, base).filter(isNum));
+      sigmaW = rbar / D2[2];
+    } else {
+      rv = points.map(function (q) { return q.range; });
+      rbar = mean(rv.slice(0, base));
+      sigmaW = rbar / D2[size];
+    }
+    var xbar = mean(x.slice(0, base));
+    var spread = size === 1 ? 3 * sigmaW : A2[size] * rbar;
+
+    function limit(key, computed) {
+      if (isNum(manual[key])) return {values: constant(manual[key], n), source: '직접 입력'};
+      var col = item.cols && item.cols[key];
+      if (col) {
+        var per = fillColumn(points.map(function (q) { return col[q.rows[q.rows.length - 1]]; }));
+        if (per) return {values: per, source: '엑셀 열'};
+      }
+      if (computed === null || !isFinite(computed)) return {values: null, source: '없음'};
+      return {values: constant(computed, n), source: '계산'};
+    }
+    var usl = limit('USL', null), lsl = limit('LSL', null);
+    var ucl0 = limit('UCL', null), lcl0 = limit('LCL', null);
+    var cl = limit('CL', null);
+    if (!cl.values && ucl0.values && lcl0.values) {
+      cl = {values: ucl0.values.map(function (u, k) { return (u + lcl0.values[k]) / 2; }), source: '계산 (UCL/LCL 가운데)'};
+    } else if (!cl.values && isFinite(xbar)) {
+      cl = {values: constant(xbar, n), source: '계산'};
+    }
+    var clv = cl.values;
+    var ucl = ucl0.values ? ucl0 : {values: clv && isFinite(spread) ? clv.map(function (c) { return c + spread; }) : null, source: '계산'};
+    var lcl = lcl0.values ? lcl0 : {values: clv && isFinite(spread) ? clv.map(function (c) { return c - spread; }) : null, source: '계산'};
+
+    var range = {
+      values: rv,
+      cl: rbar,
+      ucl: size === 1 ? D4[2] * rbar : D4[size] * rbar,
+      lcl: size === 1 ? 0 : D3[size] * rbar,
+      name: size === 1 ? 'MR' : 'R'
+    };
+
+    var flags = rulesFor(points, x, {usl: usl.values, lsl: lsl.values, ucl: ucl.values, lcl: lcl.values, cl: clv}, opts);
+    var rflags = [];
+    if (opts.rules ? opts.rules.R1 !== false : true) {
+      for (var j = 0; j < n; j++) if (isNum(rv[j]) && (rv[j] > range.ucl + 1e-12 || rv[j] < range.lcl - 1e-12)) rflags.push(j);
+    }
+
+    // Capability uses every individual value; within sigma from the range chart.
+    var all = [];
+    points.forEach(function (q) { all.push.apply(all, q.raw); });
+    var m = mean(all), so = sd(all);
+    var U = usl.values && n ? usl.values[n - 1] : null, L = lsl.values && n ? lsl.values[n - 1] : null;
+    function cap(s) {
+      if (!(s > 0)) return {cp: null, cpk: null};
+      var cpu = U !== null ? (U - m) / (3 * s) : null, cpl = L !== null ? (m - L) / (3 * s) : null;
+      return {
+        cp: U !== null && L !== null ? (U - L) / (6 * s) : null,
+        cpk: cpu !== null && cpl !== null ? Math.min(cpu, cpl) : (cpu !== null ? cpu : cpl)
+      };
+    }
+    var cw = cap(sigmaW), co = cap(so);
+
+    return {
+      name: item.name, size: size, points: points, x: x,
+      limits: {USL: usl, LSL: lsl, UCL: ucl, LCL: lcl, CL: cl},
+      range: range, flags: flags, rangeFlags: rflags, events: events(flags, points),
+      stats: {n: all.length, points: n, mean: m, sd: so, sigmaW: sigmaW, cp: cw.cp, cpk: cw.cpk, pp: co.cp, ppk: co.cpk, baseline: base}
+    };
+  }
+
+  // flags[ruleId] = sorted point indexes where the rule's pattern is complete.
+  function rulesFor(points, x, lim, opts) {
+    var on = opts.rules || DEFAULT_ON, nOf = opts.n || {}, n = x.length, out = {};
+    function N(id) {
+      var d = RULES.filter(function (r) { return r.id === id; })[0].n;
+      var v = nOf[id] | 0;
+      return v >= 2 ? v : d;
+    }
+    function add(id, i) { (out[id] = out[id] || []).push(i); }
+    var cl = lim.cl, eps = 1e-12;
+    function z(i) {
+      if (!cl) return 0;
+      var c = cl[i], d = x[i] - c;
+      if (d >= 0) return lim.ucl && lim.ucl[i] > c ? 3 * d / (lim.ucl[i] - c) : 0;
+      return lim.lcl && lim.lcl[i] < c ? 3 * d / (c - lim.lcl[i]) : 0;
+    }
+    var zs = [], i;
+    for (i = 0; i < n; i++) zs.push(z(i));
+
+    if (on.OOS) {
+      for (i = 0; i < n; i++) {
+        var u = lim.usl ? lim.usl[i] : null, l = lim.lsl ? lim.lsl[i] : null;
+        if (points[i].raw.some(function (v) { return (u !== null && v > u + eps) || (l !== null && v < l - eps); })) add('OOS', i);
+      }
+    }
+    if (on.R1 && lim.ucl && lim.lcl) {
+      for (i = 0; i < n; i++) if (x[i] > lim.ucl[i] + eps || x[i] < lim.lcl[i] - eps) add('R1', i);
+    }
+    if (!cl) return out;
+    var k, c;
+    if (on.R2) {
+      k = N('R2'); c = 0;
+      for (i = 0; i < n; i++) {
+        var s = Math.sign(x[i] - cl[i]), ps = i ? Math.sign(x[i - 1] - cl[i - 1]) : 0;
+        c = s === 0 ? 0 : (s === ps ? c + 1 : 1);
+        if (c >= k) add('R2', i);
+      }
+    }
+    if (on.R3) {
+      k = N('R3'); var up = 1, down = 1;
+      for (i = 1; i < n; i++) {
+        up = x[i] > x[i - 1] ? up + 1 : 1;
+        down = x[i] < x[i - 1] ? down + 1 : 1;
+        if (up >= k || down >= k) add('R3', i);
+      }
+    }
+    function mOfN(id, m, w, lim2) {
+      for (i = 0; i < n; i++) {
+        var side = zs[i] > lim2 ? 1 : (zs[i] < -lim2 ? -1 : 0);
+        if (!side || i < w - 1) continue;
+        var cnt = 0;
+        for (var j = i - w + 1; j <= i; j++) if (zs[j] * side > lim2) cnt++;
+        if (cnt >= m) add(id, i);
+      }
+    }
+    if (on.R4) mOfN('R4', 2, 3, 2);
+    if (on.R5) mOfN('R5', 4, 5, 1);
+    if (on.R6) {
+      // run = alternating steps ending at i; N points are N-1 steps.
+      k = N('R6'); c = 0; var prev = 0;
+      for (i = 1; i < n; i++) {
+        var d = Math.sign(x[i] - x[i - 1]);
+        c = d === 0 ? 0 : (prev && d === -prev ? c + 1 : 1);
+        prev = d;
+        if (c + 1 >= k) add('R6', i);
+      }
+    }
+    if (on.R7) {
+      k = N('R7'); c = 0;
+      for (i = 0; i < n; i++) { c = Math.abs(zs[i]) < 1 ? c + 1 : 0; if (c >= k) add('R7', i); }
+    }
+    if (on.R8) {
+      k = N('R8'); c = 0;
+      for (i = 0; i < n; i++) { c = Math.abs(zs[i]) > 1 ? c + 1 : 0; if (c >= k) add('R8', i); }
+    }
+    return out;
+  }
+
+  // Consecutive flagged points of one rule are one event (a 20-point run is one OCAP row).
+  function events(flags, points) {
+    var list = [];
+    Object.keys(flags).forEach(function (id) {
+      var idx = flags[id], start = null;
+      for (var k = 0; k < idx.length; k++) {
+        if (start === null) start = idx[k];
+        if (k === idx.length - 1 || idx[k + 1] !== idx[k] + 1) {
+          list.push({rule: id, start: start, end: idx[k], label: points[start].label, endLabel: points[idx[k]].label, value: points[start].value});
+          start = null;
+        }
+      }
+    });
+    list.sort(function (a, b) { return a.start - b.start || order(a.rule) - order(b.rule); });
+    return list;
+  }
+
+  function order(id) {
+    for (var i = 0; i < RULES.length; i++) if (RULES[i].id === id) return i;
+    return 99;
+  }
+
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, analyze: analyze, mean: mean, sd: sd};
+})();
+
+</script>
+<script>
+// SPC Chart HTML: reads an Excel sheet, draws control charts, re-reads the file whenever it is saved.
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var SPC = window.SPC;
+  var TITLE = document.querySelector('meta[name="spc-title"]').content;
+  var ROLES = ['USL', 'LSL', 'UCL', 'LCL', 'CL'];
+  var ROLE_WORDS = {
+    USL: ['usl', '규격상한', '상한규격', 'upperspec', 'specupper', 'specmax'],
+    LSL: ['lsl', '규격하한', '하한규격', 'lowerspec', 'speclower', 'specmin'],
+    UCL: ['ucl', '관리상한', '상한관리', 'uppercontrol'],
+    LCL: ['lcl', '관리하한', '하한관리', 'lowercontrol'],
+    CL: ['cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
+  };
+  var ITEM_WORDS = ['item', '항목', '측정항목', 'parameter', 'param', '파라미터', 'para'];
+  var LABEL_WORDS = ['date', 'time', 'datetime', '날짜', '일자', '시간', '일시', '측정일', '측정시간', 'lot', 'lotid', 'wafer', 'waferid', 'no', '번호', 'sample', '시료'];
+  var DEFAULT_OCAP = {
+    OOS: '1. 해당 Lot 즉시 Hold\n2. 재측정으로 측정 오류인지 확인\n3. 설비 · 레시피 · 자재 변경 이력 확인 후 엔지니어에게 보고\n4. 원인 조치 후 Hold 해제 판정, 조치 내용 기록',
+    R1: '1. 재측정으로 측정 오류인지 확인\n2. 설비 상태 · 레시피 · 자재 Lot 변경 이력 확인\n3. 엔지니어 보고, 원인과 조치 기록',
+    R2: '1. 중심 이동 원인 확인 (자재 Lot, 설비 PM, 레시피 변경)\n2. 엔지니어 보고 후 보정 여부 판단',
+    R3: '1. 설비 마모 · 드리프트 확인\n2. 다음 측정값 추이 감시, 필요하면 PM 또는 보정',
+    R4: '1. 공정 변동 원인 확인\n2. 엔지니어 보고',
+    R5: '1. 공정 변동 원인 확인\n2. 엔지니어 보고',
+    R6: '1. 측정기 · 설비를 번갈아 쓰는지 확인 (층별)',
+    R7: '1. 관리한계 재계산이 필요한지 검토 (데이터 층별 의심)',
+    R8: '1. 서로 다른 조건(설비 · 챔버)이 섞였는지 확인'
+  };
+
+  // ---------- settings ----------
+  var settings = load('spc.settings', {});
+  settings.rules = Object.assign({}, SPC.DEFAULT_ON, settings.rules);
+  settings.n = settings.n || {};
+  settings.ocap = Object.assign({}, DEFAULT_OCAP, settings.ocap);
+  settings.manual = settings.manual || {};
+  if (!(settings.pollSec >= 1)) settings.pollSec = 2;
+  if (settings.sound === undefined) settings.sound = true;
+  if (!(settings.window >= 0)) settings.window = 100;
+  if (!(settings.subgroup >= 1)) settings.subgroup = 1;
+  if (!(settings.baseline >= 0)) settings.baseline = 0;
+  var ocapLog = load('spc.ocapLog', {});
+
+  function load(key, def) {
+    try { var v = JSON.parse(localStorage.getItem(key)); return v && typeof v === 'object' ? v : def; } catch (e) { return def; }
+  }
+  function save() {
+    try {
+      localStorage.setItem('spc.settings', JSON.stringify(settings));
+      localStorage.setItem('spc.ocapLog', JSON.stringify(ocapLog));
+    } catch (e) { /* private window: settings last until the page closes */ }
+  }
+
+  // ---------- state ----------
+  var source = null;       // {name, kind: 'handle'|'file'|'demo', handle?, file?, demo?}
+  var lastKey = null;      // lastModified:size of the file last read
+  var book = null;         // [{name, rows}]
+  var table = null;        // {headers, data, roles, sheet}
+  var results = [];        // SPC.analyze results, one per item
+  var seen = null;         // event keys already shown (null until the first read of a source)
+  var newKeys = {};
+  var busy = false, timer = null;
+
+  $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
+
+  // ---------- reading ----------
+  function setStatus(text, cls) {
+    var s = $('status');
+    s.textContent = text;
+    s.className = 'status ' + (cls || 'muted');
+  }
+
+  function stamp() {
+    var d = new Date();
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  async function openPicked() {
+    if (window.showOpenFilePicker) {
+      var handles;
+      try {
+        handles = await window.showOpenFilePicker({
+          id: 'spc-excel',
+          types: [{description: 'Excel / CSV', accept: {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'], 'text/csv': ['.csv', '.txt']}}]
+        });
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        setStatus('파일을 열지 못했습니다: ' + e.message, 'err');
+        return;
+      }
+      useHandle(handles[0]);
+    } else {
+      $('fileIn').click();  // no live refresh in browsers without the File System Access API
+    }
+  }
+
+  function useHandle(handle) {
+    source = {name: handle.name, kind: 'handle', handle: handle};
+    rememberHandle(handle);
+    startSource();
+  }
+
+  function startSource() {
+    lastKey = null;
+    seen = null;
+    newKeys = {};
+    hideAlarm();
+    $('reloadBtn').disabled = false;
+    refresh(true);
+    schedule();
+  }
+
+  function schedule() {
+    clearInterval(timer);
+    timer = null;
+    if ($('liveChk').checked && source && source.kind !== 'file') timer = setInterval(function () { refresh(false); }, settings.pollSec * 1000);
+  }
+
+  async function refresh(force) {
+    if (busy || !source) return;
+    busy = true;
+    try {
+      var name = source.name, buf, key;
+      if (source.kind === 'demo') {
+        key = source.demo.tick();
+        if (!force && key === lastKey) return;
+        book = source.demo.book();
+      } else {
+        var file;
+        try {
+          file = source.kind === 'handle' ? await source.handle.getFile() : source.file;
+        } catch (e) {
+          // Excel replaces the file while saving; try again on the next tick.
+          setStatus(name + ' · 파일을 읽을 수 없음 (저장 중이거나 권한 없음) · ' + stamp(), 'warn');
+          if (e && e.name === 'NotAllowedError') $('recentBtn').classList.remove('hidden');
+          return;
+        }
+        key = file.lastModified + ':' + file.size;
+        if (!force && key === lastKey) return;
+        buf = await file.arrayBuffer();
+        try {
+          book = window.XLSXLite.read(name, buf);
+        } catch (e) {
+          setStatus(name + ' · ' + e.message + ' · ' + stamp(), 'err');
+          return;  // keep the last good charts; lastKey unchanged so the next tick retries
+        }
+      }
+      lastKey = key;
+      buildTable();
+      analyzeAll();
+      render();
+      var live = source.kind === 'file' ? ' · 자동 새로고침 없음 (다시 열기로 갱신)' : '';
+      setStatus(name + ' · 읽은 시각 ' + stamp() + live, source.kind === 'file' ? 'warn' : 'muted');
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---------- table: header, columns, roles ----------
+  function norm(s) { return String(s).toLowerCase().replace(/[\s_\-.()\[\]]/g, ''); }
+
+  function roleOf(header) {
+    var h = norm(header);
+    for (var r = 0; r < ROLES.length; r++) if (ROLE_WORDS[ROLES[r]].indexOf(h) >= 0) return ROLES[r];
+    return null;
+  }
+
+  function colName(i) {
+    var s = '';
+    for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s;
+    return s;
+  }
+
+  function toNum(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    if (typeof v === 'string' && /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(v)) return +v;
+    return null;
+  }
+
+  function buildTable() {
+    var sheetName = settings.sheet;
+    var sheet = book.filter(function (s) { return s.name === sheetName; })[0];
+    if (!sheet) {
+      // First sheet that has numbers.
+      sheet = book.filter(function (s) { return s.rows.some(function (r) { return r.some(function (v) { return typeof v === 'number'; }); }); })[0] || book[0];
+    }
+    var rows = sheet ? sheet.rows : [];
+    var h = 0;
+    while (h < rows.length && rows[h].filter(function (v) { return v !== null && v !== undefined; }).length < 2) h++;
+    var width = 0;
+    rows.forEach(function (r) { width = Math.max(width, r.length); });
+    var headers = [], used = {};
+    for (var c = 0; c < width; c++) {
+      var t = rows[h] && rows[h][c] !== null && rows[h][c] !== undefined ? String(rows[h][c]).trim() : '';
+      if (t === '' || used[t]) t = (t || '열') + ' ' + colName(c);
+      used[t] = 1;
+      headers.push(t);
+    }
+    var data = [];
+    for (var r = h + 1; r < rows.length; r++) {
+      var row = rows[r];
+      if (!row.some(function (v) { return v !== null && v !== undefined; })) continue;
+      data.push({excelRow: r + 1, cells: row});
+    }
+    var kinds = headers.map(function (_, i) {
+      var num = 0, text = 0, date = 0;
+      data.forEach(function (d) {
+        var v = d.cells[i];
+        if (v instanceof Date) date++;
+        else if (toNum(v) !== null) num++;
+        else if (v !== null && v !== undefined) text++;
+      });
+      return num > 0 && num >= text + date ? 'num' : (date + text > 0 ? 'text' : 'empty');
+    });
+    var roles = {};
+    headers.forEach(function (name, i) { var r = roleOf(name); if (r && !roles[r] && kinds[i] !== 'text') roles[r] = name; });
+    table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles};
+
+    var cols = settings.cols || {};
+    var has = function (n) { return headers.indexOf(n) >= 0; };
+    var roleCols = ROLES.map(function (r) { return roles[r]; });
+    var item = cols.item === '' || has(cols.item) ? cols.item : headers.filter(function (n, i) { return kinds[i] === 'text' && ITEM_WORDS.indexOf(norm(n)) >= 0; })[0] || '';
+    var label = cols.label === '' || has(cols.label) ? cols.label
+      : headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
+      || headers.filter(function (n, i) { return n !== item && kinds[i] === 'text'; })[0] || '';
+    var numeric = headers.filter(function (n, i) { return kinds[i] === 'num' && roleCols.indexOf(n) < 0 && n !== label && n !== item; });
+    var values = (cols.values || []).filter(function (n) { return numeric.indexOf(n) >= 0; });
+    if (!values.length || cols.sig !== numeric.join('|')) values = numeric.slice();
+    table.label = label;
+    table.item = item;
+    table.numeric = numeric;
+    table.values = values;
+    settings.sheet = table.sheet;
+    settings.cols = {label: label, item: item, values: values, sig: numeric.join('|')};
+    save();
+  }
+
+  function fmtLabel(v, excelRow) {
+    if (v instanceof Date) {
+      var s = v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate());
+      if (v.getHours() || v.getMinutes() || v.getSeconds()) s += ' ' + pad(v.getHours()) + ':' + pad(v.getMinutes());
+      return s;
+    }
+    if (v === null || v === undefined || v === '') return excelRow + '행';
+    return String(v);
+  }
+
+  function items() {
+    var t = table, idx = function (n) { return t.headers.indexOf(n); };
+    var li = idx(t.label), ii = idx(t.item), groups = [], byName = {};
+    t.data.forEach(function (d) {
+      var g = ii >= 0 ? d.cells[ii] : null;
+      g = g === null || g === undefined ? (ii >= 0 ? '(빈 항목)' : '') : (g instanceof Date ? fmtLabel(g) : String(g));
+      if (!byName[g]) { byName[g] = []; groups.push(g); }
+      byName[g].push(d);
+    });
+    var list = [];
+    groups.forEach(function (g) {
+      t.values.forEach(function (vn) {
+        var vi = idx(vn), rows = byName[g];
+        var name = g === '' ? vn : (t.values.length > 1 ? g + ' · ' + vn : g);
+        var cols = {};
+        ROLES.forEach(function (r) {
+          if (t.roles[r]) { var ri = idx(t.roles[r]); cols[r] = rows.map(function (d) { return toNum(d.cells[ri]); }); }
+        });
+        var vals = rows.map(function (d) { return toNum(d.cells[vi]); });
+        if (!vals.some(function (v) { return v !== null; })) return;
+        list.push({
+          name: name, values: vals, cols: cols, excelRows: rows.map(function (d) { return d.excelRow; }),
+          labels: rows.map(function (d) { return li >= 0 ? fmtLabel(d.cells[li], d.excelRow) : d.excelRow + '행'; })
+        });
+      });
+    });
+    return list;
+  }
+
+  function analyzeAll() {
+    var opts = {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n};
+    results = items().map(function (it) {
+      var res = SPC.analyze(it, Object.assign({}, opts, {manual: settings.manual[it.name] || {}}));
+      res.excelRows = it.excelRows;
+      return res;
+    });
+    // New out-of-control events since the last read raise the alarm (not on the first read of a file).
+    var keys = {}, fresh = [];
+    results.forEach(function (res) {
+      res.events.forEach(function (ev) {
+        ev.item = res.name;
+        ev.key = eventKey(res, ev);
+        keys[ev.key] = 1;
+        if (seen && !seen[ev.key]) fresh.push(ev);
+      });
+    });
+    if (seen && fresh.length) {
+      fresh.forEach(function (ev) { newKeys[ev.key] = 1; });
+      showAlarm(fresh);
+    }
+    seen = keys;
+  }
+
+  function eventKey(res, ev) { return res.name + '|' + ev.rule + '|' + ev.label + '|' + res.size; }
+
+  // ---------- alarm ----------
+  var alarmEvents = [];
+  function showAlarm(fresh) {
+    alarmEvents = fresh;
+    var first = fresh[0], more = fresh.length > 1 ? ' 외 ' + (fresh.length - 1) + '건' : '';
+    $('alarmText').textContent = '⚠ 새 이상 ' + fresh.length + '건: ' + first.item + ' — ' + ruleName(first.rule) + ' (' + first.label + ')' + more;
+    var a = $('alarm');
+    a.classList.add('hidden');
+    void a.offsetWidth;  // restart the blink
+    a.classList.remove('hidden');
+    if (settings.sound) beep();
+  }
+  function hideAlarm() { $('alarm').classList.add('hidden'); }
+
+  var audio = null;
+  function beep() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25].forEach(function (t) {
+        var o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = 880;
+        g.gain.value = 0.08;
+        o.connect(g);
+        g.connect(audio.destination);
+        o.start(audio.currentTime + t);
+        o.stop(audio.currentTime + t + 0.15);
+      });
+    } catch (e) { /* no sound device */ }
+  }
+
+  function ruleName(id) {
+    var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
+    if (!r) return id;
+    var n = settings.n[id] || r.n;
+    return r.name + (r.n ? ' (' + n + '점)' : '');
+  }
+  function ruleDesc(id) {
+    var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
+    return r ? r.desc.replace('N점', (settings.n[id] || r.n) + '점') : '';
+  }
+
+  // ---------- rendering ----------
+  function fmt(v) {
+    if (v === null || v === undefined || !isFinite(v)) return '-';
+    var a = Math.abs(v);
+    if (a !== 0 && (a >= 1e6 || a < 1e-3)) return v.toExponential(3);
+    return String(+v.toFixed(a >= 100 ? 2 : a >= 1 ? 4 : 5));
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+  }
+  function opt(value, text, sel) { return '<option value="' + esc(value) + '"' + (sel ? ' selected' : '') + '>' + esc(text) + '</option>'; }
+
+  function renderControls() {
+    var t = table;
+    $('controls').classList.remove('hidden');
+    $('sheetSel').innerHTML = t.sheets.map(function (s) { return opt(s, s, s === t.sheet); }).join('');
+    $('labelSel').innerHTML = opt('', '(행 번호)', !t.label) + t.headers.map(function (h) { return opt(h, h, h === t.label); }).join('');
+    $('itemSel').innerHTML = opt('', '(없음)', !t.item) + t.headers.filter(function (h, i) { return t.kinds[i] === 'text'; }).map(function (h) { return opt(h, h, h === t.item); }).join('');
+    $('valueBox').innerHTML = t.numeric.map(function (h) {
+      return '<label class="chk"><input type="checkbox" value="' + esc(h) + '"' + (t.values.indexOf(h) >= 0 ? ' checked' : '') + '> ' + esc(h) + '</label>';
+    }).join('') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
+    $('sizeIn').value = settings.subgroup;
+    $('baseIn').value = settings.baseline;
+    $('winIn').value = settings.window;
+    var view = $('viewSel').value;
+    $('viewSel').innerHTML = opt('', '전체 항목', !view) + results.map(function (r) { return opt(r.name, r.name, r.name === view); }).join('');
+  }
+
+  function statusOf(res) {
+    var last = res.points.length - 1;
+    var lastFlags = Object.keys(res.flags).filter(function (id) { return res.flags[id].indexOf(last) >= 0; });
+    if (lastFlags.indexOf('OOS') >= 0) return {cls: 'bad', text: '규격 이탈'};
+    if (lastFlags.length || res.rangeFlags.indexOf(last) >= 0) return {cls: 'warn', text: '관리 이탈'};
+    return {cls: 'ok', text: '정상'};
+  }
+
+  function openCount(res) {
+    return res.events.filter(function (ev) { return !(ocapLog[ev.key] && ocapLog[ev.key].done); }).length;
+  }
+
+  function render() {
+    $('empty').classList.add('hidden');
+    renderControls();
+    var view = $('viewSel').value, shown = results.filter(function (r) { return !view || r.name === view; });
+
+    // Summary
+    var s = '<table class="grid"><tr><th>항목</th><th>상태</th><th>점 수</th><th>마지막 값</th><th>평균</th><th>σ(within)</th><th>Cp</th><th>Cpk</th><th>Ppk</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>이상(미조치)</th></tr>';
+    results.forEach(function (r, i) {
+      var st = statusOf(r), L = r.limits, n = r.points.length;
+      var lv = function (k) { return L[k].values && n ? fmt(L[k].values[n - 1]) : '-'; };
+      s += '<tr class="click" data-i="' + i + '"><td>' + esc(r.name) + '</td><td><span class="badge ' + st.cls + '">' + st.text + '</span></td><td>' + n + '</td><td>' + fmt(r.x[n - 1]) +
+        '</td><td>' + fmt(r.stats.mean) + '</td><td>' + fmt(r.stats.sigmaW) + '</td><td>' + fmt(r.stats.cp) + '</td><td>' + fmt(r.stats.cpk) + '</td><td>' + fmt(r.stats.ppk) +
+        '</td><td>' + lv('USL') + '</td><td>' + lv('LSL') + '</td><td>' + lv('UCL') + '</td><td>' + lv('LCL') + '</td><td>' + r.events.length + ' (' + openCount(r) + ')</td></tr>';
+    });
+    s += '</table>';
+    if (!results.length) s = '<p class="muted">차트로 그릴 숫자 열이 없습니다. 첫 줄은 제목, 그 아래에 숫자 데이터가 있는지 확인해 주세요.</p>';
+    $('summary').innerHTML = s;
+    $('summary').classList.remove('hidden');
+
+    // Cards: reuse canvases so live redraws do not flicker.
+    var box = $('cards'), want = shown.map(function (r) { return r.name; });
+    Array.prototype.slice.call(box.children).forEach(function (el) { if (want.indexOf(el.dataset.name) < 0) el.remove(); });
+    shown.forEach(function (r, k) {
+      var card = box.querySelector('[data-name="' + CSS.escape(r.name) + '"]');
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'item-card';
+        card.dataset.name = r.name;
+        card.innerHTML = '<div class="ihead"><b></b><span class="badge"></span><span class="istats"></span><span class="spacer"></span><button class="ghost small lim-btn">한계 설정</button></div>' +
+          '<canvas class="cx"></canvas><div class="isub"><canvas class="cr"></canvas><canvas class="ch"></canvas></div><div class="note"></div>';
+        card.querySelector('.lim-btn').onclick = function () { limitsDialog(card.dataset.name); };
+      }
+      if (box.children[k] !== card) box.insertBefore(card, box.children[k] || null);
+      var st = statusOf(r);
+      card.querySelector('b').textContent = r.name;
+      var b = card.querySelector('.badge');
+      b.className = 'badge ' + st.cls;
+      b.textContent = st.text;
+      card.querySelector('.istats').textContent = (r.size > 1 ? 'Xbar-R (n=' + r.size + ')' : 'I-MR') + ' · 점 ' + r.points.length + ' · 평균 ' + fmt(r.stats.mean) +
+        ' · σ ' + fmt(r.stats.sigmaW) + ' · Cpk ' + fmt(r.stats.cpk) + ' · 이상 ' + r.events.length + '건';
+      var L = r.limits;
+      card.querySelector('.note').textContent = '한계 출처: ' + ROLES.map(function (k2) { return k2 + ' ' + L[k2].source; }).join(' · ') +
+        (r.stats.baseline < r.points.length ? ' · 관리한계는 처음 ' + r.stats.baseline + '점으로 계산' : '');
+      card._res = r;
+    });
+    drawAll();
+    renderEvents();
+  }
+
+  function renderEvents() {
+    var rows = [];
+    results.forEach(function (r) { r.events.forEach(function (ev) { rows.push(ev); }); });
+    rows.reverse();
+    rows.sort(function (a, b) { return (newKeys[b.key] ? 1 : 0) - (newKeys[a.key] ? 1 : 0); });
+    var openOnly = $('openOnly').checked;
+    if (openOnly) rows = rows.filter(function (ev) { return !(ocapLog[ev.key] && ocapLog[ev.key].done); });
+    $('eventsBox').classList.toggle('hidden', !results.length);
+    var h = '<tr><th class="l">항목</th><th class="l">위치 (X축)</th><th>값</th><th class="l">규칙</th><th class="l">OCAP</th><th class="l">상태</th><th class="l">메모</th></tr>';
+    rows.forEach(function (ev) {
+      var log = ocapLog[ev.key] || {};
+      var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
+      h += '<tr class="click' + (newKeys[ev.key] ? ' new' : '') + (log.done ? ' done' : '') + '" data-key="' + esc(ev.key) + '"><td>' + esc(ev.item) + '</td><td class="l">' + esc(where) +
+        '</td><td>' + fmt(ev.value) + '</td><td class="l"><span class="rule ' + ev.rule + '">' + esc(ruleName(ev.rule)) + '</span></td><td class="l">' +
+        esc((settings.ocap[ev.rule] || '').split('\n')[0]) + ' …</td><td class="l">' + (log.done ? '조치 완료' : '<b>미조치</b>') + '</td><td class="l">' + esc(log.note || '') + '</td></tr>';
+    });
+    if (!rows.length) h += '<tr><td colspan="7" class="l muted">' + (openOnly ? '미조치 이상 없음' : '이상 없음') + '</td></tr>';
+    $('events').className = 'grid';
+    $('events').innerHTML = h;
+  }
+
+  // ---------- charts ----------
+  function setup(canvas) {
+    var dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = '11px "Segoe UI", "Malgun Gothic", sans-serif';
+    return {ctx: ctx, w: w, h: h};
+  }
+
+  function niceTicks(lo, hi, count) {
+    var span = hi - lo, step = Math.pow(10, Math.floor(Math.log10(span / count))), err = span / count / step;
+    step *= err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1;
+    var out = [];
+    for (var v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(12));
+    return out;
+  }
+
+  function domain(vals) {
+    var lo = Infinity, hi = -Infinity;
+    vals.forEach(function (v) { if (v !== null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    if (hi - lo < 1e-12) { var d = Math.abs(lo) * 0.05 || 1; lo -= d; hi += d; }
+    var pad2 = (hi - lo) * 0.08;
+    return [lo - pad2, hi + pad2];
+  }
+
+  function frame(g, lo, hi, left, right, top, bottom) {
+    var ctx = g.ctx, ph = g.h - top - bottom;
+    var Y = function (v) { return top + (hi - v) / (hi - lo) * ph; };
+    ctx.strokeStyle = '#eef1f5';
+    ctx.fillStyle = '#6b7486';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    niceTicks(lo, hi, Math.max(2, Math.floor(ph / 40))).forEach(function (t) {
+      ctx.beginPath(); ctx.moveTo(left, Y(t)); ctx.lineTo(g.w - right, Y(t)); ctx.stroke();
+      ctx.fillText(fmt(t), left - 6, Y(t));
+    });
+    ctx.strokeStyle = '#c9d0db';
+    ctx.strokeRect(left, top, g.w - left - right, ph);
+    return Y;
+  }
+
+  // Limit line across the visible points; label at the right end.
+  function limitLine(g, X, Y, vals, from, to, color, dash, label) {
+    if (!vals) return;
+    var ctx = g.ctx;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    for (var i = from; i < to; i++) {
+      var y = Y(vals[i]), x0 = X(i) - (X(1) - X(0)) / 2, x1 = X(i) + (X(1) - X(0)) / 2;
+      if (i === from) ctx.moveTo(x0, y); else ctx.lineTo(x0, y);
+      ctx.lineTo(x1, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+    if (label) {
+      ctx.fillStyle = color;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label + ' ' + fmt(vals[to - 1]), X(to - 1) + (X(1) - X(0)) / 2 + 4, Y(vals[to - 1]));
+    }
+  }
+
+  function xLabels(g, X, labels, from, to, bottom) {
+    var ctx = g.ctx, every = Math.max(1, Math.ceil((to - from) * 90 / Math.max(1, g.w - 150)));
+    ctx.fillStyle = '#6b7486';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (var i = to - 1; i >= from; i -= every) {
+      var s = String(labels[i]);
+      ctx.fillText(s.length > 16 ? s.slice(0, 15) + '…' : s, X(i), g.h - bottom + 6);
+    }
+  }
+
+  function drawControl(canvas, r) {
+    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0;
+    var left = 62, right = 92, top = 10, bottom = 26;
+    var L = r.limits, vis = r.x.slice(from);
+    ROLES.forEach(function (k) { if (L[k].values) vis = vis.concat(L[k].values.slice(from)); });
+    var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom), ctx = g.ctx;
+    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'x'};
+    if (!n) return;
+
+    // ±1σ, ±2σ guide lines from the control limits.
+    if (L.CL.values && L.UCL.values && L.LCL.values) {
+      [1, 2].forEach(function (k) {
+        limitLine(g, X, Y, L.CL.values.map(function (c, i) { return c + (L.UCL.values[i] - c) * k / 3; }), from, n, '#cfd5df', [2, 4]);
+        limitLine(g, X, Y, L.CL.values.map(function (c, i) { return c - (c - L.LCL.values[i]) * k / 3; }), from, n, '#cfd5df', [2, 4]);
+      });
+    }
+    limitLine(g, X, Y, L.USL.values, from, n, '#dc2626', [], 'USL');
+    limitLine(g, X, Y, L.LSL.values, from, n, '#dc2626', [], 'LSL');
+    limitLine(g, X, Y, L.UCL.values, from, n, '#ea580c', [6, 4], 'UCL');
+    limitLine(g, X, Y, L.LCL.values, from, n, '#ea580c', [6, 4], 'LCL');
+    limitLine(g, X, Y, L.CL.values, from, n, '#16a34a', [], 'CL');
+
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (var i = from; i < n; i++) { if (i === from) ctx.moveTo(X(i), Y(r.x[i])); else ctx.lineTo(X(i), Y(r.x[i])); }
+    ctx.stroke();
+    var bad = flagMap(r), rad = step > 7 ? 3.5 : 2.2;
+    for (i = from; i < n; i++) {
+      var f = bad[i];
+      ctx.beginPath();
+      ctx.arc(X(i), Y(r.x[i]), f ? rad + 1.5 : rad, 0, Math.PI * 2);
+      ctx.fillStyle = !f ? '#2563eb' : (f.indexOf('OOS') >= 0 ? '#dc2626' : '#f59e0b');
+      ctx.fill();
+      if (f) { ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = 1; ctx.stroke(); }
+    }
+    xLabels(g, X, r.points.map(function (p) { return p.label; }), from, n, bottom);
+  }
+
+  function flagMap(r) {
+    var m = {};
+    Object.keys(r.flags).forEach(function (id) { r.flags[id].forEach(function (i) { (m[i] = m[i] || []).push(id); }); });
+    return m;
+  }
+
+  function drawRange(canvas, r) {
+    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, R = r.range;
+    var left = 62, right = 92, top = 16, bottom = 8, ctx = g.ctx;
+    var dm = domain(R.values.slice(from).concat([R.ucl, R.lcl, R.cl]));
+    var Y = frame(g, Math.max(dm[0], R.lcl - (dm[1] - dm[0]) * 0.05), dm[1], left, right, top, bottom);
+    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    ctx.fillStyle = '#334155';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(R.name + ' 차트', left, 1);
+    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'r'};
+    if (!n || !isFinite(R.cl)) return;
+    var c = function (v) { var a = []; for (var i = 0; i < n; i++) a.push(v); return a; };
+    limitLine(g, X, Y, c(R.ucl), from, n, '#ea580c', [6, 4], 'UCL');
+    if (R.lcl > 0) limitLine(g, X, Y, c(R.lcl), from, n, '#ea580c', [6, 4], 'LCL');
+    limitLine(g, X, Y, c(R.cl), from, n, '#16a34a', [], R.name + '̄');
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    var started = false;
+    for (var i = from; i < n; i++) {
+      if (R.values[i] === null) continue;
+      if (!started) { ctx.moveTo(X(i), Y(R.values[i])); started = true; } else ctx.lineTo(X(i), Y(R.values[i]));
+    }
+    ctx.stroke();
+    for (i = from; i < n; i++) {
+      if (R.values[i] === null) continue;
+      var out = r.rangeFlags.indexOf(i) >= 0;
+      ctx.beginPath();
+      ctx.arc(X(i), Y(R.values[i]), out ? 3.5 : 2, 0, Math.PI * 2);
+      ctx.fillStyle = out ? '#f59e0b' : '#64748b';
+      ctx.fill();
+    }
+  }
+
+  function drawHist(canvas, r) {
+    var g = setup(canvas), ctx = g.ctx, all = [];
+    r.points.forEach(function (p) { all.push.apply(all, p.raw); });
+    canvas._hit = null;
+    ctx.fillStyle = '#334155';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('분포', 8, 1);
+    if (all.length < 2) return;
+    var n = r.points.length, L = r.limits, lim = function (k) { return L[k].values ? L[k].values[n - 1] : null; };
+    var dm = domain(all.concat([lim('USL'), lim('LSL')]));
+    var bins = Math.max(5, Math.min(30, Math.ceil(Math.log2(all.length)) + 1)), counts = new Array(bins).fill(0);
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), bw = (hi - lo) / bins || 1;
+    all.forEach(function (v) { counts[Math.min(bins - 1, Math.floor((v - lo) / bw))]++; });
+    var left = 8, right = 8, top = 16, bottom = 18, pw = g.w - left - right, ph = g.h - top - bottom;
+    var X = function (v) { return left + (v - dm[0]) / (dm[1] - dm[0]) * pw; };
+    var max = Math.max.apply(null, counts), m = r.stats.mean, s = r.stats.sd;
+    var peak = s > 0 ? all.length * bw / (s * Math.sqrt(2 * Math.PI)) : 0;
+    var H = function (c) { return top + ph - c / Math.max(max, peak) * ph; };
+    ctx.fillStyle = '#bfd3fb';
+    ctx.strokeStyle = '#7aa2f0';
+    for (var b = 0; b < bins; b++) {
+      var x0 = X(lo + b * bw), x1 = X(lo + (b + 1) * bw);
+      ctx.fillRect(x0, H(counts[b]), Math.max(1, x1 - x0 - 1), top + ph - H(counts[b]));
+    }
+    if (s > 0) {
+      ctx.strokeStyle = '#1e3a8a';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (var k = 0; k <= 80; k++) {
+        var v = dm[0] + (dm[1] - dm[0]) * k / 80, y = H(peak * Math.exp(-0.5 * Math.pow((v - m) / s, 2)));
+        if (k) ctx.lineTo(X(v), y); else ctx.moveTo(X(v), y);
+      }
+      ctx.stroke();
+    }
+    [['LSL', '#dc2626'], ['USL', '#dc2626'], ['CL', '#16a34a']].forEach(function (p) {
+      var v = lim(p[0]);
+      if (v === null || !isFinite(v)) return;
+      ctx.strokeStyle = p[1];
+      ctx.beginPath(); ctx.moveTo(X(v), top); ctx.lineTo(X(v), top + ph); ctx.stroke();
+      ctx.fillStyle = p[1];
+      ctx.textAlign = 'center';
+      ctx.fillText(p[0], X(v), top + ph + 3);
+    });
+  }
+
+  function drawAll() {
+    Array.prototype.forEach.call($('cards').children, function (card) {
+      var r = card._res;
+      if (!r) return;
+      drawControl(card.querySelector('.cx'), r);
+      drawRange(card.querySelector('.cr'), r);
+      drawHist(card.querySelector('.ch'), r);
+    });
+  }
+
+  var redrawQueued = false;
+  new ResizeObserver(function () {
+    if (redrawQueued) return;
+    redrawQueued = true;
+    requestAnimationFrame(function () { redrawQueued = false; drawAll(); });
+  }).observe($('cards'));
+
+  // Tooltip: nearest point under the mouse.
+  $('cards').addEventListener('mousemove', function (e) {
+    var c = e.target, hit = c && c._hit, tip = $('tip');
+    if (!hit || hit.to <= hit.from) { tip.classList.add('hidden'); return; }
+    var rect = c.getBoundingClientRect(), mx = e.clientX - rect.left;
+    var step = hit.X(1) - hit.X(0), i = Math.round((mx - hit.X(hit.from)) / step) + hit.from;
+    if (i < hit.from || i >= hit.to) { tip.classList.add('hidden'); return; }
+    var r = hit.res, p = r.points[i], L = r.limits, lines = [p.label];
+    if (hit.kind === 'x') {
+      lines.push((r.size > 1 ? '평균 ' : '값 ') + fmt(p.value) + (r.size > 1 ? '  (' + p.raw.map(fmt).join(', ') + ')' : ''));
+      ROLES.forEach(function (k) { if (L[k].values) lines.push(k + ' ' + fmt(L[k].values[i])); });
+      var f = flagMap(r)[i];
+      if (f) lines.push('⚠ ' + f.map(ruleName).join(', '));
+      lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행');
+    } else {
+      lines.push(r.range.name + ' ' + fmt(r.range.values[i]));
+      if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ ' + r.range.name + ' 관리한계 이탈');
+    }
+    tip.textContent = lines.join('\n');
+    tip.classList.remove('hidden');
+    tip.style.left = Math.min(window.innerWidth - 330, e.clientX + 14) + 'px';
+    tip.style.top = (e.clientY + 14) + 'px';
+  });
+  $('cards').addEventListener('mouseleave', function () { $('tip').classList.add('hidden'); });
+
+  // ---------- dialogs ----------
+  function modal(html, bind) {
+    $('modal').innerHTML = html;
+    $('modalBack').classList.remove('hidden');
+    bind($('modal'));
+  }
+  function closeModal() { $('modalBack').classList.add('hidden'); }
+  $('modalBack').addEventListener('mousedown', function (e) { if (e.target === $('modalBack')) closeModal(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+
+  function settingsDialog() {
+    var h = '<h3>판정 규칙 · OCAP 설정</h3><div class="row"><label>자동 새로고침 간격 <input id="dPoll" type="number" min="1" max="600" value="' + settings.pollSec + '"> 초</label>' +
+      '<label class="chk"><input type="checkbox" id="dSound"' + (settings.sound ? ' checked' : '') + '> 새 이상이 생기면 소리</label></div>';
+    SPC.RULES.forEach(function (r) {
+      h += '<div class="ruleset"><div class="row"><label class="chk"><input type="checkbox" data-rule="' + r.id + '"' + (settings.rules[r.id] ? ' checked' : '') + '> <b>' + esc(r.name) + '</b></label>' +
+        (r.n ? '<label><input type="number" min="2" max="50" data-n="' + r.id + '" value="' + (settings.n[r.id] || r.n) + '"> 점</label>' : '') +
+        '<span class="muted">' + esc(r.desc) + '</span></div><textarea data-ocap="' + r.id + '" placeholder="이 규칙에 걸리면 할 조치 (OCAP)">' + esc(settings.ocap[r.id] || '') + '</textarea></div>';
+    });
+    h += '<div class="buttons"><button class="ghost" id="dReset">기본값으로</button><span class="spacer"></span><button class="ghost" id="dCancel">취소</button><button class="primary" id="dOk">저장</button></div>';
+    modal(h, function (m) {
+      m.querySelector('#dCancel').onclick = closeModal;
+      m.querySelector('#dReset').onclick = function () {
+        settings.rules = Object.assign({}, SPC.DEFAULT_ON);
+        settings.n = {};
+        settings.ocap = Object.assign({}, DEFAULT_OCAP);
+        settings.pollSec = 2;
+        save();
+        settingsDialog();
+      };
+      m.querySelector('#dOk').onclick = function () {
+        settings.pollSec = Math.max(1, +m.querySelector('#dPoll').value || 2);
+        settings.sound = m.querySelector('#dSound').checked;
+        m.querySelectorAll('[data-rule]').forEach(function (c) { settings.rules[c.dataset.rule] = c.checked; });
+        m.querySelectorAll('[data-n]').forEach(function (c) { var v = +c.value | 0; if (v >= 2) settings.n[c.dataset.n] = v; });
+        m.querySelectorAll('[data-ocap]').forEach(function (c) { settings.ocap[c.dataset.ocap] = c.value; });
+        save();
+        closeModal();
+        schedule();
+        recompute();
+      };
+    });
+  }
+
+  function limitsDialog(name) {
+    var r = results.filter(function (x) { return x.name === name; })[0];
+    if (!r) return;
+    var man = settings.manual[name] || {}, n = r.points.length;
+    var h = '<h3>한계 설정 — ' + esc(name) + '</h3><p class="muted">비워 두면 엑셀 열 값 또는 계산값을 씁니다. 숫자를 넣으면 그 값으로 고정합니다.</p><div class="lim">';
+    ROLES.forEach(function (k) {
+      var L = r.limits[k], cur = L.values && n ? fmt(L.values[n - 1]) : '-';
+      h += '<b>' + k + '</b><input data-k="' + k + '" value="' + (man[k] !== undefined ? man[k] : '') + '" placeholder="' + esc(cur) + '"><span class="muted">지금 ' + esc(cur) + ' (' + esc(L.source) + ')</span>';
+    });
+    h += '</div><div class="buttons"><button class="ghost" id="dCancel">취소</button><button class="primary" id="dOk">적용</button></div>';
+    modal(h, function (m) {
+      m.querySelector('#dCancel').onclick = closeModal;
+      m.querySelector('#dOk').onclick = function () {
+        var v = {};
+        m.querySelectorAll('[data-k]').forEach(function (c) { var x = toNum(c.value); if (x !== null) v[c.dataset.k] = x; });
+        if (Object.keys(v).length) settings.manual[name] = v; else delete settings.manual[name];
+        save();
+        closeModal();
+        recompute();
+      };
+    });
+  }
+
+  function ocapDialog(key) {
+    var ev = null;
+    results.forEach(function (r) { r.events.forEach(function (e) { if (e.key === key) ev = e; }); });
+    if (!ev) return;
+    var log = ocapLog[key] || {};
+    var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
+    var h = '<h3>OCAP — ' + esc(ev.item) + '</h3><div class="row"><span class="rule ' + ev.rule + '">' + esc(ruleName(ev.rule)) + '</span><span class="muted">' + esc(ruleDesc(ev.rule)) + '</span></div>' +
+      '<div class="row">위치: <b>' + esc(where) + '</b> · 값 <b>' + fmt(ev.value) + '</b></div><div class="steps">' + esc(settings.ocap[ev.rule] || '(조치 내용 없음: [규칙 · OCAP 설정]에서 입력)') + '</div>' +
+      '<div class="row"><label class="chk"><input type="checkbox" id="dDone"' + (log.done ? ' checked' : '') + '> 조치 완료</label>' + (log.at ? '<span class="muted small">기록 ' + esc(log.at) + '</span>' : '') + '</div>' +
+      '<textarea id="dNote" placeholder="조치 내용 메모 (이 PC의 브라우저에만 저장)">' + esc(log.note || '') + '</textarea>' +
+      '<div class="buttons"><button class="ghost" id="dCancel">닫기</button><button class="primary" id="dOk">저장</button></div>';
+    modal(h, function (m) {
+      m.querySelector('#dCancel').onclick = closeModal;
+      m.querySelector('#dOk').onclick = function () {
+        var d = new Date();
+        ocapLog[key] = {done: m.querySelector('#dDone').checked, note: m.querySelector('#dNote').value, at: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + stamp()};
+        delete newKeys[key];
+        save();
+        closeModal();
+        render();
+      };
+    });
+  }
+
+  function recompute() {
+    if (!table) return;
+    analyzeAll();
+    render();
+  }
+
+  // ---------- recent file (handle kept in IndexedDB; Edge asks again for permission) ----------
+  function idb(mode, fn) {
+    return new Promise(function (resolve) {
+      try {
+        var req = indexedDB.open('spc-chart', 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore('kv'); };
+        req.onsuccess = function () {
+          var tx = req.result.transaction('kv', mode), st = tx.objectStore('kv'), out = fn(st);
+          tx.oncomplete = function () { resolve(out && out.result); };
+          tx.onerror = tx.onabort = function () { resolve(null); };
+        };
+        req.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+  function rememberHandle(h) { idb('readwrite', function (st) { st.put(h, 'recent'); }); }
+
+  idb('readonly', function (st) { return st.get('recent'); }).then(function (h) {
+    if (!h || source) return;
+    $('recentBtn').textContent = '최근 파일 다시 열기: ' + h.name;
+    $('recentBtn').classList.remove('hidden');
+    $('recentBtn').onclick = async function () {
+      try {
+        if ((await h.queryPermission({mode: 'read'})) !== 'granted' && (await h.requestPermission({mode: 'read'})) !== 'granted') return;
+        $('recentBtn').classList.add('hidden');
+        useHandle(h);
+      } catch (e) {
+        setStatus('최근 파일을 열 수 없습니다: ' + e.message + ' · [엑셀 열기]로 다시 고르세요', 'err');
+      }
+    };
+  });
+
+  // ---------- demo: two items, a point added every few seconds ----------
+  function demoSource() {
+    var t0 = new Date(2026, 9, 1, 8, 0), rows = [['날짜', '항목', '측정값', 'USL', 'LSL']], seed = 7, k = 0;
+    function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    function gauss() { return Math.sqrt(-2 * Math.log(rnd() || 1e-9)) * Math.cos(2 * Math.PI * rnd()); }
+    function add() {
+      var d = new Date(t0.getTime() + k * 3600000), shift = k > 45 && k < 56 ? 0.12 : 0;
+      rows.push([d, '두께', +(10 + shift + gauss() * 0.08).toFixed(3), 10.4, 9.6]);
+      rows.push([d, '폭', +(25 + gauss() * 0.15 + (k === 30 ? 0.9 : 0)).toFixed(3), 25.8, 24.2]);
+      k++;
+    }
+    for (var i = 0; i < 40; i++) add();
+    return {
+      tick: function () { if (k < 400) add(); return k; },
+      book: function () { return [{name: '예제', rows: rows.slice()}]; }
+    };
+  }
+
+  // ---------- events ----------
+  $('openBtn').onclick = openPicked;
+  $('fileIn').onchange = function () {
+    var f = $('fileIn').files[0];
+    if (!f) return;
+    source = {name: f.name, kind: 'file', file: f};
+    startSource();
+    $('fileIn').value = '';
+  };
+  $('reloadBtn').onclick = function () { refresh(true); };
+  $('liveChk').onchange = schedule;
+  $('demoBtn').onclick = function () {
+    settings.sheet = '예제';
+    settings.cols = {};
+    source = {name: '예제 데이터 (실시간 흉내: 몇 초마다 1점 추가)', kind: 'demo', demo: demoSource()};
+    startSource();
+  };
+  $('settingsBtn').onclick = settingsDialog;
+  $('alarmClose').onclick = hideAlarm;
+  $('alarmOcap').onclick = function () { hideAlarm(); if (alarmEvents[0]) ocapDialog(alarmEvents[0].key); };
+  $('openOnly').onchange = renderEvents;
+  $('events').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-key]');
+    if (tr) ocapDialog(tr.dataset.key);
+  });
+  $('summary').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-i]');
+    if (!tr) return;
+    var name = results[+tr.dataset.i].name, card = $('cards').querySelector('[data-name="' + CSS.escape(name) + '"]');
+    if (card) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  });
+
+  function onColumns() {
+    var vals = Array.prototype.map.call($('valueBox').querySelectorAll('input:checked'), function (c) { return c.value; });
+    settings.cols = {label: $('labelSel').value, item: $('itemSel').value, values: vals, sig: table.numeric.join('|')};
+    buildTable();
+    recompute();
+  }
+  $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; buildTable(); recompute(); };
+  $('labelSel').onchange = onColumns;
+  $('itemSel').onchange = onColumns;
+  $('valueBox').onchange = onColumns;
+  $('sizeIn').onchange = function () { settings.subgroup = Math.max(1, Math.min(25, +$('sizeIn').value | 0 || 1)); save(); recompute(); };
+  $('baseIn').onchange = function () { settings.baseline = Math.max(0, +$('baseIn').value | 0); save(); recompute(); };
+  $('winIn').onchange = function () { settings.window = Math.max(0, +$('winIn').value | 0); save(); render(); };
+  $('viewSel').onchange = render;
+
+  $('csvBtn').onclick = function () {
+    var lines = [['항목', '시작', '끝', '값', '규칙', '상태', '메모', '기록 시각']];
+    results.forEach(function (r) {
+      r.events.forEach(function (ev) {
+        var log = ocapLog[ev.key] || {};
+        lines.push([ev.item, ev.label, ev.endLabel, fmt(ev.value), ruleName(ev.rule), log.done ? '조치 완료' : '미조치', log.note || '', log.at || '']);
+      });
+    });
+    var csv = '﻿' + lines.map(function (l) { return l.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\r\n');
+    var a = document.createElement('a'), d = new Date();
+    a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+    a.download = 'SPC_이상목록_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  };
+
+  // Drag a file from Explorer onto the page (Edge gives a live handle, so refresh still works).
+  document.addEventListener('dragover', function (e) { e.preventDefault(); });
+  document.addEventListener('drop', async function (e) {
+    e.preventDefault();
+    var item = e.dataTransfer.items && e.dataTransfer.items[0];
+    if (item && item.getAsFileSystemHandle) {
+      var h = await item.getAsFileSystemHandle();
+      if (h && h.kind === 'file') { useHandle(h); return; }
+    }
+    var f = e.dataTransfer.files[0];
+    if (f) { source = {name: f.name, kind: 'file', file: f}; startSource(); }
+  });
+
+  // For tests: open a file handle without the picker.
+  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings};
+})();
+
+</script>
+</body></html>

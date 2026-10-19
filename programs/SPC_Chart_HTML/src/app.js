@@ -1,0 +1,929 @@
+// SPC Chart HTML: reads an Excel sheet, draws control charts, re-reads the file whenever it is saved.
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var SPC = window.SPC;
+  var TITLE = document.querySelector('meta[name="spc-title"]').content;
+  var ROLES = ['USL', 'LSL', 'UCL', 'LCL', 'CL'];
+  var ROLE_WORDS = {
+    USL: ['usl', '규격상한', '상한규격', 'upperspec', 'specupper', 'specmax'],
+    LSL: ['lsl', '규격하한', '하한규격', 'lowerspec', 'speclower', 'specmin'],
+    UCL: ['ucl', '관리상한', '상한관리', 'uppercontrol'],
+    LCL: ['lcl', '관리하한', '하한관리', 'lowercontrol'],
+    CL: ['cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
+  };
+  var ITEM_WORDS = ['item', '항목', '측정항목', 'parameter', 'param', '파라미터', 'para'];
+  var LABEL_WORDS = ['date', 'time', 'datetime', '날짜', '일자', '시간', '일시', '측정일', '측정시간', 'lot', 'lotid', 'wafer', 'waferid', 'no', '번호', 'sample', '시료'];
+  var DEFAULT_OCAP = {
+    OOS: '1. 해당 Lot 즉시 Hold\n2. 재측정으로 측정 오류인지 확인\n3. 설비 · 레시피 · 자재 변경 이력 확인 후 엔지니어에게 보고\n4. 원인 조치 후 Hold 해제 판정, 조치 내용 기록',
+    R1: '1. 재측정으로 측정 오류인지 확인\n2. 설비 상태 · 레시피 · 자재 Lot 변경 이력 확인\n3. 엔지니어 보고, 원인과 조치 기록',
+    R2: '1. 중심 이동 원인 확인 (자재 Lot, 설비 PM, 레시피 변경)\n2. 엔지니어 보고 후 보정 여부 판단',
+    R3: '1. 설비 마모 · 드리프트 확인\n2. 다음 측정값 추이 감시, 필요하면 PM 또는 보정',
+    R4: '1. 공정 변동 원인 확인\n2. 엔지니어 보고',
+    R5: '1. 공정 변동 원인 확인\n2. 엔지니어 보고',
+    R6: '1. 측정기 · 설비를 번갈아 쓰는지 확인 (층별)',
+    R7: '1. 관리한계 재계산이 필요한지 검토 (데이터 층별 의심)',
+    R8: '1. 서로 다른 조건(설비 · 챔버)이 섞였는지 확인'
+  };
+
+  // ---------- settings ----------
+  var settings = load('spc.settings', {});
+  settings.rules = Object.assign({}, SPC.DEFAULT_ON, settings.rules);
+  settings.n = settings.n || {};
+  settings.ocap = Object.assign({}, DEFAULT_OCAP, settings.ocap);
+  settings.manual = settings.manual || {};
+  if (!(settings.pollSec >= 1)) settings.pollSec = 2;
+  if (settings.sound === undefined) settings.sound = true;
+  if (!(settings.window >= 0)) settings.window = 100;
+  if (!(settings.subgroup >= 1)) settings.subgroup = 1;
+  if (!(settings.baseline >= 0)) settings.baseline = 0;
+  var ocapLog = load('spc.ocapLog', {});
+
+  function load(key, def) {
+    try { var v = JSON.parse(localStorage.getItem(key)); return v && typeof v === 'object' ? v : def; } catch (e) { return def; }
+  }
+  function save() {
+    try {
+      localStorage.setItem('spc.settings', JSON.stringify(settings));
+      localStorage.setItem('spc.ocapLog', JSON.stringify(ocapLog));
+    } catch (e) { /* private window: settings last until the page closes */ }
+  }
+
+  // ---------- state ----------
+  var source = null;       // {name, kind: 'handle'|'file'|'demo', handle?, file?, demo?}
+  var lastKey = null;      // lastModified:size of the file last read
+  var book = null;         // [{name, rows}]
+  var table = null;        // {headers, data, roles, sheet}
+  var results = [];        // SPC.analyze results, one per item
+  var seen = null;         // event keys already shown (null until the first read of a source)
+  var newKeys = {};
+  var busy = false, timer = null;
+
+  $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
+
+  // ---------- reading ----------
+  function setStatus(text, cls) {
+    var s = $('status');
+    s.textContent = text;
+    s.className = 'status ' + (cls || 'muted');
+  }
+
+  function stamp() {
+    var d = new Date();
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  async function openPicked() {
+    if (window.showOpenFilePicker) {
+      var handles;
+      try {
+        handles = await window.showOpenFilePicker({
+          id: 'spc-excel',
+          types: [{description: 'Excel / CSV', accept: {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'], 'text/csv': ['.csv', '.txt']}}]
+        });
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        setStatus('파일을 열지 못했습니다: ' + e.message, 'err');
+        return;
+      }
+      useHandle(handles[0]);
+    } else {
+      $('fileIn').click();  // no live refresh in browsers without the File System Access API
+    }
+  }
+
+  function useHandle(handle) {
+    source = {name: handle.name, kind: 'handle', handle: handle};
+    rememberHandle(handle);
+    startSource();
+  }
+
+  function startSource() {
+    lastKey = null;
+    seen = null;
+    newKeys = {};
+    hideAlarm();
+    $('reloadBtn').disabled = false;
+    refresh(true);
+    schedule();
+  }
+
+  function schedule() {
+    clearInterval(timer);
+    timer = null;
+    if ($('liveChk').checked && source && source.kind !== 'file') timer = setInterval(function () { refresh(false); }, settings.pollSec * 1000);
+  }
+
+  async function refresh(force) {
+    if (busy || !source) return;
+    busy = true;
+    try {
+      var name = source.name, buf, key;
+      if (source.kind === 'demo') {
+        key = source.demo.tick();
+        if (!force && key === lastKey) return;
+        book = source.demo.book();
+      } else {
+        var file;
+        try {
+          file = source.kind === 'handle' ? await source.handle.getFile() : source.file;
+        } catch (e) {
+          // Excel replaces the file while saving; try again on the next tick.
+          setStatus(name + ' · 파일을 읽을 수 없음 (저장 중이거나 권한 없음) · ' + stamp(), 'warn');
+          if (e && e.name === 'NotAllowedError') $('recentBtn').classList.remove('hidden');
+          return;
+        }
+        key = file.lastModified + ':' + file.size;
+        if (!force && key === lastKey) return;
+        buf = await file.arrayBuffer();
+        try {
+          book = window.XLSXLite.read(name, buf);
+        } catch (e) {
+          setStatus(name + ' · ' + e.message + ' · ' + stamp(), 'err');
+          return;  // keep the last good charts; lastKey unchanged so the next tick retries
+        }
+      }
+      lastKey = key;
+      buildTable();
+      analyzeAll();
+      render();
+      var live = source.kind === 'file' ? ' · 자동 새로고침 없음 (다시 열기로 갱신)' : '';
+      setStatus(name + ' · 읽은 시각 ' + stamp() + live, source.kind === 'file' ? 'warn' : 'muted');
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---------- table: header, columns, roles ----------
+  function norm(s) { return String(s).toLowerCase().replace(/[\s_\-.()\[\]]/g, ''); }
+
+  function roleOf(header) {
+    var h = norm(header);
+    for (var r = 0; r < ROLES.length; r++) if (ROLE_WORDS[ROLES[r]].indexOf(h) >= 0) return ROLES[r];
+    return null;
+  }
+
+  function colName(i) {
+    var s = '';
+    for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s;
+    return s;
+  }
+
+  function toNum(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    if (typeof v === 'string' && /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(v)) return +v;
+    return null;
+  }
+
+  function buildTable() {
+    var sheetName = settings.sheet;
+    var sheet = book.filter(function (s) { return s.name === sheetName; })[0];
+    if (!sheet) {
+      // First sheet that has numbers.
+      sheet = book.filter(function (s) { return s.rows.some(function (r) { return r.some(function (v) { return typeof v === 'number'; }); }); })[0] || book[0];
+    }
+    var rows = sheet ? sheet.rows : [];
+    var h = 0;
+    while (h < rows.length && rows[h].filter(function (v) { return v !== null && v !== undefined; }).length < 2) h++;
+    var width = 0;
+    rows.forEach(function (r) { width = Math.max(width, r.length); });
+    var headers = [], used = {};
+    for (var c = 0; c < width; c++) {
+      var t = rows[h] && rows[h][c] !== null && rows[h][c] !== undefined ? String(rows[h][c]).trim() : '';
+      if (t === '' || used[t]) t = (t || '열') + ' ' + colName(c);
+      used[t] = 1;
+      headers.push(t);
+    }
+    var data = [];
+    for (var r = h + 1; r < rows.length; r++) {
+      var row = rows[r];
+      if (!row.some(function (v) { return v !== null && v !== undefined; })) continue;
+      data.push({excelRow: r + 1, cells: row});
+    }
+    var kinds = headers.map(function (_, i) {
+      var num = 0, text = 0, date = 0;
+      data.forEach(function (d) {
+        var v = d.cells[i];
+        if (v instanceof Date) date++;
+        else if (toNum(v) !== null) num++;
+        else if (v !== null && v !== undefined) text++;
+      });
+      return num > 0 && num >= text + date ? 'num' : (date + text > 0 ? 'text' : 'empty');
+    });
+    var roles = {};
+    headers.forEach(function (name, i) { var r = roleOf(name); if (r && !roles[r] && kinds[i] !== 'text') roles[r] = name; });
+    table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles};
+
+    var cols = settings.cols || {};
+    var has = function (n) { return headers.indexOf(n) >= 0; };
+    var roleCols = ROLES.map(function (r) { return roles[r]; });
+    var item = cols.item === '' || has(cols.item) ? cols.item : headers.filter(function (n, i) { return kinds[i] === 'text' && ITEM_WORDS.indexOf(norm(n)) >= 0; })[0] || '';
+    var label = cols.label === '' || has(cols.label) ? cols.label
+      : headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
+      || headers.filter(function (n, i) { return n !== item && kinds[i] === 'text'; })[0] || '';
+    var numeric = headers.filter(function (n, i) { return kinds[i] === 'num' && roleCols.indexOf(n) < 0 && n !== label && n !== item; });
+    var values = (cols.values || []).filter(function (n) { return numeric.indexOf(n) >= 0; });
+    if (!values.length || cols.sig !== numeric.join('|')) values = numeric.slice();
+    table.label = label;
+    table.item = item;
+    table.numeric = numeric;
+    table.values = values;
+    settings.sheet = table.sheet;
+    settings.cols = {label: label, item: item, values: values, sig: numeric.join('|')};
+    save();
+  }
+
+  function fmtLabel(v, excelRow) {
+    if (v instanceof Date) {
+      var s = v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate());
+      if (v.getHours() || v.getMinutes() || v.getSeconds()) s += ' ' + pad(v.getHours()) + ':' + pad(v.getMinutes());
+      return s;
+    }
+    if (v === null || v === undefined || v === '') return excelRow + '행';
+    return String(v);
+  }
+
+  function items() {
+    var t = table, idx = function (n) { return t.headers.indexOf(n); };
+    var li = idx(t.label), ii = idx(t.item), groups = [], byName = {};
+    t.data.forEach(function (d) {
+      var g = ii >= 0 ? d.cells[ii] : null;
+      g = g === null || g === undefined ? (ii >= 0 ? '(빈 항목)' : '') : (g instanceof Date ? fmtLabel(g) : String(g));
+      if (!byName[g]) { byName[g] = []; groups.push(g); }
+      byName[g].push(d);
+    });
+    var list = [];
+    groups.forEach(function (g) {
+      t.values.forEach(function (vn) {
+        var vi = idx(vn), rows = byName[g];
+        var name = g === '' ? vn : (t.values.length > 1 ? g + ' · ' + vn : g);
+        var cols = {};
+        ROLES.forEach(function (r) {
+          if (t.roles[r]) { var ri = idx(t.roles[r]); cols[r] = rows.map(function (d) { return toNum(d.cells[ri]); }); }
+        });
+        var vals = rows.map(function (d) { return toNum(d.cells[vi]); });
+        if (!vals.some(function (v) { return v !== null; })) return;
+        list.push({
+          name: name, values: vals, cols: cols, excelRows: rows.map(function (d) { return d.excelRow; }),
+          labels: rows.map(function (d) { return li >= 0 ? fmtLabel(d.cells[li], d.excelRow) : d.excelRow + '행'; })
+        });
+      });
+    });
+    return list;
+  }
+
+  function analyzeAll() {
+    var opts = {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n};
+    results = items().map(function (it) {
+      var res = SPC.analyze(it, Object.assign({}, opts, {manual: settings.manual[it.name] || {}}));
+      res.excelRows = it.excelRows;
+      return res;
+    });
+    // New out-of-control events since the last read raise the alarm (not on the first read of a file).
+    var keys = {}, fresh = [];
+    results.forEach(function (res) {
+      res.events.forEach(function (ev) {
+        ev.item = res.name;
+        ev.key = eventKey(res, ev);
+        keys[ev.key] = 1;
+        if (seen && !seen[ev.key]) fresh.push(ev);
+      });
+    });
+    if (seen && fresh.length) {
+      fresh.forEach(function (ev) { newKeys[ev.key] = 1; });
+      showAlarm(fresh);
+    }
+    seen = keys;
+  }
+
+  function eventKey(res, ev) { return res.name + '|' + ev.rule + '|' + ev.label + '|' + res.size; }
+
+  // ---------- alarm ----------
+  var alarmEvents = [];
+  function showAlarm(fresh) {
+    alarmEvents = fresh;
+    var first = fresh[0], more = fresh.length > 1 ? ' 외 ' + (fresh.length - 1) + '건' : '';
+    $('alarmText').textContent = '⚠ 새 이상 ' + fresh.length + '건: ' + first.item + ' — ' + ruleName(first.rule) + ' (' + first.label + ')' + more;
+    var a = $('alarm');
+    a.classList.add('hidden');
+    void a.offsetWidth;  // restart the blink
+    a.classList.remove('hidden');
+    if (settings.sound) beep();
+  }
+  function hideAlarm() { $('alarm').classList.add('hidden'); }
+
+  var audio = null;
+  function beep() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25].forEach(function (t) {
+        var o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = 880;
+        g.gain.value = 0.08;
+        o.connect(g);
+        g.connect(audio.destination);
+        o.start(audio.currentTime + t);
+        o.stop(audio.currentTime + t + 0.15);
+      });
+    } catch (e) { /* no sound device */ }
+  }
+
+  function ruleName(id) {
+    var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
+    if (!r) return id;
+    var n = settings.n[id] || r.n;
+    return r.name + (r.n ? ' (' + n + '점)' : '');
+  }
+  function ruleDesc(id) {
+    var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
+    return r ? r.desc.replace('N점', (settings.n[id] || r.n) + '점') : '';
+  }
+
+  // ---------- rendering ----------
+  function fmt(v) {
+    if (v === null || v === undefined || !isFinite(v)) return '-';
+    var a = Math.abs(v);
+    if (a !== 0 && (a >= 1e6 || a < 1e-3)) return v.toExponential(3);
+    return String(+v.toFixed(a >= 100 ? 2 : a >= 1 ? 4 : 5));
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+  }
+  function opt(value, text, sel) { return '<option value="' + esc(value) + '"' + (sel ? ' selected' : '') + '>' + esc(text) + '</option>'; }
+
+  function renderControls() {
+    var t = table;
+    $('controls').classList.remove('hidden');
+    $('sheetSel').innerHTML = t.sheets.map(function (s) { return opt(s, s, s === t.sheet); }).join('');
+    $('labelSel').innerHTML = opt('', '(행 번호)', !t.label) + t.headers.map(function (h) { return opt(h, h, h === t.label); }).join('');
+    $('itemSel').innerHTML = opt('', '(없음)', !t.item) + t.headers.filter(function (h, i) { return t.kinds[i] === 'text'; }).map(function (h) { return opt(h, h, h === t.item); }).join('');
+    $('valueBox').innerHTML = t.numeric.map(function (h) {
+      return '<label class="chk"><input type="checkbox" value="' + esc(h) + '"' + (t.values.indexOf(h) >= 0 ? ' checked' : '') + '> ' + esc(h) + '</label>';
+    }).join('') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
+    $('sizeIn').value = settings.subgroup;
+    $('baseIn').value = settings.baseline;
+    $('winIn').value = settings.window;
+    var view = $('viewSel').value;
+    $('viewSel').innerHTML = opt('', '전체 항목', !view) + results.map(function (r) { return opt(r.name, r.name, r.name === view); }).join('');
+  }
+
+  function statusOf(res) {
+    var last = res.points.length - 1;
+    var lastFlags = Object.keys(res.flags).filter(function (id) { return res.flags[id].indexOf(last) >= 0; });
+    if (lastFlags.indexOf('OOS') >= 0) return {cls: 'bad', text: '규격 이탈'};
+    if (lastFlags.length || res.rangeFlags.indexOf(last) >= 0) return {cls: 'warn', text: '관리 이탈'};
+    return {cls: 'ok', text: '정상'};
+  }
+
+  function openCount(res) {
+    return res.events.filter(function (ev) { return !(ocapLog[ev.key] && ocapLog[ev.key].done); }).length;
+  }
+
+  function render() {
+    $('empty').classList.add('hidden');
+    renderControls();
+    var view = $('viewSel').value, shown = results.filter(function (r) { return !view || r.name === view; });
+
+    // Summary
+    var s = '<table class="grid"><tr><th>항목</th><th>상태</th><th>점 수</th><th>마지막 값</th><th>평균</th><th>σ(within)</th><th>Cp</th><th>Cpk</th><th>Ppk</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>이상(미조치)</th></tr>';
+    results.forEach(function (r, i) {
+      var st = statusOf(r), L = r.limits, n = r.points.length;
+      var lv = function (k) { return L[k].values && n ? fmt(L[k].values[n - 1]) : '-'; };
+      s += '<tr class="click" data-i="' + i + '"><td>' + esc(r.name) + '</td><td><span class="badge ' + st.cls + '">' + st.text + '</span></td><td>' + n + '</td><td>' + fmt(r.x[n - 1]) +
+        '</td><td>' + fmt(r.stats.mean) + '</td><td>' + fmt(r.stats.sigmaW) + '</td><td>' + fmt(r.stats.cp) + '</td><td>' + fmt(r.stats.cpk) + '</td><td>' + fmt(r.stats.ppk) +
+        '</td><td>' + lv('USL') + '</td><td>' + lv('LSL') + '</td><td>' + lv('UCL') + '</td><td>' + lv('LCL') + '</td><td>' + r.events.length + ' (' + openCount(r) + ')</td></tr>';
+    });
+    s += '</table>';
+    if (!results.length) s = '<p class="muted">차트로 그릴 숫자 열이 없습니다. 첫 줄은 제목, 그 아래에 숫자 데이터가 있는지 확인해 주세요.</p>';
+    $('summary').innerHTML = s;
+    $('summary').classList.remove('hidden');
+
+    // Cards: reuse canvases so live redraws do not flicker.
+    var box = $('cards'), want = shown.map(function (r) { return r.name; });
+    Array.prototype.slice.call(box.children).forEach(function (el) { if (want.indexOf(el.dataset.name) < 0) el.remove(); });
+    shown.forEach(function (r, k) {
+      var card = box.querySelector('[data-name="' + CSS.escape(r.name) + '"]');
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'item-card';
+        card.dataset.name = r.name;
+        card.innerHTML = '<div class="ihead"><b></b><span class="badge"></span><span class="istats"></span><span class="spacer"></span><button class="ghost small lim-btn">한계 설정</button></div>' +
+          '<canvas class="cx"></canvas><div class="isub"><canvas class="cr"></canvas><canvas class="ch"></canvas></div><div class="note"></div>';
+        card.querySelector('.lim-btn').onclick = function () { limitsDialog(card.dataset.name); };
+      }
+      if (box.children[k] !== card) box.insertBefore(card, box.children[k] || null);
+      var st = statusOf(r);
+      card.querySelector('b').textContent = r.name;
+      var b = card.querySelector('.badge');
+      b.className = 'badge ' + st.cls;
+      b.textContent = st.text;
+      card.querySelector('.istats').textContent = (r.size > 1 ? 'Xbar-R (n=' + r.size + ')' : 'I-MR') + ' · 점 ' + r.points.length + ' · 평균 ' + fmt(r.stats.mean) +
+        ' · σ ' + fmt(r.stats.sigmaW) + ' · Cpk ' + fmt(r.stats.cpk) + ' · 이상 ' + r.events.length + '건';
+      var L = r.limits;
+      card.querySelector('.note').textContent = '한계 출처: ' + ROLES.map(function (k2) { return k2 + ' ' + L[k2].source; }).join(' · ') +
+        (r.stats.baseline < r.points.length ? ' · 관리한계는 처음 ' + r.stats.baseline + '점으로 계산' : '');
+      card._res = r;
+    });
+    drawAll();
+    renderEvents();
+  }
+
+  function renderEvents() {
+    var rows = [];
+    results.forEach(function (r) { r.events.forEach(function (ev) { rows.push(ev); }); });
+    rows.reverse();
+    rows.sort(function (a, b) { return (newKeys[b.key] ? 1 : 0) - (newKeys[a.key] ? 1 : 0); });
+    var openOnly = $('openOnly').checked;
+    if (openOnly) rows = rows.filter(function (ev) { return !(ocapLog[ev.key] && ocapLog[ev.key].done); });
+    $('eventsBox').classList.toggle('hidden', !results.length);
+    var h = '<tr><th class="l">항목</th><th class="l">위치 (X축)</th><th>값</th><th class="l">규칙</th><th class="l">OCAP</th><th class="l">상태</th><th class="l">메모</th></tr>';
+    rows.forEach(function (ev) {
+      var log = ocapLog[ev.key] || {};
+      var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
+      h += '<tr class="click' + (newKeys[ev.key] ? ' new' : '') + (log.done ? ' done' : '') + '" data-key="' + esc(ev.key) + '"><td>' + esc(ev.item) + '</td><td class="l">' + esc(where) +
+        '</td><td>' + fmt(ev.value) + '</td><td class="l"><span class="rule ' + ev.rule + '">' + esc(ruleName(ev.rule)) + '</span></td><td class="l">' +
+        esc((settings.ocap[ev.rule] || '').split('\n')[0]) + ' …</td><td class="l">' + (log.done ? '조치 완료' : '<b>미조치</b>') + '</td><td class="l">' + esc(log.note || '') + '</td></tr>';
+    });
+    if (!rows.length) h += '<tr><td colspan="7" class="l muted">' + (openOnly ? '미조치 이상 없음' : '이상 없음') + '</td></tr>';
+    $('events').className = 'grid';
+    $('events').innerHTML = h;
+  }
+
+  // ---------- charts ----------
+  function setup(canvas) {
+    var dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = '11px "Segoe UI", "Malgun Gothic", sans-serif';
+    return {ctx: ctx, w: w, h: h};
+  }
+
+  function niceTicks(lo, hi, count) {
+    var span = hi - lo, step = Math.pow(10, Math.floor(Math.log10(span / count))), err = span / count / step;
+    step *= err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1;
+    var out = [];
+    for (var v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(12));
+    return out;
+  }
+
+  function domain(vals) {
+    var lo = Infinity, hi = -Infinity;
+    vals.forEach(function (v) { if (v !== null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    if (hi - lo < 1e-12) { var d = Math.abs(lo) * 0.05 || 1; lo -= d; hi += d; }
+    var pad2 = (hi - lo) * 0.08;
+    return [lo - pad2, hi + pad2];
+  }
+
+  function frame(g, lo, hi, left, right, top, bottom) {
+    var ctx = g.ctx, ph = g.h - top - bottom;
+    var Y = function (v) { return top + (hi - v) / (hi - lo) * ph; };
+    ctx.strokeStyle = '#eef1f5';
+    ctx.fillStyle = '#6b7486';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    niceTicks(lo, hi, Math.max(2, Math.floor(ph / 40))).forEach(function (t) {
+      ctx.beginPath(); ctx.moveTo(left, Y(t)); ctx.lineTo(g.w - right, Y(t)); ctx.stroke();
+      ctx.fillText(fmt(t), left - 6, Y(t));
+    });
+    ctx.strokeStyle = '#c9d0db';
+    ctx.strokeRect(left, top, g.w - left - right, ph);
+    return Y;
+  }
+
+  // Limit line across the visible points; label at the right end.
+  function limitLine(g, X, Y, vals, from, to, color, dash, label) {
+    if (!vals) return;
+    var ctx = g.ctx;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    for (var i = from; i < to; i++) {
+      var y = Y(vals[i]), x0 = X(i) - (X(1) - X(0)) / 2, x1 = X(i) + (X(1) - X(0)) / 2;
+      if (i === from) ctx.moveTo(x0, y); else ctx.lineTo(x0, y);
+      ctx.lineTo(x1, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+    if (label) {
+      ctx.fillStyle = color;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label + ' ' + fmt(vals[to - 1]), X(to - 1) + (X(1) - X(0)) / 2 + 4, Y(vals[to - 1]));
+    }
+  }
+
+  function xLabels(g, X, labels, from, to, bottom) {
+    var ctx = g.ctx, every = Math.max(1, Math.ceil((to - from) * 90 / Math.max(1, g.w - 150)));
+    ctx.fillStyle = '#6b7486';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (var i = to - 1; i >= from; i -= every) {
+      var s = String(labels[i]);
+      ctx.fillText(s.length > 16 ? s.slice(0, 15) + '…' : s, X(i), g.h - bottom + 6);
+    }
+  }
+
+  function drawControl(canvas, r) {
+    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0;
+    var left = 62, right = 92, top = 10, bottom = 26;
+    var L = r.limits, vis = r.x.slice(from);
+    ROLES.forEach(function (k) { if (L[k].values) vis = vis.concat(L[k].values.slice(from)); });
+    var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom), ctx = g.ctx;
+    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'x'};
+    if (!n) return;
+
+    // ±1σ, ±2σ guide lines from the control limits.
+    if (L.CL.values && L.UCL.values && L.LCL.values) {
+      [1, 2].forEach(function (k) {
+        limitLine(g, X, Y, L.CL.values.map(function (c, i) { return c + (L.UCL.values[i] - c) * k / 3; }), from, n, '#cfd5df', [2, 4]);
+        limitLine(g, X, Y, L.CL.values.map(function (c, i) { return c - (c - L.LCL.values[i]) * k / 3; }), from, n, '#cfd5df', [2, 4]);
+      });
+    }
+    limitLine(g, X, Y, L.USL.values, from, n, '#dc2626', [], 'USL');
+    limitLine(g, X, Y, L.LSL.values, from, n, '#dc2626', [], 'LSL');
+    limitLine(g, X, Y, L.UCL.values, from, n, '#ea580c', [6, 4], 'UCL');
+    limitLine(g, X, Y, L.LCL.values, from, n, '#ea580c', [6, 4], 'LCL');
+    limitLine(g, X, Y, L.CL.values, from, n, '#16a34a', [], 'CL');
+
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (var i = from; i < n; i++) { if (i === from) ctx.moveTo(X(i), Y(r.x[i])); else ctx.lineTo(X(i), Y(r.x[i])); }
+    ctx.stroke();
+    var bad = flagMap(r), rad = step > 7 ? 3.5 : 2.2;
+    for (i = from; i < n; i++) {
+      var f = bad[i];
+      ctx.beginPath();
+      ctx.arc(X(i), Y(r.x[i]), f ? rad + 1.5 : rad, 0, Math.PI * 2);
+      ctx.fillStyle = !f ? '#2563eb' : (f.indexOf('OOS') >= 0 ? '#dc2626' : '#f59e0b');
+      ctx.fill();
+      if (f) { ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = 1; ctx.stroke(); }
+    }
+    xLabels(g, X, r.points.map(function (p) { return p.label; }), from, n, bottom);
+  }
+
+  function flagMap(r) {
+    var m = {};
+    Object.keys(r.flags).forEach(function (id) { r.flags[id].forEach(function (i) { (m[i] = m[i] || []).push(id); }); });
+    return m;
+  }
+
+  function drawRange(canvas, r) {
+    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, R = r.range;
+    var left = 62, right = 92, top = 16, bottom = 8, ctx = g.ctx;
+    var dm = domain(R.values.slice(from).concat([R.ucl, R.lcl, R.cl]));
+    var Y = frame(g, Math.max(dm[0], R.lcl - (dm[1] - dm[0]) * 0.05), dm[1], left, right, top, bottom);
+    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    ctx.fillStyle = '#334155';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(R.name + ' 차트', left, 1);
+    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'r'};
+    if (!n || !isFinite(R.cl)) return;
+    var c = function (v) { var a = []; for (var i = 0; i < n; i++) a.push(v); return a; };
+    limitLine(g, X, Y, c(R.ucl), from, n, '#ea580c', [6, 4], 'UCL');
+    if (R.lcl > 0) limitLine(g, X, Y, c(R.lcl), from, n, '#ea580c', [6, 4], 'LCL');
+    limitLine(g, X, Y, c(R.cl), from, n, '#16a34a', [], R.name + '̄');
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    var started = false;
+    for (var i = from; i < n; i++) {
+      if (R.values[i] === null) continue;
+      if (!started) { ctx.moveTo(X(i), Y(R.values[i])); started = true; } else ctx.lineTo(X(i), Y(R.values[i]));
+    }
+    ctx.stroke();
+    for (i = from; i < n; i++) {
+      if (R.values[i] === null) continue;
+      var out = r.rangeFlags.indexOf(i) >= 0;
+      ctx.beginPath();
+      ctx.arc(X(i), Y(R.values[i]), out ? 3.5 : 2, 0, Math.PI * 2);
+      ctx.fillStyle = out ? '#f59e0b' : '#64748b';
+      ctx.fill();
+    }
+  }
+
+  function drawHist(canvas, r) {
+    var g = setup(canvas), ctx = g.ctx, all = [];
+    r.points.forEach(function (p) { all.push.apply(all, p.raw); });
+    canvas._hit = null;
+    ctx.fillStyle = '#334155';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('분포', 8, 1);
+    if (all.length < 2) return;
+    var n = r.points.length, L = r.limits, lim = function (k) { return L[k].values ? L[k].values[n - 1] : null; };
+    var dm = domain(all.concat([lim('USL'), lim('LSL')]));
+    var bins = Math.max(5, Math.min(30, Math.ceil(Math.log2(all.length)) + 1)), counts = new Array(bins).fill(0);
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), bw = (hi - lo) / bins || 1;
+    all.forEach(function (v) { counts[Math.min(bins - 1, Math.floor((v - lo) / bw))]++; });
+    var left = 8, right = 8, top = 16, bottom = 18, pw = g.w - left - right, ph = g.h - top - bottom;
+    var X = function (v) { return left + (v - dm[0]) / (dm[1] - dm[0]) * pw; };
+    var max = Math.max.apply(null, counts), m = r.stats.mean, s = r.stats.sd;
+    var peak = s > 0 ? all.length * bw / (s * Math.sqrt(2 * Math.PI)) : 0;
+    var H = function (c) { return top + ph - c / Math.max(max, peak) * ph; };
+    ctx.fillStyle = '#bfd3fb';
+    ctx.strokeStyle = '#7aa2f0';
+    for (var b = 0; b < bins; b++) {
+      var x0 = X(lo + b * bw), x1 = X(lo + (b + 1) * bw);
+      ctx.fillRect(x0, H(counts[b]), Math.max(1, x1 - x0 - 1), top + ph - H(counts[b]));
+    }
+    if (s > 0) {
+      ctx.strokeStyle = '#1e3a8a';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (var k = 0; k <= 80; k++) {
+        var v = dm[0] + (dm[1] - dm[0]) * k / 80, y = H(peak * Math.exp(-0.5 * Math.pow((v - m) / s, 2)));
+        if (k) ctx.lineTo(X(v), y); else ctx.moveTo(X(v), y);
+      }
+      ctx.stroke();
+    }
+    [['LSL', '#dc2626'], ['USL', '#dc2626'], ['CL', '#16a34a']].forEach(function (p) {
+      var v = lim(p[0]);
+      if (v === null || !isFinite(v)) return;
+      ctx.strokeStyle = p[1];
+      ctx.beginPath(); ctx.moveTo(X(v), top); ctx.lineTo(X(v), top + ph); ctx.stroke();
+      ctx.fillStyle = p[1];
+      ctx.textAlign = 'center';
+      ctx.fillText(p[0], X(v), top + ph + 3);
+    });
+  }
+
+  function drawAll() {
+    Array.prototype.forEach.call($('cards').children, function (card) {
+      var r = card._res;
+      if (!r) return;
+      drawControl(card.querySelector('.cx'), r);
+      drawRange(card.querySelector('.cr'), r);
+      drawHist(card.querySelector('.ch'), r);
+    });
+  }
+
+  var redrawQueued = false;
+  new ResizeObserver(function () {
+    if (redrawQueued) return;
+    redrawQueued = true;
+    requestAnimationFrame(function () { redrawQueued = false; drawAll(); });
+  }).observe($('cards'));
+
+  // Tooltip: nearest point under the mouse.
+  $('cards').addEventListener('mousemove', function (e) {
+    var c = e.target, hit = c && c._hit, tip = $('tip');
+    if (!hit || hit.to <= hit.from) { tip.classList.add('hidden'); return; }
+    var rect = c.getBoundingClientRect(), mx = e.clientX - rect.left;
+    var step = hit.X(1) - hit.X(0), i = Math.round((mx - hit.X(hit.from)) / step) + hit.from;
+    if (i < hit.from || i >= hit.to) { tip.classList.add('hidden'); return; }
+    var r = hit.res, p = r.points[i], L = r.limits, lines = [p.label];
+    if (hit.kind === 'x') {
+      lines.push((r.size > 1 ? '평균 ' : '값 ') + fmt(p.value) + (r.size > 1 ? '  (' + p.raw.map(fmt).join(', ') + ')' : ''));
+      ROLES.forEach(function (k) { if (L[k].values) lines.push(k + ' ' + fmt(L[k].values[i])); });
+      var f = flagMap(r)[i];
+      if (f) lines.push('⚠ ' + f.map(ruleName).join(', '));
+      lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행');
+    } else {
+      lines.push(r.range.name + ' ' + fmt(r.range.values[i]));
+      if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ ' + r.range.name + ' 관리한계 이탈');
+    }
+    tip.textContent = lines.join('\n');
+    tip.classList.remove('hidden');
+    tip.style.left = Math.min(window.innerWidth - 330, e.clientX + 14) + 'px';
+    tip.style.top = (e.clientY + 14) + 'px';
+  });
+  $('cards').addEventListener('mouseleave', function () { $('tip').classList.add('hidden'); });
+
+  // ---------- dialogs ----------
+  function modal(html, bind) {
+    $('modal').innerHTML = html;
+    $('modalBack').classList.remove('hidden');
+    bind($('modal'));
+  }
+  function closeModal() { $('modalBack').classList.add('hidden'); }
+  $('modalBack').addEventListener('mousedown', function (e) { if (e.target === $('modalBack')) closeModal(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+
+  function settingsDialog() {
+    var h = '<h3>판정 규칙 · OCAP 설정</h3><div class="row"><label>자동 새로고침 간격 <input id="dPoll" type="number" min="1" max="600" value="' + settings.pollSec + '"> 초</label>' +
+      '<label class="chk"><input type="checkbox" id="dSound"' + (settings.sound ? ' checked' : '') + '> 새 이상이 생기면 소리</label></div>';
+    SPC.RULES.forEach(function (r) {
+      h += '<div class="ruleset"><div class="row"><label class="chk"><input type="checkbox" data-rule="' + r.id + '"' + (settings.rules[r.id] ? ' checked' : '') + '> <b>' + esc(r.name) + '</b></label>' +
+        (r.n ? '<label><input type="number" min="2" max="50" data-n="' + r.id + '" value="' + (settings.n[r.id] || r.n) + '"> 점</label>' : '') +
+        '<span class="muted">' + esc(r.desc) + '</span></div><textarea data-ocap="' + r.id + '" placeholder="이 규칙에 걸리면 할 조치 (OCAP)">' + esc(settings.ocap[r.id] || '') + '</textarea></div>';
+    });
+    h += '<div class="buttons"><button class="ghost" id="dReset">기본값으로</button><span class="spacer"></span><button class="ghost" id="dCancel">취소</button><button class="primary" id="dOk">저장</button></div>';
+    modal(h, function (m) {
+      m.querySelector('#dCancel').onclick = closeModal;
+      m.querySelector('#dReset').onclick = function () {
+        settings.rules = Object.assign({}, SPC.DEFAULT_ON);
+        settings.n = {};
+        settings.ocap = Object.assign({}, DEFAULT_OCAP);
+        settings.pollSec = 2;
+        save();
+        settingsDialog();
+      };
+      m.querySelector('#dOk').onclick = function () {
+        settings.pollSec = Math.max(1, +m.querySelector('#dPoll').value || 2);
+        settings.sound = m.querySelector('#dSound').checked;
+        m.querySelectorAll('[data-rule]').forEach(function (c) { settings.rules[c.dataset.rule] = c.checked; });
+        m.querySelectorAll('[data-n]').forEach(function (c) { var v = +c.value | 0; if (v >= 2) settings.n[c.dataset.n] = v; });
+        m.querySelectorAll('[data-ocap]').forEach(function (c) { settings.ocap[c.dataset.ocap] = c.value; });
+        save();
+        closeModal();
+        schedule();
+        recompute();
+      };
+    });
+  }
+
+  function limitsDialog(name) {
+    var r = results.filter(function (x) { return x.name === name; })[0];
+    if (!r) return;
+    var man = settings.manual[name] || {}, n = r.points.length;
+    var h = '<h3>한계 설정 — ' + esc(name) + '</h3><p class="muted">비워 두면 엑셀 열 값 또는 계산값을 씁니다. 숫자를 넣으면 그 값으로 고정합니다.</p><div class="lim">';
+    ROLES.forEach(function (k) {
+      var L = r.limits[k], cur = L.values && n ? fmt(L.values[n - 1]) : '-';
+      h += '<b>' + k + '</b><input data-k="' + k + '" value="' + (man[k] !== undefined ? man[k] : '') + '" placeholder="' + esc(cur) + '"><span class="muted">지금 ' + esc(cur) + ' (' + esc(L.source) + ')</span>';
+    });
+    h += '</div><div class="buttons"><button class="ghost" id="dCancel">취소</button><button class="primary" id="dOk">적용</button></div>';
+    modal(h, function (m) {
+      m.querySelector('#dCancel').onclick = closeModal;
+      m.querySelector('#dOk').onclick = function () {
+        var v = {};
+        m.querySelectorAll('[data-k]').forEach(function (c) { var x = toNum(c.value); if (x !== null) v[c.dataset.k] = x; });
+        if (Object.keys(v).length) settings.manual[name] = v; else delete settings.manual[name];
+        save();
+        closeModal();
+        recompute();
+      };
+    });
+  }
+
+  function ocapDialog(key) {
+    var ev = null;
+    results.forEach(function (r) { r.events.forEach(function (e) { if (e.key === key) ev = e; }); });
+    if (!ev) return;
+    var log = ocapLog[key] || {};
+    var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
+    var h = '<h3>OCAP — ' + esc(ev.item) + '</h3><div class="row"><span class="rule ' + ev.rule + '">' + esc(ruleName(ev.rule)) + '</span><span class="muted">' + esc(ruleDesc(ev.rule)) + '</span></div>' +
+      '<div class="row">위치: <b>' + esc(where) + '</b> · 값 <b>' + fmt(ev.value) + '</b></div><div class="steps">' + esc(settings.ocap[ev.rule] || '(조치 내용 없음: [규칙 · OCAP 설정]에서 입력)') + '</div>' +
+      '<div class="row"><label class="chk"><input type="checkbox" id="dDone"' + (log.done ? ' checked' : '') + '> 조치 완료</label>' + (log.at ? '<span class="muted small">기록 ' + esc(log.at) + '</span>' : '') + '</div>' +
+      '<textarea id="dNote" placeholder="조치 내용 메모 (이 PC의 브라우저에만 저장)">' + esc(log.note || '') + '</textarea>' +
+      '<div class="buttons"><button class="ghost" id="dCancel">닫기</button><button class="primary" id="dOk">저장</button></div>';
+    modal(h, function (m) {
+      m.querySelector('#dCancel').onclick = closeModal;
+      m.querySelector('#dOk').onclick = function () {
+        var d = new Date();
+        ocapLog[key] = {done: m.querySelector('#dDone').checked, note: m.querySelector('#dNote').value, at: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + stamp()};
+        delete newKeys[key];
+        save();
+        closeModal();
+        render();
+      };
+    });
+  }
+
+  function recompute() {
+    if (!table) return;
+    analyzeAll();
+    render();
+  }
+
+  // ---------- recent file (handle kept in IndexedDB; Edge asks again for permission) ----------
+  function idb(mode, fn) {
+    return new Promise(function (resolve) {
+      try {
+        var req = indexedDB.open('spc-chart', 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore('kv'); };
+        req.onsuccess = function () {
+          var tx = req.result.transaction('kv', mode), st = tx.objectStore('kv'), out = fn(st);
+          tx.oncomplete = function () { resolve(out && out.result); };
+          tx.onerror = tx.onabort = function () { resolve(null); };
+        };
+        req.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+  function rememberHandle(h) { idb('readwrite', function (st) { st.put(h, 'recent'); }); }
+
+  idb('readonly', function (st) { return st.get('recent'); }).then(function (h) {
+    if (!h || source) return;
+    $('recentBtn').textContent = '최근 파일 다시 열기: ' + h.name;
+    $('recentBtn').classList.remove('hidden');
+    $('recentBtn').onclick = async function () {
+      try {
+        if ((await h.queryPermission({mode: 'read'})) !== 'granted' && (await h.requestPermission({mode: 'read'})) !== 'granted') return;
+        $('recentBtn').classList.add('hidden');
+        useHandle(h);
+      } catch (e) {
+        setStatus('최근 파일을 열 수 없습니다: ' + e.message + ' · [엑셀 열기]로 다시 고르세요', 'err');
+      }
+    };
+  });
+
+  // ---------- demo: two items, a point added every few seconds ----------
+  function demoSource() {
+    var t0 = new Date(2026, 9, 1, 8, 0), rows = [['날짜', '항목', '측정값', 'USL', 'LSL']], seed = 7, k = 0;
+    function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    function gauss() { return Math.sqrt(-2 * Math.log(rnd() || 1e-9)) * Math.cos(2 * Math.PI * rnd()); }
+    function add() {
+      var d = new Date(t0.getTime() + k * 3600000), shift = k > 45 && k < 56 ? 0.12 : 0;
+      rows.push([d, '두께', +(10 + shift + gauss() * 0.08).toFixed(3), 10.4, 9.6]);
+      rows.push([d, '폭', +(25 + gauss() * 0.15 + (k === 30 ? 0.9 : 0)).toFixed(3), 25.8, 24.2]);
+      k++;
+    }
+    for (var i = 0; i < 40; i++) add();
+    return {
+      tick: function () { if (k < 400) add(); return k; },
+      book: function () { return [{name: '예제', rows: rows.slice()}]; }
+    };
+  }
+
+  // ---------- events ----------
+  $('openBtn').onclick = openPicked;
+  $('fileIn').onchange = function () {
+    var f = $('fileIn').files[0];
+    if (!f) return;
+    source = {name: f.name, kind: 'file', file: f};
+    startSource();
+    $('fileIn').value = '';
+  };
+  $('reloadBtn').onclick = function () { refresh(true); };
+  $('liveChk').onchange = schedule;
+  $('demoBtn').onclick = function () {
+    settings.sheet = '예제';
+    settings.cols = {};
+    source = {name: '예제 데이터 (실시간 흉내: 몇 초마다 1점 추가)', kind: 'demo', demo: demoSource()};
+    startSource();
+  };
+  $('settingsBtn').onclick = settingsDialog;
+  $('alarmClose').onclick = hideAlarm;
+  $('alarmOcap').onclick = function () { hideAlarm(); if (alarmEvents[0]) ocapDialog(alarmEvents[0].key); };
+  $('openOnly').onchange = renderEvents;
+  $('events').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-key]');
+    if (tr) ocapDialog(tr.dataset.key);
+  });
+  $('summary').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-i]');
+    if (!tr) return;
+    var name = results[+tr.dataset.i].name, card = $('cards').querySelector('[data-name="' + CSS.escape(name) + '"]');
+    if (card) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  });
+
+  function onColumns() {
+    var vals = Array.prototype.map.call($('valueBox').querySelectorAll('input:checked'), function (c) { return c.value; });
+    settings.cols = {label: $('labelSel').value, item: $('itemSel').value, values: vals, sig: table.numeric.join('|')};
+    buildTable();
+    recompute();
+  }
+  $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; buildTable(); recompute(); };
+  $('labelSel').onchange = onColumns;
+  $('itemSel').onchange = onColumns;
+  $('valueBox').onchange = onColumns;
+  $('sizeIn').onchange = function () { settings.subgroup = Math.max(1, Math.min(25, +$('sizeIn').value | 0 || 1)); save(); recompute(); };
+  $('baseIn').onchange = function () { settings.baseline = Math.max(0, +$('baseIn').value | 0); save(); recompute(); };
+  $('winIn').onchange = function () { settings.window = Math.max(0, +$('winIn').value | 0); save(); render(); };
+  $('viewSel').onchange = render;
+
+  $('csvBtn').onclick = function () {
+    var lines = [['항목', '시작', '끝', '값', '규칙', '상태', '메모', '기록 시각']];
+    results.forEach(function (r) {
+      r.events.forEach(function (ev) {
+        var log = ocapLog[ev.key] || {};
+        lines.push([ev.item, ev.label, ev.endLabel, fmt(ev.value), ruleName(ev.rule), log.done ? '조치 완료' : '미조치', log.note || '', log.at || '']);
+      });
+    });
+    var csv = '﻿' + lines.map(function (l) { return l.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\r\n');
+    var a = document.createElement('a'), d = new Date();
+    a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+    a.download = 'SPC_이상목록_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  };
+
+  // Drag a file from Explorer onto the page (Edge gives a live handle, so refresh still works).
+  document.addEventListener('dragover', function (e) { e.preventDefault(); });
+  document.addEventListener('drop', async function (e) {
+    e.preventDefault();
+    var item = e.dataTransfer.items && e.dataTransfer.items[0];
+    if (item && item.getAsFileSystemHandle) {
+      var h = await item.getAsFileSystemHandle();
+      if (h && h.kind === 'file') { useHandle(h); return; }
+    }
+    var f = e.dataTransfer.files[0];
+    if (f) { source = {name: f.name, kind: 'file', file: f}; startSource(); }
+  });
+
+  // For tests: open a file handle without the picker.
+  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings};
+})();
