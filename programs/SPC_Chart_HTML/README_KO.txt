@@ -1,11 +1,13 @@
-SPC Chart HTML v2 (엑셀 데이터 → 실시간 SPC 관리도, Edge에서 바로 실행)
+SPC Chart HTML v3 (엑셀 데이터 → 실시간 SPC 관리도, Edge에서 바로 실행)
 
 무엇인가
-- SPC_Chart_HTML_v2.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
+- SPC_Chart_HTML_v3.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
 - 엑셀 시트(.xlsx / .xlsm / .csv)를 고르면 측정값을 관리도로 그리고,
   엑셀에서 값을 고쳐 저장(Ctrl+S)하면 몇 초 안에 차트가 저절로 바뀝니다 (기본 2초마다 파일 확인).
-- 차트: I-MR (subgroup 1) 또는 Xbar-R (subgroup 2~25), 분포(히스토그램 + 정규분포 곡선).
+- 차트: I-MR (subgroup 1) 또는 Xbar-R (subgroup 2~25), 히스토그램.
 - 선: USL/LSL(빨강 실선), UCL/LCL(주황 점선), CL(초록), ±1σ·±2σ(회색 점선).
+- SPC 시스템 양식이면 SPC 시스템 화면처럼 XBAR 차트 + SIGMA 차트 (아래 "SPC 시스템 양식" 참고).
+- 히스토그램: 막대 위에 도수(개수), 정규분포 곡선, 규격(USL/LSL, 빨강), 평균 ± 3σ(보라 점선, σ = 전체 표준편차).
 - 통계: 평균, σ(within), Cp, Cpk, Ppk.
 
 보안
@@ -15,7 +17,7 @@ SPC Chart HTML v2 (엑셀 데이터 → 실시간 SPC 관리도, Edge에서 바�
 - xlsx 압축 풀기용 pako(MIT) 코드를 파일 안에 넣었습니다 (외부에서 불러오지 않음).
 
 사용 순서
-1. SPC_Chart_HTML_v2.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터로 화면을 미리 볼 수 있습니다
+1. SPC_Chart_HTML_v3.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터로 화면을 미리 볼 수 있습니다
    (예제는 몇 초마다 1점씩 늘어나 실시간 갱신을 흉내 냅니다).
 2. [엑셀 열기] → 엑셀 파일 선택. Edge가 파일 보기를 물으면 [허용]. 파일을 창에 끌어 놓아도 됩니다.
 3. 엑셀에서 데이터를 고치거나 줄을 추가하고 저장하면 차트가 바뀝니다.
@@ -34,8 +36,11 @@ SPC Chart HTML v2 (엑셀 데이터 → 실시간 SPC 관리도, Edge에서 바�
 - X축: 제목이 날짜, 일자, 시간, Lot, Wafer 등인 열 (또는 첫 글자 열). [X축]에서 바꿀 수 있습니다.
 - 수식 칸은 엑셀이 저장한 계산 결과 값을 읽습니다.
 - SPC 시스템에서 내려받은 양식(한 줄 = 한 Lot, EXT_MV · EXT_MV_UCL · EXT_MV_CENTER · EXT_MV_LCL · USL · LSL · LOT_ID …)은
-  자동으로 알아봅니다 (위쪽에 "SPC 시스템 양식" 표시): EXT_MV를 차트로, UCL/CL/LCL은 EXT_MV_UCL/CENTER/LCL 열,
-  USL/LSL은 그 열, X축은 LOT_ID, 항목은 Item 열. 다른 숫자 열(EXT_SIGMA, CPK, VALUE_1 …)은 위쪽 체크로 더 그릴 수 있습니다.
+  자동으로 알아봅니다 (위쪽에 "SPC 시스템 양식" 표시). 항목은 Item 열.
+  · XBAR 차트: EXT_MV. 선은 UCL/LCL(EXT_MV_UCL/LCL 열)만 그립니다 (USL/LSL/CL 선 없음, 판정에는 USL/LSL/EXT_MV_CENTER를 씀).
+  · SIGMA 차트: XBAR 바로 아래에 EXT_SIGMA, 선은 EXT_SIGMA_UCL/LCL. 한계를 벗어난 점은 주황 (OCAP · 7run 노란 행 대상은 아님).
+  · X축: 날짜 · 시간 (TRAN_TIME, 없으면 수정일시, 없으면 LOT_ID). 날짜 아래에 시각을 두 줄로 씁니다. LOT_ID는 점에 마우스를 올리면 보입니다.
+  · 다른 숫자 열(CPK, VALUE_1 …)은 위쪽 체크로 더 그릴 수 있습니다 (그 열은 보통 관리도로 그림).
 - 확장자가 .xls/.xlsx여도 속이 HTML 표인 파일(일부 시스템이 이렇게 내려받음)도 읽습니다.
 - .xls(옛 형식)는 못 읽습니다. 엑셀에서 .xlsx로 저장해 주세요.
 
@@ -64,7 +69,7 @@ OCAP (Out of Control Action Plan)
 - 규칙별 조치 내용은 [규칙 · OCAP 설정]에서 회사 기준에 맞게 고쳐 쓰세요 (처음 내용은 일반적인 예시).
 - [CSV로 저장]: 이상 목록과 조치 상태를 CSV로 내려받습니다.
 
-데이터 표 · 추천값 · 수정본 저장 (v2)
+데이터 표 · 추천값 · 수정본 저장 (v2부터)
 - 차트 아래에 엑셀 데이터가 그대로 표로 나옵니다 (맨 앞: 엑셀 행 번호, 판정, 차트로 그린 값 열. 그 뒤는 엑셀 열 순서 그대로).
 - OCAP(규격 이탈 · 관리한계 이탈)와 7run(Run: 7점 연속 중심선 한쪽, Trend: 7점 연속 상승 · 하강)이 나온 행은 노란색입니다.
   [노란 행만]을 켜면 그 행만 봅니다. 규칙의 점 수와 켜기 · 끄기는 [규칙 · OCAP 설정]을 따릅니다.

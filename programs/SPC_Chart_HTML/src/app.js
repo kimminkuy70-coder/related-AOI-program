@@ -13,9 +13,11 @@
     LCL: ['extmvlcl', 'lcl', '관리하한', '하한관리', 'lowercontrol'],
     CL: ['extmvcenter', 'cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
   };
-  // SPC system export (one row per lot: EXT_MV with EXT_MV_UCL/CENTER/LCL, USL/LSL, LOT_ID, VALUE_1..25):
-  // chart EXT_MV only, X axis LOT_ID.
-  var SPC_FORMAT = {value: 'extmv', needs: 'extmvucl', label: ['lotid', 'trantime']};
+  // SPC system export (one row per lot: EXT_MV with EXT_MV_UCL/CENTER/LCL, EXT_SIGMA with EXT_SIGMA_UCL/CENTER/LCL,
+  // USL/LSL, LOT_ID, TRAN_TIME, VALUE_1..25): drawn like the SPC system, an XBAR chart (EXT_MV, UCL/LCL lines only)
+  // over a SIGMA chart (EXT_SIGMA), X axis date and time.
+  var SPC_FORMAT = {value: 'extmv', needs: 'extmvucl', label: ['trantime', '수정일시', 'lotid'], lot: 'lotid',
+    sigma: {value: 'extsigma', UCL: 'extsigmaucl', LCL: 'extsigmalcl', CL: 'extsigmacenter'}};
   var ITEM_WORDS = ['item', '항목', '측정항목', 'parameter', 'param', '파라미터', 'para'];
   var LABEL_WORDS = ['date', 'time', 'datetime', '날짜', '일자', '시간', '일시', '측정일', '측정시간', 'lot', 'lotid', 'wafer', 'waferid', 'no', '번호', 'sample', '시료'];
   var DEFAULT_OCAP = {
@@ -237,8 +239,9 @@
     var has = function (n) { return headers.indexOf(n) >= 0; };
     var roleCols = ROLES.map(function (r) { return roles[r]; });
     var item = cols.item === '' || has(cols.item) ? cols.item : headers.filter(function (n, i) { return kinds[i] === 'text' && ITEM_WORDS.indexOf(norm(n)) >= 0; })[0] || '';
-    var label = cols.label === '' || has(cols.label) ? cols.label
-      : (spcForm && headers.filter(function (n, i) { return kinds[i] !== 'empty' && SPC_FORMAT.label.indexOf(norm(n)) >= 0; })[0])
+    // A label picked in [X축] stays; otherwise it is chosen again (v2 saved LOT_ID for the SPC system format).
+    var label = cols.labelPicked && (cols.label === '' || has(cols.label)) ? cols.label
+      : (spcForm && SPC_FORMAT.label.map(function (w) { var i = normed.indexOf(w); return i >= 0 && kinds[i] !== 'empty' ? headers[i] : ''; }).filter(Boolean)[0])
       || headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
       || headers.filter(function (n, i) { return n !== item && kinds[i] === 'text'; })[0] || '';
     var numeric = headers.filter(function (n, i) { return kinds[i] === 'num' && roleCols.indexOf(n) < 0 && n !== label && n !== item; });
@@ -249,7 +252,7 @@
     table.numeric = numeric;
     table.values = values;
     settings.sheet = table.sheet;
-    settings.cols = {label: label, item: item, values: values, sig: numeric.join('|')};
+    settings.cols = {label: label, labelPicked: !!cols.labelPicked, item: item, values: values, sig: numeric.join('|')};
     save();
 
     // An edit stays only while the file still has the value it replaced (the file may have been saved meanwhile).
@@ -301,7 +304,19 @@
         });
         var vals = rows.map(function (d) { return toNum(cell(d, vi, withEdits)); });
         if (!vals.some(function (v) { return v !== null; })) return;
+        var sigma = null, lots = null;
+        if (t.spcForm && norm(vn) === SPC_FORMAT.value) {
+          var col = function (w) {
+            var i = t.headers.map(norm).indexOf(w);
+            return i < 0 ? null : rows.map(function (d) { return toNum(d.cells[i]); });
+          };
+          sigma = {values: col(SPC_FORMAT.sigma.value), UCL: col(SPC_FORMAT.sigma.UCL), LCL: col(SPC_FORMAT.sigma.LCL), CL: col(SPC_FORMAT.sigma.CL)};
+          if (!sigma.values || !sigma.values.some(function (v) { return v !== null; })) sigma = null;
+          var lt = t.headers.map(norm).indexOf(SPC_FORMAT.lot);
+          if (lt >= 0) lots = rows.map(function (d) { return cellText(d.cells[lt]); });
+        }
         list.push({
+          spcForm: !!t.spcForm, sigma: sigma, lots: lots,
           name: name, values: vals, cols: cols, col: vi, excelRows: rows.map(function (d) { return d.excelRow; }),
           labels: rows.map(function (d) { return li >= 0 ? fmtLabel(d.cells[li], d.excelRow) : d.excelRow + '행'; })
         });
@@ -339,6 +354,9 @@
         var res = SPC.analyze(it, optsFor(it.name));
         res.excelRows = it.excelRows;
         res.col = it.col;
+        res.spcForm = it.spcForm;
+        res.lots = it.lots;
+        if (it.sigma && res.size === 1) sigmaChart(res, it.sigma);
         return res;
       });
     };
@@ -361,6 +379,18 @@
       showAlarm(fresh);
     }
     seen = keys;
+  }
+
+  // SIGMA chart of the SPC system format: EXT_SIGMA per point with its own UCL/LCL columns. A point outside
+  // them is marked like an MR point outside its limits (status badge only; not an OCAP / 7 run row).
+  function sigmaChart(res, sig) {
+    var at = function (a) { return a ? SPC.fillColumn(res.points.map(function (p) { return a[p.row]; })) : null; };
+    var s = {name: 'SIGMA', values: res.points.map(function (p) { return sig.values[p.row]; }), ucl: at(sig.UCL), lcl: at(sig.LCL), cl: at(sig.CL)};
+    res.sigma = s;
+    res.rangeFlags = [];
+    s.values.forEach(function (v, i) {
+      if (v !== null && ((s.ucl && v > s.ucl[i] + 1e-12) || (s.lcl && v < s.lcl[i] - 1e-12))) res.rangeFlags.push(i);
+    });
   }
 
   function eventKey(res, ev) { return res.name + '|' + ev.rule + '|' + ev.label + '|' + res.size; }
@@ -479,12 +509,13 @@
         card.querySelector('.lim-btn').onclick = function () { limitsDialog(card.dataset.name); };
       }
       if (box.children[k] !== card) box.insertBefore(card, box.children[k] || null);
+      card.classList.toggle('spc', !!r.sigma);
       var st = statusOf(r);
       card.querySelector('b').textContent = r.name;
       var b = card.querySelector('.badge');
       b.className = 'badge ' + st.cls;
       b.textContent = st.text;
-      card.querySelector('.istats').textContent = (r.size > 1 ? 'Xbar-R (n=' + r.size + ')' : 'I-MR') + ' · 점 ' + r.points.length + ' · 평균 ' + fmt(r.stats.mean) +
+      card.querySelector('.istats').textContent = (r.sigma ? 'XBAR · SIGMA' : r.size > 1 ? 'Xbar-R (n=' + r.size + ')' : 'I-MR') + ' · 점 ' + r.points.length + ' · 평균 ' + fmt(r.stats.mean) +
         ' · σ ' + fmt(r.stats.sigmaW) + ' · Cpk ' + fmt(r.stats.cpk) + ' · 이상 ' + r.events.length + '건';
       var L = r.limits;
       card.querySelector('.note').textContent = '한계 출처: ' + ROLES.map(function (k2) { return k2 + ' ' + L[k2].source; }).join(' · ') +
@@ -759,39 +790,71 @@
     }
   }
 
+  // "2026-07-01 02:06:02" -> ['2026-07-01', '02:06'] (date over time on the X axis), else null
+  var DATE_TIME = /^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})(:\d{2})?/;
+  function dateTime(label) {
+    var m = DATE_TIME.exec(String(label));
+    return m ? [m[1], m[2]] : null;
+  }
+  function twoLine(labels, from, to) {
+    for (var i = from; i < to; i++) if (dateTime(labels[i])) return true;
+    return false;
+  }
+
   function xLabels(g, X, labels, from, to, bottom) {
     var ctx = g.ctx, every = Math.max(1, Math.ceil((to - from) * 90 / Math.max(1, g.w - 150)));
     ctx.fillStyle = '#6b7486';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     for (var i = to - 1; i >= from; i -= every) {
-      var s = String(labels[i]);
-      ctx.fillText(s.length > 16 ? s.slice(0, 15) + '…' : s, X(i), g.h - bottom + 6);
+      var s = String(labels[i]), dt = dateTime(s);
+      if (dt) {
+        ctx.fillText(dt[0], X(i), g.h - bottom + 5);
+        ctx.fillText(dt[1], X(i), g.h - bottom + 18);
+      } else {
+        ctx.fillText(s.length > 16 ? s.slice(0, 15) + '…' : s, X(i), g.h - bottom + 6);
+      }
     }
+  }
+
+  function chartTitle(g, text, left) {
+    g.ctx.fillStyle = '#334155';
+    g.ctx.textAlign = 'left';
+    g.ctx.textBaseline = 'top';
+    g.ctx.fillText(text, left, 1);
   }
 
   function drawControl(canvas, r) {
     var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0;
-    var left = 62, right = 92, top = 10, bottom = 26;
+    var labels = r.points.map(function (p) { return p.label; });
+    // SPC system format: an XBAR chart with the UCL/LCL lines only, as the SPC system draws it.
+    var lines = r.spcForm ? ['UCL', 'LCL'] : ROLES;
+    var left = 62, right = 92, top = r.spcForm ? 18 : 10, bottom = twoLine(labels, from, n) ? 36 : 26;
     var L = r.limits, vis = r.x.slice(from);
-    ROLES.forEach(function (k) { if (L[k].values) vis = vis.concat(L[k].values.slice(from)); });
+    lines.forEach(function (k) { if (L[k].values) vis = vis.concat(L[k].values.slice(from)); });
     var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom), ctx = g.ctx;
     var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
     canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'x'};
+    if (r.spcForm) chartTitle(g, r.size > 1 ? 'XBAR 차트 (n=' + r.size + ')' : 'XBAR 차트', left);
     if (!n) return;
 
-    // ±1σ, ±2σ guide lines from the control limits.
-    if (L.CL.values && L.UCL.values && L.LCL.values) {
+    if (r.spcForm) {
+      limitLine(g, X, Y, L.UCL.values, from, n, '#ea580c', [6, 4], 'UCL');
+      limitLine(g, X, Y, L.LCL.values, from, n, '#ea580c', [6, 4], 'LCL');
+    } else if (L.CL.values && L.UCL.values && L.LCL.values) {
+      // ±1σ, ±2σ guide lines from the control limits.
       [1, 2].forEach(function (k) {
         limitLine(g, X, Y, L.CL.values.map(function (c, i) { return c + (L.UCL.values[i] - c) * k / 3; }), from, n, '#cfd5df', [2, 4]);
         limitLine(g, X, Y, L.CL.values.map(function (c, i) { return c - (c - L.LCL.values[i]) * k / 3; }), from, n, '#cfd5df', [2, 4]);
       });
     }
-    limitLine(g, X, Y, L.USL.values, from, n, '#dc2626', [], 'USL');
-    limitLine(g, X, Y, L.LSL.values, from, n, '#dc2626', [], 'LSL');
-    limitLine(g, X, Y, L.UCL.values, from, n, '#ea580c', [6, 4], 'UCL');
-    limitLine(g, X, Y, L.LCL.values, from, n, '#ea580c', [6, 4], 'LCL');
-    limitLine(g, X, Y, L.CL.values, from, n, '#16a34a', [], 'CL');
+    if (!r.spcForm) {
+      limitLine(g, X, Y, L.USL.values, from, n, '#dc2626', [], 'USL');
+      limitLine(g, X, Y, L.LSL.values, from, n, '#dc2626', [], 'LSL');
+      limitLine(g, X, Y, L.UCL.values, from, n, '#ea580c', [6, 4], 'UCL');
+      limitLine(g, X, Y, L.LCL.values, from, n, '#ea580c', [6, 4], 'LCL');
+      limitLine(g, X, Y, L.CL.values, from, n, '#16a34a', [], 'CL');
+    }
 
     ctx.strokeStyle = '#2563eb';
     ctx.lineWidth = 1.4;
@@ -822,7 +885,7 @@
         ctx.stroke();
       }
     }
-    xLabels(g, X, r.points.map(function (p) { return p.label; }), from, n, bottom);
+    xLabels(g, X, labels, from, n, bottom);
   }
 
   function flagMap(r) {
@@ -831,7 +894,44 @@
     return m;
   }
 
+  // SIGMA chart (SPC system format): EXT_SIGMA with its UCL/LCL lines, date and time under it like the XBAR chart.
+  function drawSigma(canvas, r) {
+    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, S = r.sigma;
+    var labels = r.points.map(function (p) { return p.label; });
+    var left = 62, right = 92, top = 18, bottom = twoLine(labels, from, n) ? 36 : 26, ctx = g.ctx;
+    var vis = S.values.slice(from);
+    if (S.ucl) vis = vis.concat(S.ucl.slice(from));
+    if (S.lcl) vis = vis.concat(S.lcl.slice(from));
+    var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom);
+    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    chartTitle(g, 'SIGMA 차트', left);
+    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 's'};
+    if (!n) return;
+    limitLine(g, X, Y, S.ucl, from, n, '#ea580c', [6, 4], 'UCL');
+    limitLine(g, X, Y, S.lcl, from, n, '#ea580c', [6, 4], 'LCL');
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    var started = false;
+    for (var i = from; i < n; i++) {
+      if (S.values[i] === null) continue;
+      if (!started) { ctx.moveTo(X(i), Y(S.values[i])); started = true; } else ctx.lineTo(X(i), Y(S.values[i]));
+    }
+    ctx.stroke();
+    var rad = step > 7 ? 3 : 2;
+    for (i = from; i < n; i++) {
+      if (S.values[i] === null) continue;
+      var out = r.rangeFlags.indexOf(i) >= 0;
+      ctx.beginPath();
+      ctx.arc(X(i), Y(S.values[i]), out ? rad + 1.5 : rad, 0, Math.PI * 2);
+      ctx.fillStyle = out ? '#f59e0b' : '#475569';
+      ctx.fill();
+    }
+    xLabels(g, X, labels, from, n, bottom);
+  }
+
   function drawRange(canvas, r) {
+    if (r.sigma) { drawSigma(canvas, r); return; }
     var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, R = r.range;
     var left = 62, right = 92, top = 16, bottom = 8, ctx = g.ctx;
     var dm = domain(R.values.slice(from).concat([R.ucl, R.lcl, R.cl]));
@@ -873,16 +973,18 @@
     ctx.fillStyle = '#334155';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('분포', 8, 1);
+    ctx.fillText('히스토그램', 8, 1);
     if (all.length < 2) return;
+    // Bars with their frequency on top, the normal curve, the spec limits and the mean ± 3σ lines.
     var n = r.points.length, L = r.limits, lim = function (k) { return L[k].values ? L[k].values[n - 1] : null; };
-    var dm = domain(all.concat([lim('USL'), lim('LSL')]));
+    var m = r.stats.mean, s = r.stats.sd, three = s > 0 ? [['-3σ', m - 3 * s], ['+3σ', m + 3 * s]] : [];
+    var dm = domain(all.concat([lim('USL'), lim('LSL')], three.map(function (p) { return p[1]; })));
     var bins = Math.max(5, Math.min(30, Math.ceil(Math.log2(all.length)) + 1)), counts = new Array(bins).fill(0);
     var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), bw = (hi - lo) / bins || 1;
     all.forEach(function (v) { counts[Math.min(bins - 1, Math.floor((v - lo) / bw))]++; });
-    var left = 8, right = 8, top = 16, bottom = 18, pw = g.w - left - right, ph = g.h - top - bottom;
+    var left = 8, right = 8, top = 30, bottom = 18, pw = g.w - left - right, ph = g.h - top - bottom;
     var X = function (v) { return left + (v - dm[0]) / (dm[1] - dm[0]) * pw; };
-    var max = Math.max.apply(null, counts), m = r.stats.mean, s = r.stats.sd;
+    var max = Math.max.apply(null, counts);
     var peak = s > 0 ? all.length * bw / (s * Math.sqrt(2 * Math.PI)) : 0;
     var H = function (c) { return top + ph - c / Math.max(max, peak) * ph; };
     ctx.fillStyle = '#bfd3fb';
@@ -891,6 +993,13 @@
       var x0 = X(lo + b * bw), x1 = X(lo + (b + 1) * bw);
       ctx.fillRect(x0, H(counts[b]), Math.max(1, x1 - x0 - 1), top + ph - H(counts[b]));
     }
+    ctx.fillStyle = '#1f2937';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    for (b = 0; b < bins; b++) {
+      if (counts[b]) ctx.fillText(String(counts[b]), (X(lo + b * bw) + X(lo + (b + 1) * bw)) / 2, H(counts[b]) - 1);
+    }
+    canvas._bins = counts;
     if (s > 0) {
       ctx.strokeStyle = '#1e3a8a';
       ctx.lineWidth = 1.2;
@@ -901,15 +1010,21 @@
       }
       ctx.stroke();
     }
-    [['LSL', '#dc2626'], ['USL', '#dc2626'], ['CL', '#16a34a']].forEach(function (p) {
-      var v = lim(p[0]);
+    var marks = [['LSL', lim('LSL'), '#dc2626', []], ['USL', lim('USL'), '#dc2626', []]].concat(three.map(function (p) { return [p[0], p[1], '#7c3aed', [4, 3]]; }));
+    marks.forEach(function (p) {
+      var v = p[1];
       if (v === null || !isFinite(v)) return;
-      ctx.strokeStyle = p[1];
-      ctx.beginPath(); ctx.moveTo(X(v), top); ctx.lineTo(X(v), top + ph); ctx.stroke();
-      ctx.fillStyle = p[1];
+      ctx.save();
+      ctx.strokeStyle = p[2];
+      ctx.setLineDash(p[3]);
+      ctx.beginPath(); ctx.moveTo(X(v), top - 12); ctx.lineTo(X(v), top + ph); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = p[2];
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
       ctx.fillText(p[0], X(v), top + ph + 3);
     });
+    canvas._marks = marks.filter(function (p) { return p[1] !== null && isFinite(p[1]); }).map(function (p) { return p[0]; });
   }
 
   function drawAll() {
@@ -938,6 +1053,7 @@
     if (i < hit.from || i >= hit.to) { tip.classList.add('hidden'); return; }
     var r = hit.res, p = r.points[i], L = r.limits, lines = [p.label];
     if (hit.kind === 'x') {
+      if (r.lots) lines.push('LOT ' + r.lots[p.row]);
       lines.push((r.size > 1 ? '평균 ' : '값 ') + fmt(p.value) + (r.size > 1 ? '  (' + p.raw.map(fmt).join(', ') + ')' : ''));
       ROLES.forEach(function (k) { if (L[k].values) lines.push(k + ' ' + fmt(L[k].values[i])); });
       var f = flagMap(r)[i];
@@ -945,6 +1061,12 @@
       var ed = edits[r.excelRows[p.rows[0]] + ':' + r.col];
       if (ed) lines.push('추천값으로 수정됨 (원래 ' + cellText(ed.orig) + ')');
       lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행 · 더블클릭: 아래 표의 그 행으로');
+    } else if (hit.kind === 's') {
+      if (r.lots) lines.push('LOT ' + r.lots[p.row]);
+      lines.push('SIGMA ' + fmt(r.sigma.values[i]));
+      if (r.sigma.ucl) lines.push('UCL ' + fmt(r.sigma.ucl[i]));
+      if (r.sigma.lcl) lines.push('LCL ' + fmt(r.sigma.lcl[i]));
+      if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ SIGMA 관리한계 이탈');
     } else {
       lines.push(r.range.name + ' ' + fmt(r.range.values[i]));
       if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ ' + r.range.name + ' 관리한계 이탈');
@@ -1152,7 +1274,8 @@
 
   function onColumns() {
     var vals = Array.prototype.map.call($('valueBox').querySelectorAll('input:checked'), function (c) { return c.value; });
-    settings.cols = {label: $('labelSel').value, item: $('itemSel').value, values: vals, sig: table.numeric.join('|')};
+    settings.cols = {label: $('labelSel').value, labelPicked: settings.cols.labelPicked || $('labelSel').value !== table.label,
+      item: $('itemSel').value, values: vals, sig: table.numeric.join('|')};
     buildTable();
     recompute();
   }

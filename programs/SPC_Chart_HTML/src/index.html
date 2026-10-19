@@ -49,7 +49,7 @@
     <p class="muted">USL · LSL · UCL · LCL · CL(Target) 열은 있으면 쓰고, 없으면 관리한계(UCL · CL · LCL)는 데이터로 계산합니다. 항목별로 [한계 설정]에서 직접 넣을 수도 있습니다.<br>
       여러 측정 항목이 한 열에 섞인 형식(항목 · 값)도 됩니다: [항목 열]에서 항목 이름 열을 고르세요.<br>
       판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(7점 연속 상승·하강), 2/3 &gt; 2σ, 4/5 &gt; 1σ 등. 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
-    <p class="muted">SPC 시스템에서 내려받은 양식(EXT_MV, EXT_MV_UCL / CENTER / LCL, USL, LSL, LOT_ID …)은 자동으로 알아보고 EXT_MV를 차트로 그립니다.</p>
+    <p class="muted">SPC 시스템에서 내려받은 양식(EXT_MV, EXT_MV_UCL / CENTER / LCL, USL, LSL, LOT_ID …)은 자동으로 알아보고 SPC 시스템처럼 XBAR 차트(EXT_MV, UCL/LCL 선)와 SIGMA 차트(EXT_SIGMA)를 그립니다. X축은 날짜 · 시간(TRAN_TIME)입니다.</p>
     <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 원본 엑셀 파일은 고치지 않고, 수정본은 새 파일로 저장합니다.</p>
   </section>
   <section id="summary" class="summary hidden"></section>

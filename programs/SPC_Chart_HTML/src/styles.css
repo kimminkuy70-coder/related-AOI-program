@@ -70,6 +70,10 @@ table.grid tr.done td { color: var(--muted); }
 .cx { height: 300px; }
 .isub { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: 6px; }
 .cr, .ch { height: 150px; }
+/* SPC system format: XBAR over SIGMA on the same X axis, histogram under them */
+.item-card.spc .isub { grid-template-columns: 1fr; }
+.item-card.spc .cr { height: 200px; }
+.item-card.spc .ch { height: 220px; }
 .note { font-size: 12px; color: var(--muted); }
 
 .databox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 14px; }

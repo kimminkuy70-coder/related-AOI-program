@@ -87,6 +87,7 @@ SPC_HEADERS = ('회사|라인|장비타입|PLAN_NAME|PLAN_DESC|Item|SPEC_NAME|�
 SPC_SWING = [0.3, 0.1, 0.4, 0.2, 0.5]
 SPC_OUT = 10              # data index above EXT_MV_UCL (OCAP)
 SPC_RUN = range(20, 28)   # 8 points above EXT_MV_CENTER: the 7th and 8th break the 7 run
+SPC_SIGMA_OUT = 5         # EXT_SIGMA above EXT_SIGMA_UCL
 
 
 def spc_values():
@@ -105,7 +106,8 @@ def spc_rows():
         r = dict.fromkeys(SPC_HEADERS)
         r.update({'회사': 'K5', '라인': 'AS11100', 'PLAN_NAME': 'PLAN-A', 'Item': 'I02214', 'SPEC_NAME': 'TSV-COPLANARITY', '공정': 6311,
                   'DIMENSION': 12, 'LEAD': 134, '장비명': 'AOI-16', 'LOT_ID': 'LOT%03d.C0W' % i, '수정일시': t0 + datetime.timedelta(hours=i),
-                  'USL': 13, 'LSL': 0, 'EXT_MV': v, 'EXT_SIGMA': 0.68, 'EXT_AVERAGE': v, 'SITE_QTY': 25, 'VALUE_COUNT': 25,
+                  'USL': 13, 'LSL': 0, 'EXT_MV': v, 'EXT_SIGMA': 2.5 if i == SPC_SIGMA_OUT else 0.68,
+                  'EXT_SIGMA_LCL': 0.0, 'EXT_SIGMA_CENTER': 0.564, 'EXT_SIGMA_UCL': 2.279, 'EXT_AVERAGE': v, 'SITE_QTY': 25, 'VALUE_COUNT': 25,
                   'DISPLAY_FLAG': 'Y', 'EXT_MV_UCL': 8.234, 'EXT_MV_CENTER': 6.52, 'EXT_MV_LCL': 4.805, 'TRAN_TIME': t0 + datetime.timedelta(hours=i),
                   'UNIT_NUM': 1, 'DATA_SEQ': 8153366 + i, 'SPEC_SEQ': 129588, 'ACCEPT_FLAG': 'YYYYYNYYYY', 'CPK': 3.2, 'VALUE_1': v, 'CNT': 514})
         rows.append([r[h] for h in SPC_HEADERS])
@@ -324,12 +326,12 @@ class SpcChartTest(unittest.TestCase):
     def test_spc_system_format_is_recognised(self):
         self.open_file('20261019214451.xlsx', workbook(spc_rows()))
         t = self.js('() => { const t = window.__spc.table(); return [t.spcForm, t.values, t.label, t.item, t.roles]; }')
-        self.assertEqual(t[:4], [True, ['EXT_MV'], 'LOT_ID', 'Item'])
+        self.assertEqual(t[:4], [True, ['EXT_MV'], 'TRAN_TIME', 'Item'])
         self.assertEqual(t[4], {'USL': 'USL', 'LSL': 'LSL', 'UCL': 'EXT_MV_UCL', 'LCL': 'EXT_MV_LCL', 'CL': 'EXT_MV_CENTER'})
         res = self.results()
         self.assertEqual([r['name'] for r in res], ['I02214'])
         self.assertEqual(res[0]['src'], '엑셀 열')
-        self.assertEqual(res[0]['label'], 'LOT000.C0W')
+        self.assertEqual(res[0]['label'], '2026-07-01 02:06')
         yellow = self.js('() => window.__spc.yellow()')
         run_rows = [str(i + 2) for i in SPC_RUN][6:]
         self.assertEqual(sorted(yellow, key=int), [str(SPC_OUT + 2)] + run_rows)  # Excel row = data index + 2
@@ -341,6 +343,51 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(bg, 'rgb(255, 245, 157)')
         self.page.check('#flagOnly')
         self.assertEqual(self.page.locator('#dataTable tbody tr').count(), 3)
+
+    # issue #23: XBAR + SIGMA charts with UCL/LCL lines only, histogram, date and time on the X axis
+    def test_spc_system_format_draws_xbar_and_sigma(self):
+        self.open_file('x.xlsx', workbook(spc_rows()))
+        r = self.js("""() => { const r = window.__spc.results()[0];
+            return {sigma: r.sigma.values.slice(0, 7), ucl: r.sigma.ucl[0], lcl: r.sigma.lcl[0], rflags: r.rangeFlags, lots: r.lots.slice(0, 1),
+                    card: document.querySelector('.item-card').classList.contains('spc'), stats: document.querySelector('.istats').textContent}; }""")
+        self.assertEqual(r['sigma'][SPC_SIGMA_OUT], 2.5)
+        self.assertEqual(r['sigma'][0], 0.68)
+        self.assertEqual((r['ucl'], r['lcl']), (2.279, 0.0))
+        self.assertEqual(r['rflags'], [SPC_SIGMA_OUT])
+        self.assertEqual(r['lots'], ['LOT000.C0W'])
+        self.assertTrue(r['card'])
+        self.assertIn('XBAR · SIGMA', r['stats'])
+        # the XBAR chart draws only UCL/LCL: USL 13 / LSL 0 do not stretch its scale
+        dom = self.js("""() => { const h = document.querySelector('.cx')._hit; return [h.Y(8.234), h.Y(4.805), h.Y(13)]; }""")
+        self.assertGreater(dom[1] - dom[0], 150)
+        self.assertLess(dom[2], 0)
+        # hover the SIGMA point: tooltip with LOT, SIGMA, limits
+        self.page.locator('.item-card .cr').first.scroll_into_view_if_needed()
+        xy = self.js("""(i) => { const c = document.querySelector('.cr'), h = c._hit, b = c.getBoundingClientRect();
+            return [b.left + h.X(i), b.top + h.Y(h.res.sigma.values[i])]; }""", SPC_SIGMA_OUT)
+        self.page.mouse.move(xy[0], xy[1])
+        tip = self.page.locator('#tip').text_content()
+        self.assertIn('SIGMA 2.5', tip)
+        self.assertIn('LOT LOT005.C0W', tip)
+        self.assertIn('2026-07-01 07:06', tip)
+        # double-click on the SIGMA chart selects the row too
+        self.page.mouse.dblclick(xy[0], xy[1])
+        self.assertEqual(self.js('() => window.__spc.selected()'), SPC_SIGMA_OUT + 2)
+        # histogram: frequencies add up to the points, spec limits and ±3σ lines
+        h = self.js("() => { const c = document.querySelector('.ch'); return [c._bins, c._marks]; }")
+        self.assertEqual(sum(h[0]), 36)
+        self.assertEqual(h[1], ['LSL', 'USL', '-3σ', '+3σ'])
+
+    def test_date_time_labels_on_two_lines(self):
+        self.open_file('x.xlsx', workbook(spc_rows()))
+        texts = self.js("""() => { const out = [], c = document.querySelector('.cx'), ctx = c.getContext('2d'), f = ctx.fillText;
+            ctx.fillText = function (t) { out.push(String(t)); return f.apply(this, arguments); };
+            window.__spc.refresh(true); return new Promise(r => setTimeout(() => { ctx.fillText = f; r(out); }, 300)); }""")
+        self.assertIn('2026-07-02', texts)
+        self.assertIn('13:06', texts)
+        self.assertIn('XBAR 차트', texts)
+        self.assertNotIn('CL', [t.split(' ')[0] for t in texts])
+        self.assertNotIn('USL', [t.split(' ')[0] for t in texts])
 
     def test_double_click_point_goes_to_its_row(self):
         self.open_file('d.xlsx', workbook(spc_rows()))
