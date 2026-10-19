@@ -42,6 +42,9 @@
   if (settings.sound === undefined) settings.sound = true;
   // v1-v3 showed the last 100 points by default; from v4 the whole period is drawn and scrolled sideways (#24).
   if (!settings.v4) { settings.window = 0; settings.v4 = 1; }
+  // v8: 2/3 > 2σ and 4/5 > 1σ are off by default (owner, #25: not OCAP / 7 run, only orange dots); turned off once
+  // for settings saved by older versions, and can be turned on again in [규칙 · OCAP 설정].
+  if (!settings.v8) { settings.rules.R4 = false; settings.rules.R5 = false; settings.v8 = 1; }
   if (!(settings.window >= 0)) settings.window = 0;
   if (!(settings.pitch >= 0)) settings.pitch = 16;
   settings.auto = !!settings.auto;

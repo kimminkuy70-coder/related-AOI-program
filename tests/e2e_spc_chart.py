@@ -290,9 +290,12 @@ class SpcChartTest(unittest.TestCase):
     def test_two_of_three_beyond_two_sigma(self):
         vals = [10, 10.2, 9.8, 10.1, 9.9, 10, 10.2, 9.8, 10.1, 9.9]
         r = self.js("""(vals) => { const res = SPC.analyze({name: 't', values: vals.concat([10.75, 10, 10.8]), labels: [], cols: {}},
-            {manual: {CL: 10, UCL: 11, LCL: 9}}); return res.flags; }""", vals)
-        self.assertEqual(r.get('R4'), [12])
+            {manual: {CL: 10, UCL: 11, LCL: 9}, rules: Object.assign({}, SPC.DEFAULT_ON, {R4: true})}); return res.flags; }""", vals)
+        self.assertEqual(r.get('R4'), [12])  # off by default since v8 (#25), turned on here
         self.assertNotIn('R1', r)
+        off = self.js("""(vals) => SPC.analyze({name: 't', values: vals.concat([10.75, 10, 10.8]), labels: [], cols: {}},
+            {manual: {CL: 10, UCL: 11, LCL: 9}}).flags""", vals)
+        self.assertNotIn('R4', off)
 
     # file reading and live refresh
     def test_long_format_xlsx_with_dates_and_spec(self):
@@ -555,6 +558,17 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(len(r['out']['changes']), 1)
         for rule in ('R2', 'R3'):
             self.assertNotIn(rule, r['after'])
+
+    # v8 (#25): 2/3 > 2σ and 4/5 > 1σ are off by default, also for settings saved by an older version
+    def test_extra_rules_off_by_default(self):
+        self.assertEqual([self.js('() => window.__spc.settings.rules')[k] for k in ('R1', 'R2', 'R3', 'R4', 'R5')], [True, True, True, False, False])
+        self.js("() => localStorage.setItem('spc.settings', JSON.stringify({rules: {R4: true, R5: true}, v4: 1}))")
+        self.page.reload()
+        self.assertEqual([self.js('() => window.__spc.settings.rules')[k] for k in ('R4', 'R5')], [False, False])
+        self.open_file('any.xlsx', workbook(long_rows(10)))  # reading a file saves the settings (with the v8 mark)
+        self.js("() => { const s = JSON.parse(localStorage.getItem('spc.settings')); s.rules.R4 = true; localStorage.setItem('spc.settings', JSON.stringify(s)); }")
+        self.page.reload()  # turned on again by the owner: stays on
+        self.assertTrue(self.js('() => window.__spc.settings.rules.R4'))
 
     # issue #24: a long period scrolls sideways instead of being cut; auto refresh is off by default
     def test_long_period_scrolls_sideways(self):

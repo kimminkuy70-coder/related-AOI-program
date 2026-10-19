@@ -19,7 +19,7 @@
     {id: 'R7', name: '1σ 안 몰림', desc: 'N점 연속 ±1σ 안 (층별 의심)', n: 15},
     {id: 'R8', name: '1σ 밖 연속', desc: 'N점 연속 ±1σ 밖 (양쪽)', n: 8}
   ];
-  var DEFAULT_ON = {OOS: true, R1: true, R2: true, R3: true, R4: true, R5: true, R6: false, R7: false, R8: false};
+  var DEFAULT_ON = {OOS: true, R1: true, R2: true, R3: true, R4: false, R5: false, R6: false, R7: false, R8: false};
 
   function isNum(v) { return typeof v === 'number' && isFinite(v); }
 
