@@ -1,11 +1,13 @@
-AOI Photo Sorter HTML v1 (GOOD 처리 사진 선별기 — Edge에서 바로 실행)
+AOI Photo Sorter HTML v2 (GOOD 처리 사진 선별기 — Edge에서 바로 실행)
 
 무엇인가
 - Python / .exe 버전과 같은 프로그램을 HTML 파일 하나로 만든 것입니다. 설치할 것이 없습니다.
-- AOI_Photo_Sorter_HTML_v1.html 을 Microsoft Edge로 열면 바로 실행됩니다(Chrome도 가능).
+- AOI_Photo_Sorter_HTML_v2.html 을 Microsoft Edge로 열면 바로 실행됩니다(Chrome도 가능).
 - 화면과 키 조작, 미리 읽기, 결과 파일(n차리뷰), 추가 GOOD 검토, 상위 폴더(하위 폴더별 작업),
   전체 결과 보기, 연속 넘김, 경로 패널은 Python 버전 v10과 같습니다.
 - 결과 파일 형식이 Python 버전과 같아서, 한쪽에서 저장한 결과를 다른 쪽에서 이어서 쓸 수 있습니다.
+- v2 (#20): Esc 메뉴 창이 버튼 수(최대 6개)에 맞게 넓어지고, 좁으면 버튼이 다음 줄로 넘어갑니다.
+  화면 오른쪽 위에 "개발자 : 김민규" 표시.
 
 보안
 - 실행되는 프로그램은 Edge뿐입니다. 이 파일은 Edge 안(샌드박스)에서만 동작합니다.
@@ -17,7 +19,7 @@ AOI Photo Sorter HTML v1 (GOOD 처리 사진 선별기 — Edge에서 바로 실
 - TIFF 표시용으로 UTIF.js(MIT), pako(MIT) 코드를 파일 안에 포함했습니다(외부에서 불러오지 않음).
 
 사용 순서
-1. AOI_Photo_Sorter_HTML_v1.html 을 아무 폴더에 두고 Edge로 엽니다(더블클릭, 안 되면 Edge 창에 끌어 놓기).
+1. AOI_Photo_Sorter_HTML_v2.html 을 아무 폴더에 두고 Edge로 엽니다(더블클릭, 안 되면 Edge 창에 끌어 놓기).
 2. ① 사진 폴더 [폴더 고르기] → 폴더 선택 창에서 사진 폴더(또는 상위 폴더)를 고릅니다.
    - 네트워크 폴더: 선택 창 위쪽 주소 칸에 \\서버\공유\폴더 를 붙여 넣고 Enter → [폴더 선택].
    - Edge가 "이 사이트에서 파일을 보도록 허용할까요?"를 물으면 [허용]을 누릅니다.

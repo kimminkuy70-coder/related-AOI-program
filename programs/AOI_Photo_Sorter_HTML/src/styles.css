@@ -150,7 +150,10 @@ button.tab.on.r{background:#3f1d1d;border-color:#ef4444;color:#fca5a5}
 
 /* modal */
 .modal{position:fixed;inset:0;background:rgba(2,6,15,.72);display:flex;align-items:center;justify-content:center;z-index:10}
-.modal .box{width:min(560px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+/* #20: the box grows with its buttons (folder menu has up to 6) instead of letting them stick out; long rows wrap */
+.modal .box{width:max-content;min-width:min(560px,92vw);max-width:min(1400px,94vw);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+.modal .row{flex-wrap:wrap}
+.modal .row button{max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .modal h3{margin:0 0 10px;color:var(--text);font-size:17px}
 .modal p{margin:0 0 20px;white-space:pre-wrap;color:var(--muted)}
 .modal button.sel{outline:2px solid #93c5fd}
@@ -162,4 +165,6 @@ button.tab.on.r{background:#3f1d1d;border-color:#ef4444;color:#fca5a5}
 .donecopy{margin:-8px 0 20px;background:#0d1528;border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre-line}
 .donecopy .row{margin-top:8px}
 #hCopy.bad{color:#fca5a5}
-.wm{position:fixed;right:10px;bottom:6px;z-index:20;font-size:11px;color:rgba(148,163,184,.55);pointer-events:none;user-select:none}
+/* #20: developer watermark top right; the header bars keep that corner free so nothing hides under it */
+.wm{position:fixed;right:12px;top:3px;z-index:20;font-size:12px;line-height:14px;color:rgba(148,163,184,.6);pointer-events:none;user-select:none}
+.hud,.rhead{padding-right:120px}
