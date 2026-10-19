@@ -1,4 +1,4 @@
-// SPC Chart HTML: reads an Excel sheet, draws control charts, re-reads the file whenever it is saved.
+// SPC Chart HTML: reads an Excel sheet of a fixed period and draws its control charts (scroll sideways through the whole period).
 (function () {
   'use strict';
 
@@ -40,7 +40,11 @@
   settings.manual = settings.manual || {};
   if (!(settings.pollSec >= 1)) settings.pollSec = 2;
   if (settings.sound === undefined) settings.sound = true;
-  if (!(settings.window >= 0)) settings.window = 100;
+  // v1-v3 showed the last 100 points by default; from v4 the whole period is drawn and scrolled sideways (#24).
+  if (!settings.v4) { settings.window = 0; settings.v4 = 1; }
+  if (!(settings.window >= 0)) settings.window = 0;
+  if (!(settings.pitch >= 0)) settings.pitch = 16;
+  settings.auto = !!settings.auto;
   if (!(settings.subgroup >= 1)) settings.subgroup = 1;
   if (!(settings.baseline >= 0)) settings.baseline = 0;
   var ocapLog = load('spc.ocapLog', {});
@@ -460,6 +464,7 @@
     $('sizeIn').value = settings.subgroup;
     $('baseIn').value = settings.baseline;
     $('winIn').value = settings.window;
+    $('pitchSel').value = String(settings.pitch);
     var view = $('viewSel').value;
     $('viewSel').innerHTML = opt('', '전체 항목', !view) + results.map(function (r) { return opt(r.name, r.name, r.name === view); }).join('');
   }
@@ -505,8 +510,9 @@
         card.className = 'item-card';
         card.dataset.name = r.name;
         card.innerHTML = '<div class="ihead"><b></b><span class="badge"></span><span class="istats"></span><span class="spacer"></span><button class="ghost small lim-btn">한계 설정</button></div>' +
-          '<canvas class="cx"></canvas><div class="isub"><canvas class="cr"></canvas><canvas class="ch"></canvas></div><div class="note"></div>';
+          '<div class="xscroll"><div class="xinner"><canvas class="cx"></canvas><canvas class="cr"></canvas></div></div><canvas class="ch"></canvas><div class="note"></div>';
         card.querySelector('.lim-btn').onclick = function () { limitsDialog(card.dataset.name); };
+        card.querySelector('.xscroll').addEventListener('scroll', function () { queueCard(card); }, {passive: true});
       }
       if (box.children[k] !== card) box.insertBefore(card, box.children[k] || null);
       card.classList.toggle('spc', !!r.sigma);
@@ -771,6 +777,7 @@
     if (!vals) return;
     var ctx = g.ctx;
     ctx.save();
+    clipPlot(g);
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.3;
     ctx.setLineDash(dash);
@@ -786,7 +793,7 @@
       ctx.fillStyle = color;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(label + ' ' + fmt(vals[to - 1]), X(to - 1) + (X(1) - X(0)) / 2 + 4, Y(vals[to - 1]));
+      ctx.fillText(label + ' ' + fmt(vals[to - 1]), Math.min(X(to - 1) + (X(1) - X(0)) / 2, g.w - g.right) + 4, Y(vals[to - 1]));
     }
   }
 
@@ -801,12 +808,15 @@
     return false;
   }
 
-  function xLabels(g, X, labels, from, to, bottom) {
-    var ctx = g.ctx, every = Math.max(1, Math.ceil((to - from) * 90 / Math.max(1, g.w - 150)));
+  // Labels every few points counted from the first point of the period, so they do not jump while scrolling.
+  function xLabels(g, sp, labels, bottom) {
+    var ctx = g.ctx, X = sp.X, every = Math.max(1, Math.ceil(90 / sp.step));
+    ctx.save();
+    clipPlot(g);
     ctx.fillStyle = '#6b7486';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    for (var i = to - 1; i >= from; i -= every) {
+    for (var i = sp.a + (((sp.from - sp.a) % every) + every) % every; i < sp.b; i += every) {
       var s = String(labels[i]), dt = dateTime(s);
       if (dt) {
         ctx.fillText(dt[0], X(i), g.h - bottom + 5);
@@ -815,6 +825,33 @@
         ctx.fillText(s.length > 16 ? s.slice(0, 15) + '…' : s, X(i), g.h - bottom + 6);
       }
     }
+    ctx.restore();
+  }
+
+  // Horizontal layout of a time chart: every point of the period gets settings.pitch px (0 = fit the card), the
+  // inner box of .xscroll is that wide so the card scrolls sideways, and the canvas stays the card's width (sticky)
+  // drawing only the part scrolled into view, so the Y axis and limit labels stay in place. XBAR and SIGMA (or MR)
+  // share one .xscroll and scroll together. Call before setup(canvas): it sets the canvas width.
+  var LEFT = 62, RIGHT = 92;
+  function xspan(canvas, n, from) {
+    var sc = canvas.parentNode.parentNode, inner = canvas.parentNode, vw = sc.clientWidth;
+    var pw = Math.max(10, vw - LEFT - RIGHT), count = Math.max(1, n - from);
+    var step = settings.pitch > 0 ? Math.max(settings.pitch, pw / count) : pw / count;
+    var full = Math.max(vw, Math.ceil(count * step + LEFT + RIGHT));
+    if (inner.style.width !== full + 'px') inner.style.width = full + 'px';
+    if (canvas.style.width !== vw + 'px') canvas.style.width = vw + 'px';
+    var off = Math.max(0, Math.min(sc.scrollLeft, full - vw));
+    sc._geo = {from: from, step: step, pw: pw};
+    return {from: from, step: step, off: off,
+      X: function (i) { return LEFT + (i - from + 0.5) * step - off; },
+      a: Math.max(from, from + Math.floor(off / step) - 1), b: Math.min(n, from + Math.ceil((off + pw) / step) + 1)};
+  }
+
+  // Lines and points stay inside the plot box (scrolled-out parts would cover the Y axis labels).
+  function clipPlot(g) {
+    g.ctx.beginPath();
+    g.ctx.rect(g.left, 0, g.w - g.left - g.right, g.h);
+    g.ctx.clip();
   }
 
   function chartTitle(g, text, left) {
@@ -825,16 +862,17 @@
   }
 
   function drawControl(canvas, r) {
-    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0;
+    var n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0;
+    var sp = xspan(canvas, n, from), g = setup(canvas);
     var labels = r.points.map(function (p) { return p.label; });
     // SPC system format: an XBAR chart with the UCL/LCL lines only, as the SPC system draws it.
     var lines = r.spcForm ? ['UCL', 'LCL'] : ROLES;
-    var left = 62, right = 92, top = r.spcForm ? 18 : 10, bottom = twoLine(labels, from, n) ? 36 : 26;
+    var left = g.left = LEFT, right = g.right = RIGHT, top = r.spcForm ? 18 : 10, bottom = twoLine(labels, from, n) ? 36 : 26;
     var L = r.limits, vis = r.x.slice(from);
     lines.forEach(function (k) { if (L[k].values) vis = vis.concat(L[k].values.slice(from)); });
     var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom), ctx = g.ctx;
-    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
-    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'x'};
+    var step = sp.step, X = sp.X, a = sp.a, b = sp.b;
+    canvas._hit = {from: a, to: b, X: X, Y: Y, res: r, kind: 'x'};
     if (r.spcForm) chartTitle(g, r.size > 1 ? 'XBAR 차트 (n=' + r.size + ')' : 'XBAR 차트', left);
     if (!n) return;
 
@@ -856,13 +894,15 @@
       limitLine(g, X, Y, L.CL.values, from, n, '#16a34a', [], 'CL');
     }
 
+    ctx.save();
+    clipPlot(g);
     ctx.strokeStyle = '#2563eb';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
-    for (var i = from; i < n; i++) { if (i === from) ctx.moveTo(X(i), Y(r.x[i])); else ctx.lineTo(X(i), Y(r.x[i])); }
+    for (var i = a; i < b; i++) { if (i === a) ctx.moveTo(X(i), Y(r.x[i])); else ctx.lineTo(X(i), Y(r.x[i])); }
     ctx.stroke();
     var bad = flagMap(r), rad = step > 7 ? 3.5 : 2.2;
-    for (i = from; i < n; i++) {
+    for (i = a; i < b; i++) {
       var f = bad[i];
       ctx.beginPath();
       ctx.arc(X(i), Y(r.x[i]), f ? rad + 1.5 : rad, 0, Math.PI * 2);
@@ -885,7 +925,8 @@
         ctx.stroke();
       }
     }
-    xLabels(g, X, labels, from, n, bottom);
+    ctx.restore();
+    xLabels(g, sp, labels, bottom);
   }
 
   function flagMap(r) {
@@ -896,30 +937,33 @@
 
   // SIGMA chart (SPC system format): EXT_SIGMA with its UCL/LCL lines, date and time under it like the XBAR chart.
   function drawSigma(canvas, r) {
-    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, S = r.sigma;
+    var n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, S = r.sigma;
+    var sp = xspan(canvas, n, from), g = setup(canvas);
     var labels = r.points.map(function (p) { return p.label; });
-    var left = 62, right = 92, top = 18, bottom = twoLine(labels, from, n) ? 36 : 26, ctx = g.ctx;
+    var left = g.left = LEFT, right = g.right = RIGHT, top = 18, bottom = twoLine(labels, from, n) ? 36 : 26, ctx = g.ctx;
     var vis = S.values.slice(from);
     if (S.ucl) vis = vis.concat(S.ucl.slice(from));
     if (S.lcl) vis = vis.concat(S.lcl.slice(from));
     var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom);
-    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    var step = sp.step, X = sp.X, a = sp.a, b = sp.b;
     chartTitle(g, 'SIGMA 차트', left);
-    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 's'};
+    canvas._hit = {from: a, to: b, X: X, Y: Y, res: r, kind: 's'};
     if (!n) return;
     limitLine(g, X, Y, S.ucl, from, n, '#ea580c', [6, 4], 'UCL');
     limitLine(g, X, Y, S.lcl, from, n, '#ea580c', [6, 4], 'LCL');
+    ctx.save();
+    clipPlot(g);
     ctx.strokeStyle = '#475569';
     ctx.lineWidth = 1.3;
     ctx.beginPath();
     var started = false;
-    for (var i = from; i < n; i++) {
+    for (var i = a; i < b; i++) {
       if (S.values[i] === null) continue;
       if (!started) { ctx.moveTo(X(i), Y(S.values[i])); started = true; } else ctx.lineTo(X(i), Y(S.values[i]));
     }
     ctx.stroke();
     var rad = step > 7 ? 3 : 2;
-    for (i = from; i < n; i++) {
+    for (i = a; i < b; i++) {
       if (S.values[i] === null) continue;
       var out = r.rangeFlags.indexOf(i) >= 0;
       ctx.beginPath();
@@ -927,36 +971,40 @@
       ctx.fillStyle = out ? '#f59e0b' : '#475569';
       ctx.fill();
     }
-    xLabels(g, X, labels, from, n, bottom);
+    ctx.restore();
+    xLabels(g, sp, labels, bottom);
   }
 
   function drawRange(canvas, r) {
     if (r.sigma) { drawSigma(canvas, r); return; }
-    var g = setup(canvas), n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, R = r.range;
-    var left = 62, right = 92, top = 16, bottom = 8, ctx = g.ctx;
+    var n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, R = r.range;
+    var sp = xspan(canvas, n, from), g = setup(canvas);
+    var left = g.left = LEFT, right = g.right = RIGHT, top = 16, bottom = 8, ctx = g.ctx;
     var dm = domain(R.values.slice(from).concat([R.ucl, R.lcl, R.cl]));
     var Y = frame(g, Math.max(dm[0], R.lcl - (dm[1] - dm[0]) * 0.05), dm[1], left, right, top, bottom);
-    var step = (g.w - left - right) / Math.max(1, n - from), X = function (i) { return left + (i - from + 0.5) * step; };
+    var X = sp.X, a = sp.a, b = sp.b;
     ctx.fillStyle = '#334155';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText(R.name + ' 차트', left, 1);
-    canvas._hit = {from: from, to: n, X: X, Y: Y, res: r, kind: 'r'};
+    canvas._hit = {from: a, to: b, X: X, Y: Y, res: r, kind: 'r'};
     if (!n || !isFinite(R.cl)) return;
     var c = function (v) { var a = []; for (var i = 0; i < n; i++) a.push(v); return a; };
     limitLine(g, X, Y, c(R.ucl), from, n, '#ea580c', [6, 4], 'UCL');
     if (R.lcl > 0) limitLine(g, X, Y, c(R.lcl), from, n, '#ea580c', [6, 4], 'LCL');
     limitLine(g, X, Y, c(R.cl), from, n, '#16a34a', [], R.name + '̄');
+    ctx.save();
+    clipPlot(g);
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     var started = false;
-    for (var i = from; i < n; i++) {
+    for (var i = a; i < b; i++) {
       if (R.values[i] === null) continue;
       if (!started) { ctx.moveTo(X(i), Y(R.values[i])); started = true; } else ctx.lineTo(X(i), Y(R.values[i]));
     }
     ctx.stroke();
-    for (i = from; i < n; i++) {
+    for (i = a; i < b; i++) {
       if (R.values[i] === null) continue;
       var out = r.rangeFlags.indexOf(i) >= 0;
       ctx.beginPath();
@@ -964,6 +1012,7 @@
       ctx.fillStyle = out ? '#f59e0b' : '#64748b';
       ctx.fill();
     }
+    ctx.restore();
   }
 
   function drawHist(canvas, r) {
@@ -1028,12 +1077,34 @@
   }
 
   function drawAll() {
+    Array.prototype.forEach.call($('cards').children, function (card) { drawCard(card, true); });
+  }
+  function drawCard(card, hist) {
+    var r = card._res;
+    if (!r) return;
+    drawControl(card.querySelector('.cx'), r);
+    drawRange(card.querySelector('.cr'), r);
+    if (hist) drawHist(card.querySelector('.ch'), r);
+  }
+  // Scrolling sideways redraws only the time charts of that card, once per frame.
+  function queueCard(card) {
+    if (card._queued) return;
+    card._queued = true;
+    requestAnimationFrame(function () { card._queued = false; drawCard(card, false); });
+  }
+
+  // Scroll every chart so the point of this Excel row is in view (picked in the data table).
+  function revealRow(row) {
     Array.prototype.forEach.call($('cards').children, function (card) {
-      var r = card._res;
-      if (!r) return;
-      drawControl(card.querySelector('.cx'), r);
-      drawRange(card.querySelector('.cr'), r);
-      drawHist(card.querySelector('.ch'), r);
+      var r = card._res, sc = card.querySelector('.xscroll'), geo = sc._geo;
+      if (!r || !geo) return;
+      for (var i = geo.from; i < r.points.length; i++) {
+        if (r.points[i].rows.some(function (k) { return r.excelRows[k] === row; })) {
+          var x = (i - geo.from + 0.5) * geo.step;
+          if (x < sc.scrollLeft || x > sc.scrollLeft + geo.pw) sc.scrollLeft = Math.max(0, x - geo.pw / 2);
+          return;
+        }
+      }
     });
   }
 
@@ -1233,9 +1304,9 @@
       rows.push([d, '폭', +(25 + gauss() * 0.15 + (k === 30 ? 0.9 : 0)).toFixed(3), 25.8, 24.2]);
       k++;
     }
-    for (var i = 0; i < 40; i++) add();
+    for (var i = 0; i < 300; i++) add();
     return {
-      tick: function () { if (k < 400) add(); return k; },
+      tick: function () { return k; },
       book: function () { return [{name: '예제', rows: rows.slice()}]; }
     };
   }
@@ -1250,11 +1321,12 @@
     $('fileIn').value = '';
   };
   $('reloadBtn').onclick = function () { refresh(true); };
-  $('liveChk').onchange = schedule;
+  $('liveChk').checked = settings.auto;
+  $('liveChk').onchange = function () { settings.auto = $('liveChk').checked; save(); schedule(); };
   $('demoBtn').onclick = function () {
     settings.sheet = '예제';
     settings.cols = {};
-    source = {name: '예제 데이터 (실시간 흉내: 몇 초마다 1점 추가)', kind: 'demo', demo: demoSource()};
+    source = {name: '예제 데이터 (300시간 기간)', kind: 'demo', demo: demoSource()};
     startSource();
   };
   $('settingsBtn').onclick = settingsDialog;
@@ -1285,6 +1357,7 @@
     var tr = e.target.closest('tr[data-row]');
     if (!tr) return;
     selectRow(+tr.dataset.row, false);
+    revealRow(+tr.dataset.row);
     drawAll();
   });
   $('fixOneBtn').onclick = fixOne;
@@ -1297,6 +1370,7 @@
   $('sizeIn').onchange = function () { settings.subgroup = Math.max(1, Math.min(25, +$('sizeIn').value | 0 || 1)); save(); recompute(); };
   $('baseIn').onchange = function () { settings.baseline = Math.max(0, +$('baseIn').value | 0); save(); recompute(); };
   $('winIn').onchange = function () { settings.window = Math.max(0, +$('winIn').value | 0); save(); render(); };
+  $('pitchSel').onchange = function () { settings.pitch = Math.max(0, +$('pitchSel').value | 0); save(); drawAll(); };
   $('viewSel').onchange = render;
 
   $('csvBtn').onclick = function () {
@@ -1330,6 +1404,6 @@
 
   // For tests: open a file handle without the picker.
   window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
-    edits: function () { return edits; }, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
+    edits: function () { return edits; }, revealRow: revealRow, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
     selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName};
 })();

@@ -264,6 +264,7 @@ class SpcChartTest(unittest.TestCase):
 
     def test_saving_the_workbook_updates_the_chart_and_raises_alarm(self):
         self.js('() => { window.__spc.settings.pollSec = 1; }')
+        self.page.check('#liveChk')  # off by default since #24 (fixed-period viewer)
         self.open_file('live.xlsx', workbook(long_rows(30)))
         self.assertTrue(self.page.locator('#alarm').is_hidden())
         last = datetime.datetime(2026, 10, 3, 0, 0)
@@ -285,6 +286,7 @@ class SpcChartTest(unittest.TestCase):
 
     def test_broken_save_keeps_last_chart(self):
         self.js('() => { window.__spc.settings.pollSec = 1; }')
+        self.page.check('#liveChk')  # off by default since #24 (fixed-period viewer)
         self.open_file('b.xlsx', workbook(long_rows(10)))
         self.put('b.xlsx', b'PK\x03\x04 half written')
         self.page.wait_for_function("() => document.getElementById('status').className.includes('err')", timeout=8000)
@@ -384,7 +386,7 @@ class SpcChartTest(unittest.TestCase):
             ctx.fillText = function (t) { out.push(String(t)); return f.apply(this, arguments); };
             window.__spc.refresh(true); return new Promise(r => setTimeout(() => { ctx.fillText = f; r(out); }, 300)); }""")
         self.assertIn('2026-07-02', texts)
-        self.assertIn('13:06', texts)
+        self.assertIn('11:06', texts)  # labels counted from the first point since #24 (02:06 + 3 h steps)
         self.assertIn('XBAR 차트', texts)
         self.assertNotIn('CL', [t.split(' ')[0] for t in texts])
         self.assertNotIn('USL', [t.split(' ')[0] for t in texts])
@@ -456,6 +458,7 @@ class SpcChartTest(unittest.TestCase):
 
     def test_edits_follow_live_refresh(self):
         self.js('() => { window.__spc.settings.pollSec = 1; }')
+        self.page.check('#liveChk')  # off by default since #24 (fixed-period viewer)
         rows = spc_rows()
         self.open_file('live2.xlsx', workbook(rows))
         self.page.click('#fixAllBtn')
@@ -487,6 +490,43 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(len(r['out']['changes']), 1)
         self.assertEqual(r['out']['changes'][0]['row'], 30)  # the 7th point of the run
         self.assertNotIn('R2', r['flags'])
+
+    # issue #24: a long period scrolls sideways instead of being cut; auto refresh is off by default
+    def test_long_period_scrolls_sideways(self):
+        self.assertFalse(self.page.is_checked('#liveChk'))
+        self.open_file('long.xlsx', workbook(long_rows(400)))
+        self.assertEqual(self.js('() => window.__spc.settings.window'), 0)
+        self.assertEqual(self.page.input_value('#pitchSel'), '16')
+        geo = self.js("""() => { const s = document.querySelector('.xscroll'), c = s.querySelector('.cx');
+            return {sw: s.scrollWidth, cw: s.clientWidth, canvas: c.clientWidth, from: c._hit.from, to: c._hit.to, n: c._hit.res.points.length}; }""")
+        self.assertEqual(geo['n'], 400)  # nothing cut off
+        self.assertGreaterEqual(geo['sw'], 400 * 16)
+        self.assertEqual(geo['canvas'], geo['cw'])  # the canvas stays the card width
+        self.assertEqual(geo['from'], 0)
+        self.assertLess(geo['to'], 120)
+        # scroll to the end: the last points are drawn, the MR chart follows, the Y axis stays at the left
+        self.js("() => { const s = document.querySelector('.xscroll'); s.scrollLeft = s.scrollWidth; }")
+        self.page.wait_for_function("() => document.querySelector('.cx')._hit.to === 400")
+        h = self.js("""() => { const c = document.querySelector('.cx')._hit, r = document.querySelector('.cr')._hit;
+            return [c.from, r.to, c.X(399) < document.querySelector('.cx').clientWidth - 92]; }""")
+        self.assertGreater(h[0], 250)
+        self.assertEqual(h[1], 400)
+        self.assertTrue(h[2])
+        # hover / double-click still find the right point after scrolling
+        self.page.locator('.item-card .cx').first.scroll_into_view_if_needed()
+        xy = self.js("""(i) => { const c = document.querySelector('.cx'), h = c._hit, b = c.getBoundingClientRect();
+            return [b.left + h.X(i), b.top + h.Y(h.res.x[i])]; }""", 395)
+        self.page.mouse.dblclick(xy[0], xy[1])
+        row = self.js('() => window.__spc.selected()')
+        self.assertEqual(row, self.js("() => { const r = document.querySelector('.cx')._hit.res; return r.excelRows[r.points[395].rows[0]]; }"))
+        # picking a row in the table scrolls the chart back to it
+        first = self.js("() => { const r = document.querySelector('.cx')._hit.res; return r.excelRows[r.points[3].rows[0]]; }")
+        self.page.locator('#dataTable tr[data-row="%d"]' % first).click()
+        self.page.wait_for_function("() => document.querySelector('.cx')._hit.from <= 3")
+        # 화면에 맞춤: the whole period on one screen, no scroll
+        self.page.select_option('#pitchSel', '0')
+        geo = self.js("""() => { const s = document.querySelector('.xscroll'), h = s.querySelector('.cx')._hit; return [s.scrollWidth - s.clientWidth, h.from, h.to]; }""")
+        self.assertEqual(geo, [0, 0, 400])
 
 
 if __name__ == '__main__':

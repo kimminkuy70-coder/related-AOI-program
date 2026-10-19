@@ -67,11 +67,17 @@ table.grid tr.done td { color: var(--muted); }
 .ihead b { font-size: 15px; }
 .istats { color: var(--muted); font-size: 13px; }
 .item-card canvas { display: block; width: 100%; }
+/* The whole period scrolls sideways (#24): .xinner is as wide as all points need, the canvases stay the card's
+   width (sticky) and draw the part in view, so the Y axis stays put. XBAR and SIGMA / MR scroll together. */
+.xscroll { overflow-x: auto; overflow-y: hidden; }
+.xinner canvas { position: sticky; left: 0; }
+.xscroll::-webkit-scrollbar { height: 14px; }
+.xscroll::-webkit-scrollbar-thumb { background: #b8c2d3; border-radius: 7px; border: 3px solid #fff; }
+.xscroll::-webkit-scrollbar-track { background: #eef1f5; border-radius: 7px; }
 .cx { height: 300px; }
-.isub { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: 6px; }
-.cr, .ch { height: 150px; }
+.cr { height: 150px; margin-top: 6px; }
+.ch { height: 180px; margin-top: 8px; }
 /* SPC system format: XBAR over SIGMA on the same X axis, histogram under them */
-.item-card.spc .isub { grid-template-columns: 1fr; }
 .item-card.spc .cr { height: 200px; }
 .item-card.spc .ch { height: 220px; }
 .note { font-size: 12px; color: var(--muted); }
