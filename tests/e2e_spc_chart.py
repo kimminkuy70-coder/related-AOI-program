@@ -127,6 +127,16 @@ SPC_RUN = range(20, 28)   # 8 points above EXT_MV_CENTER: the 7th and 8th break 
 SPC_SIGMA_OUT = 5         # EXT_SIGMA above EXT_SIGMA_UCL
 
 
+def spc_sigma(i, out, run):
+    if out and i == SPC_SIGMA_OUT:
+        return 2.5
+    if run and i in SPC_RUN:
+        return 0.7
+    if run and i in (SPC_RUN[0] - 1, SPC_RUN[-1] + 1):
+        return 0.45
+    return 0.45 if i % 2 else 0.68  # alternating around EXT_SIGMA_CENTER 0.564: no SIGMA run
+
+
 def spc_values():
     vals = [round(6.52 + (-1) ** i * SPC_SWING[i % 5], 2) for i in range(36)]  # alternating around EXT_MV_CENTER 6.52
     vals[SPC_OUT] = 8.9
@@ -136,14 +146,15 @@ def spc_values():
     return vals
 
 
-def spc_rows():
+def spc_rows(sigma_out=False, sigma_run=False):
+    """sigma_out: EXT_SIGMA above EXT_SIGMA_UCL at SPC_SIGMA_OUT; sigma_run: EXT_SIGMA above its center on the SPC_RUN rows too."""
     t0 = datetime.datetime(2026, 7, 1, 2, 6, 2)
     rows = [SPC_HEADERS]
     for i, v in enumerate(spc_values()):
         r = dict.fromkeys(SPC_HEADERS)
         r.update({'회사': 'K5', '라인': 'AS11100', 'PLAN_NAME': 'PLAN-A', 'Item': 'I02214', 'SPEC_NAME': 'TSV-COPLANARITY', '공정': 6311,
                   'DIMENSION': 12, 'LEAD': 134, '장비명': 'AOI-16', 'LOT_ID': 'LOT%03d.C0W' % i, '수정일시': t0 + datetime.timedelta(hours=i),
-                  'USL': 13, 'LSL': 0, 'EXT_MV': v, 'EXT_SIGMA': 2.5 if i == SPC_SIGMA_OUT else 0.68,
+                  'USL': 13, 'LSL': 0, 'EXT_MV': v, 'EXT_SIGMA': spc_sigma(i, sigma_out, sigma_run),
                   'EXT_SIGMA_LCL': 0.0, 'EXT_SIGMA_CENTER': 0.564, 'EXT_SIGMA_UCL': 2.279, 'EXT_AVERAGE': v, 'SITE_QTY': 25, 'VALUE_COUNT': 25,
                   'DISPLAY_FLAG': 'Y', 'EXT_MV_UCL': 8.234, 'EXT_MV_CENTER': 6.52, 'EXT_MV_LCL': 4.805, 'TRAN_TIME': t0 + datetime.timedelta(hours=i),
                   'UNIT_NUM': 1, 'DATA_SEQ': 8153366 + i, 'SPEC_SEQ': 129588, 'ACCEPT_FLAG': 'YYYYYNYYYY', 'CPK': 3.2, 'VALUE_1': v, 'CNT': 514})
@@ -385,7 +396,7 @@ class SpcChartTest(unittest.TestCase):
 
     # issue #23: XBAR + SIGMA charts with UCL/LCL lines only, histogram, date and time on the X axis
     def test_spc_system_format_draws_xbar_and_sigma(self):
-        self.open_file('x.xlsx', workbook(spc_rows()))
+        self.open_file('x.xlsx', workbook(spc_rows(sigma_out=True)))
         r = self.js("""() => { const r = window.__spc.results()[0];
             return {sigma: r.sigma.values.slice(0, 7), ucl: r.sigma.ucl[0], lcl: r.sigma.lcl[0], rflags: r.rangeFlags, lots: r.lots.slice(0, 1),
                     card: document.querySelector('.item-card').classList.contains('spc'), stats: document.querySelector('.istats').textContent}; }""")
@@ -564,6 +575,46 @@ class SpcChartTest(unittest.TestCase):
         self.page.select_option('#pitchSel', '0')
         geo = self.js("""() => { const s = document.querySelector('.xscroll'), h = s.querySelector('.cx')._hit; return [s.scrollWidth - s.clientWidth, h.from, h.to]; }""")
         self.assertEqual(geo, [0, 0, 400])
+
+    # issue #25 follow-up: the SIGMA chart is judged too (OCAP, 7 run) and its rows get recommended values with the XBAR ones
+    def test_sigma_ocap_and_run_with_joint_recommended_values(self):
+        rows = spc_rows(sigma_out=True, sigma_run=True)
+        self.open_file('sig.xlsx', workbook(rows))
+        mv, sg = SPC_HEADERS.index('EXT_MV'), SPC_HEADERS.index('EXT_SIGMA')
+        yellow = self.js('() => window.__spc.yellow()')
+        run_rows = [str(i + 2) for i in SPC_RUN][6:]
+        self.assertEqual(yellow[str(SPC_SIGMA_OUT + 2)], ['SR1'])
+        self.assertEqual(sorted(yellow[run_rows[0]]), ['R2', 'SR2'])  # both charts break the 7 run on this row
+        rules = self.js('() => window.__spc.results()[0].events.map(e => e.rule)')
+        self.assertIn('SR1', rules)
+        self.assertIn('SR2', rules)
+        verdict = self.page.locator('#dataTable tr[data-row="%d"] td.verdict' % (SPC_SIGMA_OUT + 2)).text_content()
+        self.assertIn('SIGMA 관리한계 이탈', verdict)
+        # one row: EXT_MV and EXT_SIGMA together
+        self.page.click('#dataTable tr[data-row="%s"] td.rn' % run_rows[0])
+        self.page.click('#fixOneBtn')
+        edits = {(e['row'], e['col']): e['value'] for e in self.js('() => Object.values(window.__spc.edits())')}
+        self.assertEqual(sorted(edits), [(int(run_rows[0]), mv), (int(run_rows[0]), sg)])
+        self.assertLess(edits[(int(run_rows[0]), sg)], 0.564)  # across the SIGMA center line
+        self.assertGreaterEqual(edits[(int(run_rows[0]), sg)], 0)
+        self.assertNotIn(run_rows[0], self.js('() => window.__spc.nowFlags()'))
+        # all: no XBAR or SIGMA rule left, no sigma below 0
+        self.page.click('#fixAllBtn')
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
+        self.assertEqual(self.js('() => window.__spc.results()[0].sigmaFlags'), {})
+        edits = self.js('() => Object.values(window.__spc.edits())')
+        sig = [e for e in edits if e['col'] == sg]
+        self.assertEqual(sorted(e['row'] for e in sig), [SPC_SIGMA_OUT + 2, int(run_rows[0])])
+        for e in sig:
+            self.assertTrue(0 <= e['value'] <= 2.279)
+        saved = bytes(self.js('() => Array.from(window.__spc.copyBytes())'))
+        ws = openpyxl.load_workbook(io.BytesIO(saved)).active
+        c = ws.cell(SPC_SIGMA_OUT + 2, sg + 1)
+        self.assertEqual(c.fill.fgColor.rgb, 'FFFF0000')
+        self.assertEqual(c.value, [e['value'] for e in sig if e['row'] == SPC_SIGMA_OUT + 2][0])
+        # the SIGMA value column is shown next to EXT_MV after 판정
+        self.assertEqual(self.page.locator('#dataTable thead th.vcol').first.text_content(), 'EXT_MV')
+        self.assertEqual(self.page.locator('#dataTable thead th.vcol').nth(1).text_content(), 'EXT_SIGMA')
 
     # issue #25: an exporter's .xlsx that Excel opens but whose zip spells the parts differently
     def test_xlsx_with_other_part_names(self):

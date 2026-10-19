@@ -314,8 +314,11 @@
             var i = t.headers.map(norm).indexOf(w);
             return i < 0 ? null : rows.map(function (d) { return toNum(d.cells[i]); });
           };
-          sigma = {values: col(SPC_FORMAT.sigma.value), UCL: col(SPC_FORMAT.sigma.UCL), LCL: col(SPC_FORMAT.sigma.LCL), CL: col(SPC_FORMAT.sigma.CL)};
-          if (!sigma.values || !sigma.values.some(function (v) { return v !== null; })) sigma = null;
+          // EXT_SIGMA takes recommended values too (#25); a row without EXT_MV has no SIGMA point either.
+          var si = t.headers.map(norm).indexOf(SPC_FORMAT.sigma.value);
+          sigma = si < 0 ? null : {col: si, values: rows.map(function (d, k) { return vals[k] === null ? null : toNum(cell(d, si, withEdits)); }),
+            UCL: col(SPC_FORMAT.sigma.UCL), LCL: col(SPC_FORMAT.sigma.LCL), CL: col(SPC_FORMAT.sigma.CL)};
+          if (sigma && !sigma.values.some(function (v) { return v !== null; })) sigma = null;
           var lt = t.headers.map(norm).indexOf(SPC_FORMAT.lot);
           if (lt >= 0) lots = rows.map(function (d) { return cellText(d.cells[lt]); });
         }
@@ -334,19 +337,37 @@
   }
   function fixRules() { return SPC.FIX_RULES.filter(function (id) { return settings.rules[id]; }); }
 
+  // SIGMA chart rules (#25): OCAP = outside EXT_SIGMA_UCL/LCL, 7 run = run / trend around EXT_SIGMA_CENTER.
+  // No spec limits for a sigma. Their ids carry an S (SR1, SR2, SR3) next to the XBAR ones.
+  var SIGMA_RULES = ['R1', 'R2', 'R3'];
+  function sigmaRules() { return SIGMA_RULES.filter(function (id) { return settings.rules[id]; }); }
+  function sigmaOpts() {
+    var on = {};
+    sigmaRules().forEach(function (id) { on[id] = true; });
+    return {subgroup: 1, baseline: 0, rules: on, n: settings.n, manual: {}, min: 0};
+  }
+  // The SIGMA series as an item of its own, row for row with its XBAR item (same indexes).
+  function sigmaItem(it) {
+    return {name: it.name + ' · SIGMA', values: it.sigma.values, labels: it.labels, cols: {UCL: it.sigma.UCL, LCL: it.sigma.LCL, CL: it.sigma.CL}};
+  }
+  function isSigmaRule(id) { return /^SR\d$/.test(id); }
+  function baseRule(id) { return isSigmaRule(id) ? id.slice(1) : id; }
+
   // excelRow -> rule ids (OCAP / 7 run) of the points on that row
   function rowFlags(list) {
     var out = {}, rules = fixRules();
     list.forEach(function (res) {
-      rules.forEach(function (id) {
-        (res.flags[id] || []).forEach(function (i) {
+      var mark = function (id) {
+        return function (i) {
           res.points[i].rows.forEach(function (k) {
             var row = res.excelRows[k];
             out[row] = out[row] || [];
             if (out[row].indexOf(id) < 0) out[row].push(id);
           });
-        });
-      });
+        };
+      };
+      rules.forEach(function (id) { (res.flags[id] || []).forEach(mark(id)); });
+      Object.keys(res.sigmaFlags || {}).forEach(function (id) { res.sigmaFlags[id].forEach(mark(id)); });
     });
     return out;
   }
@@ -360,7 +381,7 @@
         res.col = it.col;
         res.spcForm = it.spcForm;
         res.lots = it.lots;
-        if (it.sigma && res.size === 1) sigmaChart(res, it.sigma);
+        if (it.sigma && res.size === 1) sigmaChart(res, it);
         return res;
       });
     };
@@ -385,16 +406,31 @@
     seen = keys;
   }
 
-  // SIGMA chart of the SPC system format: EXT_SIGMA per point with its own UCL/LCL columns. A point outside
-  // them is marked like an MR point outside its limits (status badge only; not an OCAP / 7 run row).
-  function sigmaChart(res, sig) {
+  // SIGMA chart of the SPC system format: EXT_SIGMA per point with its own UCL/LCL columns. Since #25 it is
+  // judged like the XBAR chart: OCAP (SR1, outside UCL/LCL) and 7 run (SR2 run, SR3 trend) rows go yellow,
+  // get recommended values and are listed as events. Indexes in res.sigmaFlags are XBAR point indexes.
+  function sigmaChart(res, it) {
+    var sig = it.sigma;
     var at = function (a) { return a ? SPC.fillColumn(res.points.map(function (p) { return a[p.row]; })) : null; };
-    var s = {name: 'SIGMA', values: res.points.map(function (p) { return sig.values[p.row]; }), ucl: at(sig.UCL), lcl: at(sig.LCL), cl: at(sig.CL)};
+    var s = {name: 'SIGMA', col: sig.col, values: res.points.map(function (p) { return sig.values[p.row]; }), ucl: at(sig.UCL), lcl: at(sig.LCL), cl: at(sig.CL)};
     res.sigma = s;
-    res.rangeFlags = [];
-    s.values.forEach(function (v, i) {
-      if (v !== null && ((s.ucl && v > s.ucl[i] + 1e-12) || (s.lcl && v < s.lcl[i] - 1e-12))) res.rangeFlags.push(i);
+    var piOfRow = {};
+    res.points.forEach(function (p, i) { piOfRow[p.row] = i; });
+    var sres = SPC.analyze(sigmaItem(it), sigmaOpts()), flags = {};
+    Object.keys(sres.flags).forEach(function (id) {
+      flags['S' + id] = sres.flags[id].map(function (k) { return piOfRow[sres.points[k].row]; }).filter(function (i) { return i !== undefined; });
     });
+    res.sigmaFlags = flags;
+    res.rangeFlags = flags.SR1 || [];
+    var evs = SPC.events(flags, res.points.map(function (p, i) { return {label: p.label, value: s.values[i]}; }));
+    res.events = res.events.concat(evs).sort(function (a, b) { return a.start - b.start; });
+  }
+
+  // point index -> SIGMA rule ids
+  function sigmaFlagMap(r) {
+    var m = {};
+    Object.keys(r.sigmaFlags || {}).forEach(function (id) { r.sigmaFlags[id].forEach(function (i) { (m[i] = m[i] || []).push(id); }); });
+    return m;
   }
 
   function eventKey(res, ev) { return res.name + '|' + ev.rule + '|' + ev.label + '|' + res.size; }
@@ -430,12 +466,14 @@
   }
 
   function ruleName(id) {
+    if (isSigmaRule(id)) return 'SIGMA ' + ruleName(baseRule(id));
     var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
     if (!r) return id;
     var n = settings.n[id] || r.n;
     return r.name + (r.n ? ' (' + n + '점)' : '');
   }
   function ruleDesc(id) {
+    id = baseRule(id);
     var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
     return r ? r.desc.replace('N점', (settings.n[id] || r.n) + '점') : '';
   }
@@ -473,7 +511,7 @@
     var last = res.points.length - 1;
     var lastFlags = Object.keys(res.flags).filter(function (id) { return res.flags[id].indexOf(last) >= 0; });
     if (lastFlags.indexOf('OOS') >= 0) return {cls: 'bad', text: '규격 이탈'};
-    if (lastFlags.length || res.rangeFlags.indexOf(last) >= 0) return {cls: 'warn', text: '관리 이탈'};
+    if (lastFlags.length || res.rangeFlags.indexOf(last) >= 0 || sigmaFlagMap(res)[last]) return {cls: 'warn', text: '관리 이탈'};
     return {cls: 'ok', text: '정상'};
   }
 
@@ -542,7 +580,7 @@
   }
 
   function shortRule(id) {
-    return {OOS: '규격 이탈', R1: '관리한계 이탈'}[id] || ruleName(id);
+    return {OOS: '규격 이탈', R1: '관리한계 이탈', SR1: 'SIGMA 관리한계 이탈'}[id] || ruleName(id);
   }
 
   function renderData() {
@@ -552,6 +590,10 @@
     var only = $('flagOnly').checked;
     // The charted value columns are repeated after 판정 so a changed value shows without scrolling right.
     var vcols = t.values.map(function (n) { return t.headers.indexOf(n); });
+    if (t.spcForm) {  // EXT_SIGMA gets recommended values too (#25)
+      var si = t.headers.map(norm).indexOf(SPC_FORMAT.sigma.value);
+      if (si >= 0 && vcols.indexOf(si) < 0 && t.values.some(function (n) { return norm(n) === SPC_FORMAT.value; })) vcols.push(si);
+    }
     var td = function (d, c) {
       var e = edits[d.excelRow + ':' + c];
       return e ? '<td class="fixed" title="원래 값 ' + esc(cellText(e.orig)) + '">' + esc(cellText(e.value)) + '</td>' : '<td>' + esc(cellText(d.cells[c])) + '</td>';
@@ -629,23 +671,37 @@
       if (k < 0) return;
       var res = results[j], pi = -1;
       res.points.forEach(function (p, i) { if (p.row === k) pi = i; });
-      if (pi < 0 || !SPC.flagged(res, rules)[pi]) return;
-      tried++;
-      var v = SPC.suggest(it, optsFor(it.name), k, rules);
-      if (v !== null) { setEdit(row, it.col, v); made++; }
+      if (pi < 0) return;
+      // XBAR (EXT_MV) and SIGMA (EXT_SIGMA) of the row each get the value that clears that chart (#25)
+      if (SPC.flagged(res, rules)[pi]) {
+        tried++;
+        var v = SPC.suggest(it, optsFor(it.name), k, rules);
+        if (v !== null) { setEdit(row, it.col, v); made++; }
+      }
+      if (res.sigma && sigmaFlagMap(res)[pi]) {
+        tried++;
+        var sv = SPC.suggest(sigmaItem(it), sigmaOpts(), k, sigmaRules());
+        if (sv !== null) { setEdit(row, it.sigma.col, sv); made++; }
+      }
     });
     if (!tried) setStatus(row + '행은 OCAP · 7run이 없습니다 (이미 수정됐거나 정상)', 'warn');
     else if (!made) setStatus(row + '행: 다른 점을 새로 걸리게 하지 않는 추천값을 찾지 못했습니다', 'warn');
+    else if (made < tried) { afterEdits(row + '행에 추천값 ' + made + '칸 입력 · ' + (tried - made) + '칸은 찾지 못함'); setStatus($('status').textContent, 'warn'); }
     else afterEdits(row + '행에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
   }
 
   function fixAll() {
     if (settings.subgroup > 1) return;
     var rules = fixRules(), made = 0, failed = 0;
-    fixItems.forEach(function (it) {
+    fixItems.forEach(function (it, j) {
       var out = SPC.fixAll(it, optsFor(it.name), rules);
       out.changes.forEach(function (ch) { setEdit(it.excelRows[ch.row], it.col, ch.value); made++; });
       failed += out.failed;
+      if (results[j] && results[j].sigma) {
+        out = SPC.fixAll(sigmaItem(it), sigmaOpts(), sigmaRules());
+        out.changes.forEach(function (ch) { setEdit(it.excelRows[ch.row], it.sigma.col, ch.value); made++; });
+        failed += out.failed;
+      }
     });
     afterEdits('추천값 ' + made + '칸 입력' + (failed ? ' · ' + failed + '점은 추천값을 찾지 못함' : '') + ' · 저장하려면 [수정본 엑셀 저장]');
     if (failed) setStatus($('status').textContent, 'warn');
@@ -717,8 +773,8 @@
       var log = ocapLog[ev.key] || {};
       var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
       h += '<tr class="click' + (newKeys[ev.key] ? ' new' : '') + (log.done ? ' done' : '') + '" data-key="' + esc(ev.key) + '"><td>' + esc(ev.item) + '</td><td class="l">' + esc(where) +
-        '</td><td>' + fmt(ev.value) + '</td><td class="l"><span class="rule ' + ev.rule + '">' + esc(ruleName(ev.rule)) + '</span></td><td class="l">' +
-        esc((settings.ocap[ev.rule] || '').split('\n')[0]) + ' …</td><td class="l">' + (log.done ? '조치 완료' : '<b>미조치</b>') + '</td><td class="l">' + esc(log.note || '') + '</td></tr>';
+        '</td><td>' + fmt(ev.value) + '</td><td class="l"><span class="rule ' + baseRule(ev.rule) + '">' + esc(ruleName(ev.rule)) + '</span></td><td class="l">' +
+        esc((settings.ocap[baseRule(ev.rule)] || '').split('\n')[0]) + ' …</td><td class="l">' + (log.done ? '조치 완료' : '<b>미조치</b>') + '</td><td class="l">' + esc(log.note || '') + '</td></tr>';
     });
     if (!rows.length) h += '<tr><td colspan="7" class="l muted">' + (openOnly ? '미조치 이상 없음' : '이상 없음') + '</td></tr>';
     $('events').className = 'grid';
@@ -963,9 +1019,10 @@
     }
     ctx.stroke();
     var rad = step > 7 ? 3 : 2;
+    var bad = sigmaFlagMap(r);
     for (i = a; i < b; i++) {
       if (S.values[i] === null) continue;
-      var out = r.rangeFlags.indexOf(i) >= 0;
+      var out = !!bad[i];
       ctx.beginPath();
       ctx.arc(X(i), Y(S.values[i]), out ? rad + 1.5 : rad, 0, Math.PI * 2);
       ctx.fillStyle = out ? '#f59e0b' : '#475569';
@@ -1137,7 +1194,10 @@
       lines.push('SIGMA ' + fmt(r.sigma.values[i]));
       if (r.sigma.ucl) lines.push('UCL ' + fmt(r.sigma.ucl[i]));
       if (r.sigma.lcl) lines.push('LCL ' + fmt(r.sigma.lcl[i]));
-      if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ SIGMA 관리한계 이탈');
+      var sf = sigmaFlagMap(r)[i];
+      if (sf) lines.push('⚠ ' + sf.map(ruleName).join(', '));
+      var se = edits[r.excelRows[p.rows[0]] + ':' + r.sigma.col];
+      if (se) lines.push('추천값으로 수정됨 (원래 ' + cellText(se.orig) + ')');
     } else {
       lines.push(r.range.name + ' ' + fmt(r.range.values[i]));
       if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ ' + r.range.name + ' 관리한계 이탈');
@@ -1237,8 +1297,8 @@
     if (!ev) return;
     var log = ocapLog[key] || {};
     var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
-    var h = '<h3>OCAP — ' + esc(ev.item) + '</h3><div class="row"><span class="rule ' + ev.rule + '">' + esc(ruleName(ev.rule)) + '</span><span class="muted">' + esc(ruleDesc(ev.rule)) + '</span></div>' +
-      '<div class="row">위치: <b>' + esc(where) + '</b> · 값 <b>' + fmt(ev.value) + '</b></div><div class="steps">' + esc(settings.ocap[ev.rule] || '(조치 내용 없음: [규칙 · OCAP 설정]에서 입력)') + '</div>' +
+    var h = '<h3>OCAP — ' + esc(ev.item) + '</h3><div class="row"><span class="rule ' + baseRule(ev.rule) + '">' + esc(ruleName(ev.rule)) + '</span><span class="muted">' + esc(ruleDesc(ev.rule)) + '</span></div>' +
+      '<div class="row">위치: <b>' + esc(where) + '</b> · 값 <b>' + fmt(ev.value) + '</b></div><div class="steps">' + esc(settings.ocap[baseRule(ev.rule)] || '(조치 내용 없음: [규칙 · OCAP 설정]에서 입력)') + '</div>' +
       '<div class="row"><label class="chk"><input type="checkbox" id="dDone"' + (log.done ? ' checked' : '') + '> 조치 완료</label>' + (log.at ? '<span class="muted small">기록 ' + esc(log.at) + '</span>' : '') + '</div>' +
       '<textarea id="dNote" placeholder="조치 내용 메모 (이 PC의 브라우저에만 저장)">' + esc(log.note || '') + '</textarea>' +
       '<div class="buttons"><button class="ghost" id="dCancel">닫기</button><button class="primary" id="dOk">저장</button></div>';

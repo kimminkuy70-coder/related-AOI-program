@@ -1,7 +1,7 @@
-SPC Chart HTML v5 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge에서 바로 실행)
+SPC Chart HTML v6 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge에서 바로 실행)
 
 무엇인가
-- SPC_Chart_HTML_v5.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
+- SPC_Chart_HTML_v6.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
 - 실시간 감시가 아니라, 정해진 기간 동안의 데이터(엑셀 시트 .xlsx / .xlsm / .csv)를 SPC 차트로 보는 프로그램입니다.
 - 기간 전체를 그립니다. 점이 많아 화면을 넘으면 차트 아래 가로 스크롤 막대(또는 Shift + 마우스 휠)로 넘겨 봅니다.
   XBAR와 SIGMA(또는 MR) 차트는 같이 움직이고, 왼쪽 Y축 눈금과 오른쪽 UCL/LCL 글자는 제자리에 있습니다.
@@ -20,7 +20,7 @@ SPC Chart HTML v5 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge�
 - xlsx 압축 풀기용 pako(MIT) 코드를 파일 안에 넣었습니다 (외부에서 불러오지 않음).
 
 사용 순서
-1. SPC_Chart_HTML_v5.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터(300시간 기간)로 화면을 미리 볼 수 있습니다.
+1. SPC_Chart_HTML_v6.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터(300시간 기간)로 화면을 미리 볼 수 있습니다.
 2. [엑셀 열기] → 엑셀 파일 선택. Edge가 파일 보기를 물으면 [허용]. 파일을 창에 끌어 놓아도 됩니다.
 3. 엑셀에서 데이터를 고쳐 저장했으면 [새로고침]을 누르면 다시 읽습니다.
    [자동 새로고침]을 켜면(기본 꺼짐) 파일이 저장될 때마다 자동으로 다시 읽습니다 (기본 2초마다 파일 확인).
@@ -41,7 +41,9 @@ SPC Chart HTML v5 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge�
 - SPC 시스템에서 내려받은 양식(한 줄 = 한 Lot, EXT_MV · EXT_MV_UCL · EXT_MV_CENTER · EXT_MV_LCL · USL · LSL · LOT_ID …)은
   자동으로 알아봅니다 (위쪽에 "SPC 시스템 양식" 표시). 항목은 Item 열.
   · XBAR 차트: EXT_MV. 선은 UCL/LCL(EXT_MV_UCL/LCL 열)만 그립니다 (USL/LSL/CL 선 없음, 판정에는 USL/LSL/EXT_MV_CENTER를 씀).
-  · SIGMA 차트: XBAR 바로 아래에 EXT_SIGMA, 선은 EXT_SIGMA_UCL/LCL. 한계를 벗어난 점은 주황 (OCAP · 7run 노란 행 대상은 아님).
+  · SIGMA 차트: XBAR 바로 아래에 EXT_SIGMA, 선은 EXT_SIGMA_UCL/LCL. v6부터 XBAR처럼 판정합니다:
+    OCAP = EXT_SIGMA_UCL/LCL 밖, 7run = EXT_SIGMA_CENTER 기준 7점 연속 한쪽 · 7점 연속 상승/하강 (규칙 이름 앞에 "SIGMA").
+    걸린 점은 주황, 그 행은 노란색, 이상 목록(OCAP)에도 나옵니다. 규칙 켜기 · 점 수는 [규칙 · OCAP 설정]의 관리한계 이탈 · Run · Trend를 같이 씁니다.
   · X축: 날짜 · 시간 (TRAN_TIME, 없으면 수정일시, 없으면 LOT_ID). 날짜 아래에 시각을 두 줄로 씁니다. LOT_ID는 점에 마우스를 올리면 보입니다.
   · 다른 숫자 열(CPK, VALUE_1 …)은 위쪽 체크로 더 그릴 수 있습니다 (그 열은 보통 관리도로 그림).
 - 확장자가 .xls/.xlsx여도 속이 HTML 표인 파일(일부 시스템이 이렇게 내려받음)도 읽습니다.
@@ -91,8 +93,10 @@ OCAP (Out of Control Action Plan)
   원본 파일과 같은 이름을 고르면 저장하지 않습니다. 수정본에는 노란 행(노랑 채우기)과 고친 칸(빨강 채우기)이 그대로 들어가고,
   다른 시트 · 서식 · 수식은 원본과 같습니다 (고친 칸에 수식이 있었으면 값으로 바뀜, 열 때 수식을 다시 계산).
   .csv · HTML 표 파일은 새 .xlsx(시트 1개)로 만듭니다.
-- 추천값은 subgroup 1 (I-MR)에서만 계산합니다. SPC 시스템 양식은 차트로 그린 값(EXT_MV)만 바꾸고,
-  같은 행의 EXT_AVERAGE · VALUE_1 등은 그대로 둡니다.
+- 추천값은 subgroup 1 (I-MR)에서만 계산합니다. SPC 시스템 양식은 두 차트를 같이 봅니다 (v6):
+  XBAR에 걸린 행은 EXT_MV, SIGMA에 걸린 행은 EXT_SIGMA, 둘 다 걸린 행은 두 칸을 같이 고쳐 두 차트 모두에서 풀리게 합니다.
+  EXT_SIGMA 추천값도 같은 방법(SIGMA CL ± 2σ 안, 0 이상)으로 정합니다. 표에서 판정 오른쪽에 EXT_MV · EXT_SIGMA 열이 같이 보입니다.
+  같은 행의 EXT_AVERAGE · VALUE_1 등 원 데이터는 그대로 둡니다.
 - 엑셀에서 원본을 고쳐 저장해도 추천값은 유지됩니다. 단, 추천값을 넣은 칸의 원본 값이 바뀌었으면 그 추천값은 지웁니다.
 
 알아 둘 것

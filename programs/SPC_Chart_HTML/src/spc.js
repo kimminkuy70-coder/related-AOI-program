@@ -271,7 +271,7 @@
   }
 
   // Recommended value for item.values[row] (I-MR only): the point no longer breaks `rules` and no other
-  // point starts breaking them. Tried in order: moving toward CL (staying inside ±2σ and the spec),
+  // point starts breaking them; never below opts.min when given. Tried in order: moving toward CL (staying inside ±2σ and the spec),
   // just across CL, then anything inside ±2σ nearest the old value. null if the point is fine or nothing works.
   function suggest(item, opts, row, rules) {
     if ((opts.subgroup | 0) > 1) return null;
@@ -303,6 +303,7 @@
       tried[v] = 1;
       if (v - cl > 2 * up + eps || cl - v > 2 * dn + eps) continue;
       if ((usl !== null && v > usl) || (lsl !== null && v < lsl)) continue;
+      if (isNum(opts.min) && v < opts.min) continue;  // e.g. a sigma below 0
       var vals = item.values.slice();
       vals[row] = v;
       var after = flagged(analyze(Object.assign({}, item, {values: vals}), opts), rules);
@@ -329,5 +330,5 @@
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, suggest: suggest, fixAll: fixAll, mean: mean, sd: sd};
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, fixAll: fixAll, mean: mean, sd: sd};
 })();
