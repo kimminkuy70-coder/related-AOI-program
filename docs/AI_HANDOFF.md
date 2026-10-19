@@ -1,6 +1,6 @@
 # AI 인수인계 (related-AOI-program)
 
-마지막 갱신: 2026-10-19 · 기준 커밋 `446c47e` (SPC 브랜치 `claude/loving-curie-79nq5k`, #25 커밋은 그 다음) · 이슈 #25
+마지막 갱신: 2026-10-19 · 기준 커밋 `6bdaf67` (SPC 브랜치 `claude/loving-curie-79nq5k`, v6 커밋은 그 다음) · 이슈 #25 (후속: 대화)
 
 ## 지금 상태
 - **SPC 프로그램(#21~#25)은 브랜치 `claude/loving-curie-79nq5k`에만 있음** (#21 이슈 제목 "새 브랜치에 작성"; #22~#24도 그 파일 수정이라 같은 브랜치에서 이어 작업). 기본 브랜치에는 이 문서만 같은 내용으로 올림. 합칠지는 소유자 결정 (아래 남은 일).
@@ -8,9 +8,10 @@
 - 프로그램:
   - `programs/AOI_Photo_Sorter_HTML/` **AOI Photo Sorter HTML v2** (`AOI_Photo_Sorter_HTML_v2.html`, Edge에서 여는 HTML 한 파일, Python·.exe 없음)가 sorter의 유일한 버전. 소스 `src/`, 빌드 `python tools/build_html.py` (`--check`로 최신인지 확인). 버전 이름은 `version.json`.
   - `AOI_Color_Gray_Matcher` (Final_v16), `Wafer_Map_Converter` (WebView2_v6): 그대로.
-  - `programs/SPC_Chart_HTML/` **SPC Chart HTML v5** (`SPC_Chart_HTML_v5.html`, 브랜치 `claude/loving-curie-79nq5k`; v1→v2(#22)→v3(#23)→v4(#24)→v5(#25), 옛 파일은 git history에 남음). v5(#25): 다른 프로그램이 만든 .xlsx(zip 안 부분 이름이 엑셀과 다름)를 읽음 + .ods 읽기 + 못 읽을 때 파일 안 이름을 오류 글에 보여 줌 (아래 #25 내용). **실시간 감시가 아니라 정해진 기간의 데이터를 보는 프로그램** (소유자 #24). v4 추가(#24): 기간 전체를 그리고 가로 스크롤 (`표시 점 수` 기본 0 = 전체, `점 간격` 기본 16 px / 화면에 맞춤), XBAR와 SIGMA(MR)가 같이 스크롤, Y축 고정, 표의 행을 누르면 차트가 그 점으로 넘어감, [자동 새로고침](옛 [실시간]) 기본 꺼짐, 예제는 300점 고정 기간. v3 추가(#23): SPC 시스템 양식이면 SPC 시스템 화면처럼 XBAR 차트(EXT_MV, UCL/LCL 선만) 바로 아래 SIGMA 차트(EXT_SIGMA, EXT_SIGMA_UCL/LCL 선), X축 날짜·시간 두 줄(TRAN_TIME → 수정일시 → LOT_ID 순), 히스토그램 = 도수 글자 + 정규분포 곡선 + USL/LSL + 평균±3σ(모든 양식 공통, CL 선은 뺌). v2 추가(#22): SPC 시스템 양식 자동 인식(EXT_MV, EXT_MV_UCL/CENTER/LCL), HTML 표 파일 읽기, 차트 아래 데이터 표(OCAP·7run 행 노랑), 차트 점 더블클릭 → 표의 그 행, 추천값 입력(선택 행 / 전체 일괄), 수정본 xlsx 저장(원본 복사 + 고친 칸 빨강). 나머지는 v1과 같음: 엑셀(.xlsx/.xlsm/.csv)을 골라 I-MR / Xbar-R 관리도, MR/R 차트, 히스토그램, Cp/Cpk/Ppk를 그림. File System Access API 파일 handle을 2초마다 확인(lastModified·size)해 엑셀 저장 시 자동 갱신. 판정 규칙(규격 이탈, 관리한계 이탈, Run 7, Trend 7, 2/3>2σ, 4/5>1σ, 선택: 14 교대, 15 hugging, 8 1σ 밖), 새 이상 알림(배너+소리), OCAP 조치 표(규칙별 조치 문구 편집, 조치 완료·메모는 localStorage), CSV 저장, 예제 데이터. 소스 `src/` (`xlsx.js` 자체 xlsx 읽기 + pako, `spc.js` 계산, `app.js` 화면), 빌드 `python tools/build_html.py --program SPC_Chart_HTML`.
+  - `programs/SPC_Chart_HTML/` **SPC Chart HTML v6** (`SPC_Chart_HTML_v6.html`, 브랜치 `claude/loving-curie-79nq5k`; v1→v2(#22)→v3(#23)→v4(#24)→v5(#25)→v6(#25 후속), 옛 파일은 git history에 남음). v6: SIGMA 차트도 OCAP·7run 판정, 추천값은 XBAR·SIGMA 두 칸을 같이 (아래 #25 후속). v5(#25): 다른 프로그램이 만든 .xlsx(zip 안 부분 이름이 엑셀과 다름)를 읽음 + .ods 읽기 + 못 읽을 때 파일 안 이름을 오류 글에 보여 줌 (아래 #25 내용). **실시간 감시가 아니라 정해진 기간의 데이터를 보는 프로그램** (소유자 #24). v4 추가(#24): 기간 전체를 그리고 가로 스크롤 (`표시 점 수` 기본 0 = 전체, `점 간격` 기본 16 px / 화면에 맞춤), XBAR와 SIGMA(MR)가 같이 스크롤, Y축 고정, 표의 행을 누르면 차트가 그 점으로 넘어감, [자동 새로고침](옛 [실시간]) 기본 꺼짐, 예제는 300점 고정 기간. v3 추가(#23): SPC 시스템 양식이면 SPC 시스템 화면처럼 XBAR 차트(EXT_MV, UCL/LCL 선만) 바로 아래 SIGMA 차트(EXT_SIGMA, EXT_SIGMA_UCL/LCL 선), X축 날짜·시간 두 줄(TRAN_TIME → 수정일시 → LOT_ID 순), 히스토그램 = 도수 글자 + 정규분포 곡선 + USL/LSL + 평균±3σ(모든 양식 공통, CL 선은 뺌). v2 추가(#22): SPC 시스템 양식 자동 인식(EXT_MV, EXT_MV_UCL/CENTER/LCL), HTML 표 파일 읽기, 차트 아래 데이터 표(OCAP·7run 행 노랑), 차트 점 더블클릭 → 표의 그 행, 추천값 입력(선택 행 / 전체 일괄), 수정본 xlsx 저장(원본 복사 + 고친 칸 빨강). 나머지는 v1과 같음: 엑셀(.xlsx/.xlsm/.csv)을 골라 I-MR / Xbar-R 관리도, MR/R 차트, 히스토그램, Cp/Cpk/Ppk를 그림. File System Access API 파일 handle을 2초마다 확인(lastModified·size)해 엑셀 저장 시 자동 갱신. 판정 규칙(규격 이탈, 관리한계 이탈, Run 7, Trend 7, 2/3>2σ, 4/5>1σ, 선택: 14 교대, 15 hugging, 8 1σ 밖), 새 이상 알림(배너+소리), OCAP 조치 표(규칙별 조치 문구 편집, 조치 완료·메모는 localStorage), CSV 저장, 예제 데이터. 소스 `src/` (`xlsx.js` 자체 xlsx 읽기 + pako, `spc.js` 계산, `app.js` 화면), 빌드 `python tools/build_html.py --program SPC_Chart_HTML`.
   - 속도 시험 페이지: `experiments/browser_speed_test/AOI_Browser_Speed_Test.html`.
 - 시험 (2026-10-19, Linux):
+  - #25 후속 v6 (브랜치 `claude/loving-curie-79nq5k`): 같은 명령 37개 통과 (SPC 26 = 25 + SIGMA 1). 시험 자료 `spc_rows()`의 EXT_SIGMA를 0.68 고정 → 0.68/0.45 교대로 바꿈 (고정이면 SIGMA 7run이 모든 행에 걸림), SIGMA 이탈 점은 `spc_rows(sigma_out=True)`일 때만. headless Chromium 스크린샷으로 SIGMA 주황 점·노란 행 확인.
   - #25 (브랜치 `claude/loving-curie-79nq5k`): `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 36개 통과 (SPC 25 = 기존 23 + #25 2). `test_startup`/`test_wafer_engine` 11개 오류는 전과 같음 (numpy·webview 없음). Windows Edge, 소유자의 실제 파일로는 확인 못 함.
   - #24 (브랜치 `claude/loving-curie-79nq5k`): `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 34개 통과 (SPC 23 = 기존 22 + #24 1). 기존 시험 수정: 자동 새로고침을 쓰는 시험 3개는 `#liveChk`를 켬, X축 라벨 기대값 `13:06` → `11:06` (라벨을 첫 점부터 세게 바꿈). `test_startup`/`test_wafer_engine` 11개 오류는 전과 같음 (numpy·webview 없음). headless Chromium 스크린샷으로 가로 스크롤 화면 확인. Windows Edge 확인 못 함.
   - #23 (브랜치 `claude/loving-curie-79nq5k`): `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 33개 통과 (SPC 22 = 기존 20 + #23 2, 기존 양식 시험 1개는 X축 기대값을 LOT_ID → TRAN_TIME으로 바꿈). headless Chromium 스크린샷으로 XBAR/SIGMA/히스토그램 확인. Windows Edge 확인 못 함.
@@ -24,6 +25,7 @@
 | 날짜 | 이슈 | 요청 | 결과 |
 |---|---|---|---|
 | 2026-10-18 | (대화) | Sorter HTML v1만 남기고 Python/.exe 버전 삭제, HTML 브랜치 합침, 개발자 워터마크 | `claude/relaxed-goldberg-dnf5nt`에 반영 |
+| 2026-10-19 | #25 후속 (대화) | "ㅇㅇ 둘다해, 두 차트를 동시에 고려해서 알맞은 추천값" | SPC Chart HTML v6. SIGMA OCAP(SR1)·7run(SR2 Run, SR3 Trend) 판정·노란 행·이상 목록, 추천값은 걸린 차트의 칸(EXT_MV / EXT_SIGMA)을 같이. 시험 1개 추가, 37개 통과. 릴리스 없음 |
 | 2026-10-19 | #25 | SPC v4에서 `20261019214451.xlsx`가 "엑셀 통합 문서(.xlsx)가 아닙니다"로 안 열림 → 수정 | SPC Chart HTML v5 (브랜치 `claude/loving-curie-79nq5k`). xlsx 부분을 `_rels/.rels`로 찾고 이름을 대소문자·`\`·앞 `/` 무시로 찾음, .ods 읽기, 오류 글에 zip 안 이름. 시험 2개 추가, 36개 통과. 실제 파일은 못 받아(403) 원인 확정 못 함. 릴리스 없음. 이슈 중 질문 "시그마 차트에서도 ocap·7run 뜨나"에 답함 (아니오, 확인 요청) |
 | 2026-10-19 | #24 | SPC v3: 긴 기간 데이터가 화면에서 잘림 → 횡 스크롤. "실시간이 아니고 정해진 기간 동안 SPC 차트 보는 프로그램" | SPC Chart HTML v4 (브랜치 `claude/loving-curie-79nq5k`). 가로 스크롤, 자동 새로고침 기본 꺼짐. 시험 1개 추가, 34개 통과. 릴리스 없음 |
 | 2026-10-19 | #23 | SPC v2 수정: 실제 SPC 화면처럼 XBAR·SIGMA 차트 2개만, UCL/LCL 선만, 히스토그램은 정규분포 선·spec limit·3σ 선·도수 글자, X축 날짜·시간 | SPC Chart HTML v3 (브랜치 `claude/loving-curie-79nq5k`). 시험 2개 추가, 33개 통과. 릴리스 없음 |
@@ -69,7 +71,13 @@
 - 수정 (`xlsx.js`): `unzip`이 `partKey`(`\`→`/`, 앞 `./`·`/` 제거, 소문자)로 찾음. `parts(zip)`: workbook = `_rels/.rels` officeDocument → `[Content_Types].xml`의 `spreadsheetml.sheet.main` → 이름이 `workbook*.xml`인 항목 순. sharedStrings·styles·calcChain은 workbook의 .rels 관계로 (없으면 같은 폴더). Strict Open XML의 r:id 네임스페이스, `t="d"` 칸. `copyXlsx`(수정본)도 같은 방법으로 찾고, 바꾼 항목은 원래 zip 이름 그대로 씀. `mimetype`이 ODS면 `readOds`(content.xml, 반복 열·행). workbook이 `.bin`이면 .xlsb 안내. 그래도 못 찾으면 오류 글에 zip 안 이름 8개까지.
 - 시험 (`tests/e2e_spc_chart.py` #25 2개): workbook 이름을 바꾸고 .rels로만 가리킨 파일, `\` 구분·대문자 이름 파일을 열고 일괄 추천값 → 수정본 이름 목록이 원본과 같은지·빨강 fill; .ods 열기; workbook 없는 zip은 안 이름을 보여 주는지; .xlsb 안내.
 
+## #25 후속 내용 (SPC Chart HTML v6, 소유자 대화 지시)
+- `app.js`: `sigmaItem(it)` = EXT_SIGMA를 XBAR 항목과 같은 행 순서의 별도 item(한계 EXT_SIGMA_UCL/LCL/CENTER 열)으로, `sigmaOpts()` = subgroup 1, 규칙 R1·R2·R3만(설정의 켜기·점 수를 같이 씀, OOS 없음), `min: 0`. `sigmaChart`가 `SPC.analyze`로 판정해 `res.sigmaFlags` = {SR1, SR2, SR3: XBAR 점 번호}, `res.rangeFlags` = SR1, SIGMA 이벤트를 `res.events`에 더함 (`SPC.events` 내보냄). 규칙 id `SR*`는 `ruleName`이 "SIGMA …"로, OCAP 문구는 `baseRule`로 R1~R3 것을 씀. `rowFlags`·`statusOf`·툴팁·SIGMA 점 색에 반영.
+- 추천값: [선택 행]은 그 행의 XBAR가 걸리면 EXT_MV, SIGMA가 걸리면 EXT_SIGMA를 각각 `SPC.suggest`로 (둘 다면 두 칸). [전체 일괄]은 `SPC.fixAll`을 XBAR item, SIGMA item에 각각. EXT_MV와 EXT_SIGMA는 서로 다른 열이라 한 칸을 바꿔도 다른 차트 판정은 안 바뀜 → 각 차트에서 풀리는 값을 고르면 두 차트를 같이 만족. `spc.js` `suggest`에 `opts.min`(σ는 0 이상). `items()`의 sigma 값도 수정(edits)을 반영, `sigma.col`.
+- 데이터 표: 판정 오른쪽 값 열에 EXT_SIGMA도 (SPC 양식일 때).
+
 ## 내가 정한 해석 (확인 전)
+- #25 후속: SIGMA 7run도 XBAR와 같은 Run 7점·Trend 7점 (설정 공유), SIGMA 아래쪽 run(산포가 줄어든 경우)도 걸림. SIGMA 추천값 범위는 SIGMA CL ± 2σ(σ = (UCL−CL)/3 위·아래 따로) 안, 0 이상. 원 데이터(VALUE_1~25, EXT_AVERAGE)는 바꾸지 않음 (원하면 평균·σ가 추천값이 되도록 원 데이터를 바꾸는 방법을 제안해 둠).
 - #25: 실제 파일을 못 봐서 "zip 안 부분 이름이 다르다"로 보고 고침. v5에서도 안 열리면 새 오류 글(파일 안 이름 목록)을 이슈에 붙여 달라고 함. 버전 이름 v5로 올림.
 - #24: 자동 새로고침 기능은 지우지 않고 기본 꺼짐으로만 바꿈 (엑셀을 고쳐 저장하고 다시 볼 때 쓸 수 있게). 스크롤 처음 위치는 기간의 처음(왼쪽). 기본 점 간격 16 px (514행이면 약 8,200 px 폭). 새 이상 알림(배너·소리)은 그대로 두었음 (자동 새로고침을 켰을 때만 의미 있음).
 - #23: "UCL/LCL line만 존재" = XBAR·SIGMA 차트에 UCL/LCL 선만 그림 (CL, USL/LSL, ±1σ·±2σ 선 없음). 판정(OCAP·7run)은 그대로 USL/LSL·EXT_MV_CENTER를 씀. SIGMA 한계 이탈은 주황 점과 상태 배지에만 반영, 노란 행·추천값 대상은 아님. 히스토그램 3σ 선 = 평균 ± 3 × 전체 표준편차(정규분포 곡선과 같은 σ). 히스토그램 변경(도수, 3σ, CL 선 제거)은 일반 양식에도 같이 적용. X축은 TRAN_TIME(측정 시각)을 씀.
@@ -84,8 +92,9 @@
 - 수정 뒤 이름을 v2로 올림 (sorter는 이슈마다 버전을 올려 옴).
 
 ## 남은 일 / 소유자에게 물은 것
-- **#25 (답 기다림)**: v5로 `20261019214451.xlsx`가 열리는지 확인. 안 열리면 오류 글 전체를 알려 주거나 파일을 저장소에 commit. 이슈 진행 중 질문 "시그마 차트에서도 OCAP·7run 뜨나" → 답: 지금은 아님 (SIGMA는 UCL/LCL 이탈 점만 주황·상태 배지, 노란 행·7run 판정·추천값은 XBAR(EXT_MV)만). SIGMA에도 OCAP(한계 이탈)·7run을 넣을지 물음 (#23 질문 ⑥과 같은 내용).
-- **#21~#24 SPC (답 기다림)**: ⑦ #24 해석 확인 (자동 새로고침을 아예 없앨지, 기본 점 간격 16 px·처음 위치 왼쪽이 괜찮은지). ⑥ #23 해석 확인 (SIGMA 이탈을 OCAP 대상으로 할지, X축 시간 열 TRAN_TIME이 맞는지, 히스토그램 3σ를 σ(within)로 할지). ① 첨부 사진·엑셀을 못 받아서(HTTP 403) 화면·양식이 실제와 다르면 글로 알려 주거나 파일을 저장소에 commit, ② 기본 브랜치에 합칠지 (합치면 그 뒤로는 기본 브랜치에서 이어 작업), ③ OCAP 규칙별 회사 조치 문구, 판정 규칙 기본값(7점 등) 확인, ④ Windows Edge + 엑셀 실제 사용 확인 (수정본을 Excel이 경고 없이 여는지 포함), ⑤ #22 해석 확인: ocap/7run 범위, 추천값 기준, EXT_MV 외 열(EXT_AVERAGE, VALUE_1)도 같이 고칠지, 노란 행을 런 전체로 할지.
+- **#25 후속**: 소유자가 SIGMA OCAP·7run을 넣으라고 답함 ("ㅇㅇ 둘다해") → v6에서 끝남. 원 데이터 VALUE_1~25도 맞출지는 묻기만 함.
+- **#25 (답 기다림)**: v6(또는 v5)로 `20261019214451.xlsx`가 열리는지 확인. 안 열리면 오류 글 전체를 알려 주거나 파일을 저장소에 commit.
+- **#21~#24 SPC (답 기다림)**: ⑦ #24 해석 확인 (자동 새로고침을 아예 없앨지, 기본 점 간격 16 px·처음 위치 왼쪽이 괜찮은지). ⑥ #23 해석 확인 (SIGMA 이탈 OCAP은 #25 후속에서 넣음, X축 시간 열 TRAN_TIME이 맞는지, 히스토그램 3σ를 σ(within)로 할지). ① 첨부 사진·엑셀을 못 받아서(HTTP 403) 화면·양식이 실제와 다르면 글로 알려 주거나 파일을 저장소에 commit, ② 기본 브랜치에 합칠지 (합치면 그 뒤로는 기본 브랜치에서 이어 작업), ③ OCAP 규칙별 회사 조치 문구, 판정 규칙 기본값(7점 등) 확인, ④ Windows Edge + 엑셀 실제 사용 확인 (수정본을 Excel이 경고 없이 여는지 포함), ⑤ #22 해석 확인: ocap/7run 범위, 추천값 기준, EXT_MV 외 열(EXT_AVERAGE, VALUE_1)도 같이 고칠지, 노란 행을 런 전체로 할지.
 - **브랜치 이름 정리 (#20, 답 기다림)**: routine 규칙상 브랜치 삭제·이름 변경은 하지 않음. 제안: ① 기본 브랜치 `claude/program-startup-performance-pjltyn` → `main`으로 이름 변경 (Settings → Branches, GitHub가 열린 PR·기본 브랜치 설정을 옮겨 줌), ② 다 합쳐진 `claude/relaxed-goldberg-dnf5nt`, `claude/cool-meitner-n7uz0l` 삭제, ③ `ccr-0b38d41f-r1uk33`(KLA-Camtek Converter 초기 작업, 지금은 KLA-CAMTEK-CONVERTER 저장소로 옮겨짐) 삭제 또는 `archive/...`로 이름 변경. 프로그램별 브랜치를 따로 두기보다 한 브랜치(`main`)에 `programs/<이름>/` 폴더로 나누는 지금 구조를 유지하자고 제안. 소유자가 직접 바꾸거나 허락하면 진행. 기본 브랜치 이름을 바꾸면 routine 지시문(작업 브랜치 = 기본 브랜치)은 그대로 맞음.
 - Windows/Edge에서 HTML v2 실제 확인은 아직 안 됨.
 - HTML sorter 릴리스 방법: 소유자가 GitHub 화면에서 Release를 만들거나, release.yml이 `version.json`도 읽도록 고치는 것을 허락하면 다음 run이 처리 (routine은 workflow를 이슈 요청 없이 고치지 않음).
