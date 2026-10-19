@@ -1,5 +1,6 @@
-// Minimal .xlsx / .xlsm / .csv reader: every sheet as rows of cells (number, string, Date or null).
+// Minimal .xlsx / .xlsm / .csv / HTML-table reader: every sheet as rows of cells (number, string, Date or null).
 // Formula cells give the value Excel saved with the file. Needs pako (inflateRaw) for zip entries.
+// copy(): the same workbook with some cells changed and rows/cells coloured (the original file is never written).
 (function () {
   'use strict';
 
@@ -16,10 +17,16 @@
       var method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
       var nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true), commentLen = dv.getUint16(p + 32, true);
       var local = dv.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
-      files[name.replace(/^\//, '')] = {method: method, size: size, local: local};
+      files[name.replace(/^\//, '')] = {method: method, size: size, local: local, crc: dv.getUint32(p + 16, true), usize: dv.getUint32(p + 24, true), order: k};
       p += 46 + nameLen + extraLen + commentLen;
     }
     return {
+      files: files,
+      raw: function (name) {
+        var f = files[name];
+        var start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
+        return u8.subarray(start, start + f.size);
+      },
       has: function (name) { return !!files[name]; },
       text: function (name) {
         var f = files[name];
@@ -121,7 +128,7 @@
       var path = rels[rid] || ('xl/worksheets/sheet' + (i + 1) + '.xml');
       var text = zip.text(path);
       if (text === null) continue;
-      sheets.push({name: s.getAttribute('name'), rows: readSheet(xml(text), shared, dateStyle, date1904)});
+      sheets.push({name: s.getAttribute('name'), path: path, rows: readSheet(xml(text), shared, dateStyle, date1904)});
     }
     return sheets;
   }
@@ -197,12 +204,225 @@
     })}];
   }
 
+  // Some systems save an HTML table with an .xls/.xlsx name; Excel opens it, so read it too.
+  function looksHtml(buf) {
+    var head = new TextDecoder('latin1').decode(new Uint8Array(buf, 0, Math.min(buf.byteLength, 4096)));
+    return /^(\xef\xbb\xbf)?\s*</.test(head) && /<(html|table|!doctype)/i.test(head);
+  }
+
+  function readHtml(buf) {
+    var doc = new DOMParser().parseFromString(decodeText(buf), 'text/html'), best = null;
+    Array.prototype.forEach.call(doc.querySelectorAll('table'), function (t) { if (!best || t.rows.length > best.rows.length) best = t; });
+    if (!best) throw new Error('파일 안에 표가 없습니다');
+    var rows = Array.prototype.map.call(best.rows, function (tr) {
+      return Array.prototype.map.call(tr.cells, function (td) {
+        var s = td.textContent.replace(/\u00a0/g, ' ').trim();
+        if (s === '') return null;
+        var n = s.replace(/,/g, '');
+        return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(n) ? +n : s;
+      });
+    });
+    return [{name: 'Sheet1', rows: rows}];
+  }
+
   // name decides the format; buf is an ArrayBuffer.
   function read(name, buf) {
     if (/\.(csv|txt|tsv)$/i.test(name)) return readCsv(buf);
+    if (/\.html?$/i.test(name) || looksHtml(buf)) return readHtml(buf);
     if (/\.xls$/i.test(name)) throw new Error('.xls(예전 형식)는 읽을 수 없습니다. Excel에서 .xlsx로 다른 이름으로 저장해 주세요');
     return readXlsx(buf);
   }
 
-  window.XLSXLite = {read: read, serialToDate: serialToDate};
+  // ---------- writing a copy ----------
+  var CRC = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(u8) {
+    var c = 0xffffffff;
+    for (var i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  // entries: [{name, data (Uint8Array, stored)} or {name, raw, method, crc, usize} (copied as compressed)]
+  function zip(entries) {
+    var enc = new TextEncoder(), parts = [], central = [], offset = 0;
+    entries.forEach(function (e) {
+      var name = enc.encode(e.name), data = e.raw || e.data;
+      var method = e.raw ? e.method : 0, crc = e.raw ? e.crc : crc32(e.data), usize = e.raw ? e.usize : e.data.length;
+      var h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, method, true);
+      h.setUint16(10, 0, true); h.setUint16(12, 0x21, true);
+      h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, usize, true);
+      h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+      var c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, method, true);
+      c.setUint16(12, 0, true); c.setUint16(14, 0x21, true);
+      c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, usize, true);
+      c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+      parts.push(new Uint8Array(h.buffer), name, data);
+      central.push(new Uint8Array(c.buffer), name);
+      offset += 30 + name.length + data.length;
+    });
+    var size = 0;
+    central.forEach(function (p) { size += p.length; });
+    var end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+    end.setUint32(12, size, true); end.setUint32(16, offset, true);
+    var all = parts.concat(central, [new Uint8Array(end.buffer)]), total = 0;
+    all.forEach(function (p) { total += p.length; });
+    var out = new Uint8Array(total), at = 0;
+    all.forEach(function (p) { out.set(p, at); at += p.length; });
+    return out;
+  }
+
+  var NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  var FILL = {yellow: 'FFFFFF00', red: 'FFFF0000'};
+
+  function colRef(i) {
+    var s = '';
+    for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s;
+    return s;
+  }
+
+  function serialize(doc) {
+    var s = new XMLSerializer().serializeToString(doc);
+    return /^<\?xml/.test(s) ? s : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
+  }
+
+  // Add yellow and red fills to styles.xml; style(orig, colour) gives the cellXfs index of orig with that fill.
+  function styler(doc) {
+    var fills = tags(doc, 'fills')[0], xfs = tags(doc, 'cellXfs')[0], made = {}, fillId = {};
+    Object.keys(FILL).forEach(function (k) {
+      var f = doc.createElementNS(NS, 'fill'), p = doc.createElementNS(NS, 'patternFill'), fg = doc.createElementNS(NS, 'fgColor'), bg = doc.createElementNS(NS, 'bgColor');
+      p.setAttribute('patternType', 'solid');
+      fg.setAttribute('rgb', FILL[k]);
+      bg.setAttribute('indexed', '64');
+      p.appendChild(fg); p.appendChild(bg); f.appendChild(p); fills.appendChild(f);
+      fillId[k] = fills.children.length - 1;
+    });
+    fills.setAttribute('count', fills.children.length);
+    return function (orig, colour) {
+      var key = (orig || 0) + colour;
+      if (made[key] === undefined) {
+        var base = xfs.children[orig || 0], xf = base ? base.cloneNode(true) : doc.createElementNS(NS, 'xf');
+        if (!base) { xf.setAttribute('numFmtId', '0'); xf.setAttribute('fontId', '0'); xf.setAttribute('borderId', '0'); }
+        xf.setAttribute('fillId', fillId[colour]);
+        xf.setAttribute('applyFill', '1');
+        xfs.appendChild(xf);
+        xfs.setAttribute('count', xfs.children.length);
+        made[key] = xfs.children.length - 1;
+      }
+      return made[key];
+    };
+  }
+
+  // Patch one sheet of an .xlsx/.xlsm: edits [{row (1-based Excel row), col (0-based), value}], yellow [Excel rows].
+  function copyXlsx(buf, sheetPath, edits, yellow) {
+    var z = unzip(buf), changed = {};
+    var styleText = z.text('xl/styles.xml');
+    if (!styleText) throw new Error('엑셀 서식(styles.xml)이 없는 파일이라 색을 넣을 수 없습니다');
+    var sdoc = xml(styleText), style = styler(sdoc), doc = xml(z.text(sheetPath));
+    var rowsByNum = {}, rowNodes = tags(doc, 'row');
+    for (var i = 0; i < rowNodes.length; i++) rowsByNum[rowNodes[i].getAttribute('r')] = rowNodes[i];
+    var editAt = {};
+    edits.forEach(function (e) { editAt[e.row + ':' + e.col] = e; });
+    function cellsOf(rn) {
+      var out = {}, col = 0;
+      for (var c = rn.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.localName !== 'c') continue;
+        if (c.getAttribute('r')) col = colIndex(c.getAttribute('r'));
+        out[col++] = c;
+      }
+      return out;
+    }
+    var yellowSet = {};
+    yellow.forEach(function (r) { yellowSet[r] = 1; });
+    Object.keys(yellowSet).forEach(function (r) {
+      var rn = rowsByNum[r];
+      if (!rn) return;
+      rn.setAttribute('s', style(+(rn.getAttribute('s') || 0), 'yellow'));
+      rn.setAttribute('customFormat', '1');
+      var cells = cellsOf(rn);
+      Object.keys(cells).forEach(function (col) {
+        if (!editAt[r + ':' + col]) cells[col].setAttribute('s', style(+(cells[col].getAttribute('s') || 0), 'yellow'));
+      });
+    });
+    edits.forEach(function (e) {
+      var rn = rowsByNum[e.row];
+      if (!rn) throw new Error(e.row + '행을 엑셀 파일에서 찾지 못했습니다');
+      var c = cellsOf(rn)[e.col];
+      if (!c) throw new Error(colRef(e.col) + e.row + ' 칸을 엑셀 파일에서 찾지 못했습니다');
+      c.removeAttribute('t');
+      while (c.firstChild) c.removeChild(c.firstChild);  // drop formula / inline string
+      var v = doc.createElementNS(NS, 'v');
+      v.textContent = String(e.value);
+      c.appendChild(v);
+      c.setAttribute('s', style(+(c.getAttribute('s') || 0), 'red'));
+    });
+    changed[sheetPath] = serialize(doc);
+    changed['xl/styles.xml'] = serialize(sdoc);
+    // Excel rebuilds the calculation chain; recalculate formulas that used the changed cells.
+    var drop = {'xl/calcChain.xml': 1};
+    var ct = z.text('[Content_Types].xml');
+    if (ct) changed['[Content_Types].xml'] = ct.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/, '');
+    var rels = z.text('xl/_rels/workbook.xml.rels');
+    if (rels) changed['xl/_rels/workbook.xml.rels'] = rels.replace(/<Relationship[^>]*Target="[^"]*calcChain\.xml"[^>]*\/>/, '');
+    var wb = z.text('xl/workbook.xml');
+    if (/<calcPr\b/.test(wb)) changed['xl/workbook.xml'] = wb.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"').replace(/(<calcPr fullCalcOnLoad="1"[^>]*?)\sfullCalcOnLoad="[^"]*"/, '$1');
+    var enc = new TextEncoder(), entries = [];
+    Object.keys(z.files).sort(function (a, b) { return z.files[a].order - z.files[b].order; }).forEach(function (name) {
+      if (drop[name]) return;
+      if (changed[name] !== undefined) entries.push({name: name, data: enc.encode(changed[name])});
+      else { var f = z.files[name]; entries.push({name: name, raw: z.raw(name), method: f.method, crc: f.crc, usize: f.usize}); }
+    });
+    return zip(entries);
+  }
+
+  function xmlEsc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+
+  // New one-sheet .xlsx from rows (for CSV / HTML-table / demo sources).
+  function buildXlsx(rows, sheetName, edits, yellow) {
+    var editAt = {}, yellowSet = {};
+    edits.forEach(function (e) { editAt[e.row + ':' + e.col] = e; });
+    yellow.forEach(function (r) { yellowSet[r] = 1; });
+    var x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="' + NS + '"><sheetData>';
+    rows.forEach(function (row, ri) {
+      var r = ri + 1, ys = yellowSet[r];
+      x += '<row r="' + r + '"' + (ys ? ' s="1" customFormat="1"' : '') + '>';
+      for (var c = 0; c < row.length; c++) {
+        var e = editAt[r + ':' + c], v = e ? e.value : row[c], s = e ? 2 : (ys ? 1 : 0), ref = colRef(c) + r, sa = s ? ' s="' + s + '"' : '';
+        if (v === null || v === undefined) { if (s) x += '<c r="' + ref + '"' + sa + '/>'; continue; }
+        if (v instanceof Date) v = v.getFullYear() + '-' + ('0' + (v.getMonth() + 1)).slice(-2) + '-' + ('0' + v.getDate()).slice(-2) + ' ' + ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2) + ':' + ('0' + v.getSeconds()).slice(-2);
+        if (typeof v === 'number' && isFinite(v)) x += '<c r="' + ref + '"' + sa + '><v>' + v + '</v></c>';
+        else x += '<c r="' + ref + '"' + sa + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+      }
+      x += '</row>';
+    });
+    x += '</sheetData></worksheet>';
+    var fill = function (rgb) { return '<fill><patternFill patternType="solid"><fgColor rgb="' + rgb + '"/><bgColor indexed="64"/></patternFill></fill>'; };
+    var files = {
+      '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
+      '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+      'xl/workbook.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="' + NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlEsc(String(sheetName || 'Sheet1').slice(0, 31).replace(/[\\\/?*\[\]:]/g, '_')) + '" sheetId="1" r:id="rId1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+      'xl/styles.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="1"><font><sz val="11"/><name val="맑은 고딕"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' + fill(FILL.yellow) + fill(FILL.red) + '</fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>',
+      'xl/worksheets/sheet1.xml': x
+    };
+    var enc = new TextEncoder();
+    return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
+  }
+
+  // src: {buf, name, sheetPath} for an .xlsx/.xlsm, or {rows, sheetName} for anything else.
+  function copy(src, edits, yellow) {
+    if (src.buf && src.sheetPath) return copyXlsx(src.buf, src.sheetPath, edits, yellow);
+    return buildXlsx(src.rows, src.sheetName, edits, yellow);
+  }
+
+  window.XLSXLite = {read: read, copy: copy, serialToDate: serialToDate};
 })();

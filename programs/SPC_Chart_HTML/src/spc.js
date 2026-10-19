@@ -249,5 +249,85 @@
     return 99;
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, analyze: analyze, mean: mean, sd: sd};
+  // Rules whose rows the data table marks yellow and the recommended value must clear:
+  // OCAP (spec limit, control limit) and 7 run (run on one side, trend).
+  var FIX_RULES = ['OOS', 'R1', 'R2', 'R3'];
+
+  function flagged(res, rules) {
+    var s = {};
+    rules.forEach(function (id) { (res.flags[id] || []).forEach(function (i) { s[i] = 1; }); });
+    return s;
+  }
+
+  function decimals(values, sigma) {
+    var d = 0;
+    values.forEach(function (v) {
+      if (!isNum(v)) return;
+      var m = String(+v.toPrecision(12)).match(/\.(\d+)$/);  // 6.9 + 0.03 -> 6.93, not 6.930000000000001
+      if (m) d = Math.max(d, m[1].length);
+    });
+    if (sigma > 0) d = Math.max(d, Math.ceil(-Math.log10(sigma)) + 1);
+    return Math.max(0, Math.min(10, d));
+  }
+
+  // Recommended value for item.values[row] (I-MR only): the point no longer breaks `rules` and no other
+  // point starts breaking them. Tried in order: moving toward CL (staying inside ±2σ and the spec),
+  // just across CL, then anything inside ±2σ nearest the old value. null if the point is fine or nothing works.
+  function suggest(item, opts, row, rules) {
+    if ((opts.subgroup | 0) > 1) return null;
+    var res = analyze(item, opts), pi = -1;
+    for (var k = 0; k < res.points.length; k++) if (res.points[k].row === row) { pi = k; break; }
+    if (pi < 0) return null;
+    var before = flagged(res, rules);
+    if (!before[pi]) return null;
+    var L = res.limits, cl = L.CL.values ? L.CL.values[pi] : res.stats.mean, sw = res.stats.sigmaW;
+    var up = L.UCL.values ? (L.UCL.values[pi] - cl) / 3 : sw, dn = L.LCL.values ? (cl - L.LCL.values[pi]) / 3 : sw;
+    if (!(up > 0)) up = sw;
+    if (!(dn > 0)) dn = sw;
+    if (!isNum(cl) || !(up > 0) || !(dn > 0)) return null;
+    var x0 = item.values[row], d = x0 - cl, side = d >= 0 ? 1 : -1, other = side > 0 ? dn : up;
+    var digits = decimals(item.values, Math.min(up, dn)), f = Math.pow(10, digits);
+    var usl = L.USL.values ? L.USL.values[pi] : null, lsl = L.LSL.values ? L.LSL.values[pi] : null;
+    var cands = [], t;
+    for (t = 1; t <= 9; t++) cands.push(cl + d * (1 - t / 10));
+    [0.25, 0.5, 0.75, 1].forEach(function (z) { cands.push(cl - side * z * other); });
+    cands.push(cl);
+    var grid = [];
+    for (t = -8; t <= 8; t++) grid.push(cl + (t > 0 ? up : dn) * t / 4);
+    grid.sort(function (a, b) { return Math.abs(a - x0) - Math.abs(b - x0); });
+    cands = cands.concat(grid);
+    var tried = {}, eps = 1e-9 * (Math.abs(cl) + up + dn);
+    for (var c = 0; c < cands.length; c++) {
+      var v = Math.round(cands[c] * f) / f;
+      if (tried[v] || v === x0) continue;
+      tried[v] = 1;
+      if (v - cl > 2 * up + eps || cl - v > 2 * dn + eps) continue;
+      if ((usl !== null && v > usl) || (lsl !== null && v < lsl)) continue;
+      var vals = item.values.slice();
+      vals[row] = v;
+      var after = flagged(analyze(Object.assign({}, item, {values: vals}), opts), rules);
+      if (after[pi] || Object.keys(after).some(function (i) { return !before[i]; })) continue;
+      return v;
+    }
+    return null;
+  }
+
+  // Every point breaking `rules`, oldest first, gets its recommended value (a fixed run point usually
+  // clears the rest of the run). Returns {changes: [{row, value}], failed: point count without a value}.
+  function fixAll(item, opts, rules) {
+    var vals = item.values.slice(), changes = [], failed = {};
+    for (var guard = 0; guard <= vals.length; guard++) {
+      var it = Object.assign({}, item, {values: vals}), res = analyze(it, opts), f = flagged(res, rules);
+      var next = Object.keys(f).map(Number).sort(function (a, b) { return a - b; }).filter(function (i) { return !failed[i]; })[0];
+      if (next === undefined) break;
+      var row = res.points[next].row, v = suggest(it, opts, row, rules);
+      if (v === null) { failed[next] = 1; continue; }
+      vals = vals.slice();
+      vals[row] = v;
+      changes.push({row: row, value: v});
+    }
+    return {changes: changes, failed: Object.keys(failed).length};
+  }
+
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, flagged: flagged, suggest: suggest, fixAll: fixAll, mean: mean, sd: sd};
 })();

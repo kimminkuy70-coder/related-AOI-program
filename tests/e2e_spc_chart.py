@@ -75,6 +75,58 @@ def long_rows(n, extra=()):
     return rows
 
 
+# Header of the SPC system export the owner attached to issue #22 (values below are made up).
+SPC_HEADERS = ('회사|라인|장비타입|PLAN_NAME|PLAN_DESC|Item|SPEC_NAME|플랜트|공정|PROC_NAME|패키지|DIMENSION|LEAD|STRIP_MARK|고객사|디바이스|'
+               'PART_NAME|장비|장비명|LOT_ID|수정자|수정일시|USR_CMF_01|RESULT|USL|TARGET|LSL|EXT_MV|EXT_SIGMA|EXT_MIN|EXT_MAX|EXT_MEDIAN|'
+               'EXT_AVERAGE|SITE_QTY|VALUE_COUNT|DISPLAY_FLAG|EXT_MV_UCL|EXT_MV_CENTER|EXT_MV_LCL|EXT_RANGE_UCL|EXT_RANGE_CENTER|EXT_RANGE_LCL|'
+               'EXT_RAW_UCL|EXT_RAW_CENTER|EXT_RAW_LCL|TRAN_TIME|UNIT_NUM|DATA_SEQ|SPEC_SEQ|EXT_EWMA_M|EXT_EWMA_S|EXT_EWMA_R|EXT_MA|EXT_MS|'
+               'DATA_DESC|DATA_INTERN_DESC|ACCEPT_FLAG|SPEC_LIMIT_ENABLE|RV_STORE_FLAG|LIMIT_ENABLE|IS_NULLVALUE|EXT_SIGMA_LCL|EXT_SIGMA_CENTER|'
+               'EXT_SIGMA_UCL|EXT_EWMA_MV_LCL|EXT_EWMA_MV_CENTER|EXT_EWMA_MV_UCL|EXT_MA_MV_LCL|EXT_MA_MV_CENTER|EXT_MA_MV_UCL|EWMA_S_LCL|'
+               'EWMA_S_CENTER|EWMA_S_UCL|EWMA_R_LCL|EWMA_R_CENTER|EWMA_R_UCL|EXT_MS_MV_LCL|EXT_MS_MV_CENTER|EXT_MS_MV_UCL|CL_ORIGIN|CPK|'
+               'DATA_SEQ1|UNIT_NUM1|' + '|'.join('VALUE_%d' % i for i in range(1, 26)) + '|CNT').split('|')
+SPC_SWING = [0.3, 0.1, 0.4, 0.2, 0.5]
+SPC_OUT = 10              # data index above EXT_MV_UCL (OCAP)
+SPC_RUN = range(20, 28)   # 8 points above EXT_MV_CENTER: the 7th and 8th break the 7 run
+
+
+def spc_values():
+    vals = [round(6.52 + (-1) ** i * SPC_SWING[i % 5], 2) for i in range(36)]  # alternating around EXT_MV_CENTER 6.52
+    vals[SPC_OUT] = 8.9
+    vals[SPC_RUN[0] - 1] = vals[SPC_RUN[-1] + 1] = 6.2
+    for k, i in enumerate(SPC_RUN):
+        vals[i] = 6.9 + 0.03 * (k % 3)
+    return vals
+
+
+def spc_rows():
+    t0 = datetime.datetime(2026, 7, 1, 2, 6, 2)
+    rows = [SPC_HEADERS]
+    for i, v in enumerate(spc_values()):
+        r = dict.fromkeys(SPC_HEADERS)
+        r.update({'회사': 'K5', '라인': 'AS11100', 'PLAN_NAME': 'PLAN-A', 'Item': 'I02214', 'SPEC_NAME': 'TSV-COPLANARITY', '공정': 6311,
+                  'DIMENSION': 12, 'LEAD': 134, '장비명': 'AOI-16', 'LOT_ID': 'LOT%03d.C0W' % i, '수정일시': t0 + datetime.timedelta(hours=i),
+                  'USL': 13, 'LSL': 0, 'EXT_MV': v, 'EXT_SIGMA': 0.68, 'EXT_AVERAGE': v, 'SITE_QTY': 25, 'VALUE_COUNT': 25,
+                  'DISPLAY_FLAG': 'Y', 'EXT_MV_UCL': 8.234, 'EXT_MV_CENTER': 6.52, 'EXT_MV_LCL': 4.805, 'TRAN_TIME': t0 + datetime.timedelta(hours=i),
+                  'UNIT_NUM': 1, 'DATA_SEQ': 8153366 + i, 'SPEC_SEQ': 129588, 'ACCEPT_FLAG': 'YYYYYNYYYY', 'CPK': 3.2, 'VALUE_1': v, 'CNT': 514})
+        rows.append([r[h] for h in SPC_HEADERS])
+    return rows
+
+
+SAVE_PICKER = """window.showSaveFilePicker = async (o) => {
+  window.__savedAs = o.suggestedName;
+  const root = await navigator.storage.getDirectory();
+  return await root.getFileHandle('saved_copy.xlsx', {create: true});
+};"""
+
+GET_FILE = """async (name) => {
+  const root = await navigator.storage.getDirectory();
+  const f = await (await root.getFileHandle(name)).getFile();
+  const u8 = new Uint8Array(await f.arrayBuffer());
+  let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+  return btoa(s);
+}"""
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -116,6 +168,7 @@ class SpcChartTest(unittest.TestCase):
         self.page.on('pageerror', lambda exc: self.errors.append(str(exc)))
         self.page.on('console', lambda m: self.errors.append(m.text) if m.type == 'error' else None)
         self.page.add_init_script(PICKER)
+        self.page.add_init_script(SAVE_PICKER)
         self.page.goto(self.url)
 
     def tearDown(self):
@@ -266,6 +319,127 @@ class SpcChartTest(unittest.TestCase):
         self.page.wait_for_function('() => window.__spc.results().length === 2')
         self.assertEqual(self.page.locator('.item-card').count(), 2)
         self.assertGreater(self.page.locator('#events tr[data-key]').count(), 0)
+
+    # issue #22: SPC system format, data table, double-click, recommended values, saved copy
+    def test_spc_system_format_is_recognised(self):
+        self.open_file('20261019214451.xlsx', workbook(spc_rows()))
+        t = self.js('() => { const t = window.__spc.table(); return [t.spcForm, t.values, t.label, t.item, t.roles]; }')
+        self.assertEqual(t[:4], [True, ['EXT_MV'], 'LOT_ID', 'Item'])
+        self.assertEqual(t[4], {'USL': 'USL', 'LSL': 'LSL', 'UCL': 'EXT_MV_UCL', 'LCL': 'EXT_MV_LCL', 'CL': 'EXT_MV_CENTER'})
+        res = self.results()
+        self.assertEqual([r['name'] for r in res], ['I02214'])
+        self.assertEqual(res[0]['src'], '엑셀 열')
+        self.assertEqual(res[0]['label'], 'LOT000.C0W')
+        yellow = self.js('() => window.__spc.yellow()')
+        run_rows = [str(i + 2) for i in SPC_RUN][6:]
+        self.assertEqual(sorted(yellow, key=int), [str(SPC_OUT + 2)] + run_rows)  # Excel row = data index + 2
+        self.assertEqual(yellow[str(SPC_OUT + 2)], ['R1'])
+        self.assertEqual(yellow[run_rows[0]], ['R2'])
+        self.assertEqual(self.page.locator('#dataTable tbody tr.y').count(), 3)
+        self.assertEqual(self.page.locator('#dataTable tbody tr').count(), 36)
+        bg = self.js("() => getComputedStyle(document.querySelector('#dataTable tr.y td')).backgroundColor")
+        self.assertEqual(bg, 'rgb(255, 245, 157)')
+        self.page.check('#flagOnly')
+        self.assertEqual(self.page.locator('#dataTable tbody tr').count(), 3)
+
+    def test_double_click_point_goes_to_its_row(self):
+        self.open_file('d.xlsx', workbook(spc_rows()))
+        self.page.locator('.item-card .cx').first.scroll_into_view_if_needed()
+        xy = self.js("""(i) => { const c = document.querySelector('.cx'), h = c._hit, r = c.getBoundingClientRect();
+            return [r.left + h.X(i), r.top + h.Y(h.res.x[i])]; }""", SPC_OUT)
+        self.page.mouse.dblclick(xy[0], xy[1])
+        self.assertEqual(self.js('() => window.__spc.selected()'), SPC_OUT + 2)
+        tr = self.page.locator('#dataTable tr.sel')
+        self.assertEqual(tr.get_attribute('data-row'), str(SPC_OUT + 2))
+        self.assertTrue(self.js("""() => { const r = document.querySelector('#dataTable tr.sel').getBoundingClientRect();
+            return r.top >= 0 && r.bottom <= window.innerHeight; }"""))
+        self.assertFalse(self.page.locator('#fixOneBtn').is_disabled())
+
+    def test_recommended_values_and_saved_copy(self):
+        data = workbook(spc_rows())
+        self.open_file('src.xlsx', data)
+        mv = SPC_HEADERS.index('EXT_MV')
+        # one row: the point above UCL
+        self.page.click('#dataTable tr[data-row="%d"] td.rn' % (SPC_OUT + 2))
+        self.page.click('#fixOneBtn')
+        edits = self.js('() => Object.values(window.__spc.edits())')
+        self.assertEqual(len(edits), 1)
+        e = edits[0]
+        self.assertEqual((e['row'], e['col'], e['orig']), (SPC_OUT + 2, mv, 8.9))
+        self.assertLessEqual(abs(e['value'] - 6.52), 2 * (8.234 - 6.52) / 3 + 1e-9)  # inside ±2σ
+        self.assertNotIn(str(SPC_OUT + 2), self.js('() => window.__spc.nowFlags()'))
+        self.assertEqual(self.page.locator('#dataTable td.fixed').count(), 2)  # the value column after 판정 and the same cell in place
+        self.assertEqual(self.page.locator('#dataTable tr.y').count(), 3)  # the row stays yellow
+        # all: one value clears the 7 run
+        self.page.click('#fixAllBtn')
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
+        edits = self.js('() => Object.values(window.__spc.edits())')
+        self.assertEqual(len(edits), 2)
+        flags = self.js('() => window.__spc.results()[0].flags')
+        for rule in ('OOS', 'R1', 'R2', 'R3'):
+            self.assertNotIn(rule, flags)
+        self.assertTrue(self.page.locator('#fixAllBtn').is_disabled())
+        c1 = self.js("() => getComputedStyle(document.getElementById('fixOneBtn')).backgroundColor")
+        c2 = self.js("() => getComputedStyle(document.getElementById('fixAllBtn')).backgroundColor")
+        self.assertNotEqual(c1, c2)
+        # save the copy
+        self.page.click('#saveBtn')
+        self.page.wait_for_function("() => document.getElementById('status').textContent.includes('수정본 저장')")
+        self.assertRegex(self.js('() => window.__savedAs'), r'^src_SPC수정_\d{8}_\d{4}\.xlsx$')
+        saved = base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))
+        self.assertEqual(base64.b64decode(self.js(GET_FILE, 'src.xlsx')), data)  # the original is untouched
+        ws = openpyxl.load_workbook(io.BytesIO(saved)).active
+        orig = openpyxl.load_workbook(io.BytesIO(data)).active
+        changed = {(x['row'], x['col']): x['value'] for x in edits}
+        for row in range(1, ws.max_row + 1):
+            for col in range(1, len(SPC_HEADERS) + 1):
+                c = ws.cell(row, col)
+                if (row, col - 1) in changed:
+                    self.assertEqual(c.value, changed[(row, col - 1)])
+                    self.assertEqual(c.fill.fgColor.rgb, 'FFFF0000')
+                else:
+                    self.assertEqual(c.value, orig.cell(row, col).value)
+        for row in map(int, self.js('() => window.__spc.yellow()')):
+            self.assertEqual(ws.cell(row, 1).fill.fgColor.rgb, 'FFFFFF00')
+        self.assertNotEqual(ws.cell(3, 1).fill.fgColor.rgb, 'FFFFFF00')
+        # undo
+        self.page.click('#undoBtn')
+        self.assertEqual(self.js('() => window.__spc.edits()'), {})
+        self.assertEqual(len(self.js('() => window.__spc.nowFlags()')), 3)
+
+    def test_edits_follow_live_refresh(self):
+        self.js('() => { window.__spc.settings.pollSec = 1; }')
+        rows = spc_rows()
+        self.open_file('live2.xlsx', workbook(rows))
+        self.page.click('#fixAllBtn')
+        self.assertEqual(len(self.js('() => window.__spc.edits()')), 2)
+        rows[SPC_OUT + 1][SPC_HEADERS.index('EXT_MV')] = 6.5  # fixed in Excel and saved
+        self.put('live2.xlsx', workbook(rows))
+        self.page.wait_for_function('() => Object.keys(window.__spc.edits()).length === 1', timeout=8000)
+
+    def test_html_table_saved_as_xls(self):
+        rows = spc_rows()
+        html = '<html><body><table>' + ''.join('<tr>' + ''.join('<td>%s</td>' % ('' if v is None else v) for v in r) + '</tr>' for r in rows) + '</table></body></html>'
+        self.open_file('export.xls', html.encode('utf-8'))
+        self.assertEqual(self.js('() => window.__spc.table().spcForm'), True)
+        self.assertEqual(len(self.js('() => window.__spc.yellow()')), 3)
+        self.page.click('#fixAllBtn')
+        saved = bytes(self.js('() => Array.from(window.__spc.copyBytes())'))
+        ws = openpyxl.load_workbook(io.BytesIO(saved)).active
+        self.assertEqual(ws.cell(1, 1).value, '회사')
+        self.assertEqual(ws.cell(SPC_OUT + 2, SPC_HEADERS.index('EXT_MV') + 1).fill.fgColor.rgb, 'FFFF0000')
+        self.assertEqual(ws.cell(SPC_OUT + 2, 1).fill.fgColor.rgb, 'FFFFFF00')
+        self.assertTrue(self.js("() => window.__spc.copyName().endsWith('.xlsx')"))
+
+    def test_fix_all_engine_breaks_a_run_with_one_value(self):
+        vals = [10, 9, 11, 10.5, 9.5, 10, 10.2, 9.8] * 3 + [10.3] * 9
+        r = self.js("""(vals) => { const it = {name: 't', values: vals, labels: vals.map(String), cols: {}};
+            const opts = {baseline: 24}, out = SPC.fixAll(it, opts, SPC.FIX_RULES);
+            const v = vals.slice(); out.changes.forEach(c => { v[c.row] = c.value; });
+            return {out, flags: SPC.analyze(Object.assign({}, it, {values: v}), opts).flags}; }""", vals)
+        self.assertEqual(len(r['out']['changes']), 1)
+        self.assertEqual(r['out']['changes'][0]['row'], 30)  # the 7th point of the run
+        self.assertNotIn('R2', r['flags'])
 
 
 if __name__ == '__main__':

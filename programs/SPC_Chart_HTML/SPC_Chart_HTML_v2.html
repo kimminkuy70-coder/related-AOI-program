@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v1"><title>SPC Chart HTML v1</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v2"><title>SPC Chart HTML v2</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -77,6 +77,37 @@ table.grid tr.done td { color: var(--muted); }
 .cr, .ch { height: 150px; }
 .note { font-size: 12px; color: var(--muted); }
 
+.databox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 14px; }
+.dhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.dhead h2 { font-size: 16px; margin: 6px 0; }
+.legend { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.sw { display: inline-block; width: 14px; height: 12px; border: 1px solid #b8bfcc; margin-left: 6px; }
+.sw.y { background: #fff59d; }
+.sw.r { background: #ef4444; }
+button.fix-one { background: #f59e0b; border-color: #d97706; color: #1f1300; font-weight: 600; }
+button.fix-all { background: #7c3aed; border-color: #6d28d9; color: #fff; font-weight: 600; }
+button.fix-one:hover:not(:disabled) { background: #fbbf24; }
+button.fix-all:hover:not(:disabled) { background: #8b5cf6; }
+.dwrap { overflow: auto; max-height: 62vh; border: 1px solid var(--line); border-radius: 6px; }
+table.data { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+table.data th, table.data td { padding: 3px 8px; border-right: 1px solid #edf0f4; border-bottom: 1px solid #edf0f4; white-space: nowrap; text-align: right; }
+table.data th { position: sticky; top: 0; background: #eef2f8; color: #334155; font-weight: 600; z-index: 2; text-align: center; }
+table.data th.vcol { background: #dbe6fb; }
+table.data .gap { padding: 0 2px; background: #d9dee6 !important; }
+table.data .rn { position: sticky; left: 0; background: #f6f8fb; color: var(--muted); z-index: 1; }
+table.data th.rn { z-index: 3; }
+table.data td.l, table.data th.l { text-align: left; }
+table.data .verdict { color: #9a3412; font-weight: 600; }
+table.data .okfix { color: var(--ok); }
+table.data tbody tr { cursor: pointer; }
+table.data tbody tr:hover td { background: #f3f6fb; }
+table.data tr.y td { background: #fff59d; }
+table.data tr.y:hover td { background: #fff176; }
+table.data td.fixed { background: #ef4444 !important; color: #fff; font-weight: 700; }
+table.data tr.sel td { box-shadow: inset 0 2px 0 #111827, inset 0 -2px 0 #111827; }
+table.data tr.flash td { animation: flash 1.2s ease-out 2; }
+@keyframes flash { 30% { background: #fb923c; } }
+
 .events { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 14px; }
 .ehead { display: flex; align-items: center; gap: 12px; }
 .ehead h2 { font-size: 16px; margin: 6px 0; }
@@ -130,6 +161,8 @@ table.grid tr.done td { color: var(--muted); }
       <li><b>[엑셀 열기]</b>로 .xlsx 파일을 고릅니다 (.xlsm, .csv도 가능). Edge가 파일 보기를 물으면 [허용].</li>
       <li>첫 줄(제목 줄) 아래에 데이터가 있으면 숫자 열이 자동으로 차트가 됩니다.</li>
       <li>엑셀에서 데이터를 고치고 <kbd>Ctrl</kbd>+<kbd>S</kbd>로 저장하면 몇 초 안에 차트가 바뀝니다.</li>
+      <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
+        [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을 저장합니다.</li>
     </ol>
     <table class="sample">
       <tr><th>날짜</th><th>Lot</th><th>두께</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>CL</th></tr>
@@ -139,10 +172,24 @@ table.grid tr.done td { color: var(--muted); }
     <p class="muted">USL · LSL · UCL · LCL · CL(Target) 열은 있으면 쓰고, 없으면 관리한계(UCL · CL · LCL)는 데이터로 계산합니다. 항목별로 [한계 설정]에서 직접 넣을 수도 있습니다.<br>
       여러 측정 항목이 한 열에 섞인 형식(항목 · 값)도 됩니다: [항목 열]에서 항목 이름 열을 고르세요.<br>
       판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(7점 연속 상승·하강), 2/3 &gt; 2σ, 4/5 &gt; 1σ 등. 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
-    <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 엑셀 파일은 읽기만 하고 고치지 않습니다.</p>
+    <p class="muted">SPC 시스템에서 내려받은 양식(EXT_MV, EXT_MV_UCL / CENTER / LCL, USL, LSL, LOT_ID …)은 자동으로 알아보고 EXT_MV를 차트로 그립니다.</p>
+    <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 원본 엑셀 파일은 고치지 않고, 수정본은 새 파일로 저장합니다.</p>
   </section>
   <section id="summary" class="summary hidden"></section>
   <section id="cards" class="cards"></section>
+  <section id="dataBox" class="databox hidden">
+    <div class="dhead"><h2>데이터 표</h2>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸</span>
+      <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
+      <span id="dataInfo" class="muted small"></span>
+      <span class="spacer"></span>
+      <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>
+      <button id="fixAllBtn" class="fix-all" disabled title="노란 행 전체를 한 번에 추천값으로 바꿉니다">전체 일괄 추천값 입력</button>
+      <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
+      <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
+    </div>
+    <div class="dwrap"><table id="dataTable" class="data"></table></div>
+  </section>
   <section id="eventsBox" class="events hidden">
     <div class="ehead"><h2>이상 목록 · OCAP</h2><label class="chk"><input type="checkbox" id="openOnly"> 미조치만</label><span class="spacer"></span><button id="csvBtn" class="ghost small">CSV로 저장</button></div>
     <table id="events"></table>
@@ -159,8 +206,9 @@ table.grid tr.done td { color: var(--muted); }
 
 </script>
 <script>
-// Minimal .xlsx / .xlsm / .csv reader: every sheet as rows of cells (number, string, Date or null).
+// Minimal .xlsx / .xlsm / .csv / HTML-table reader: every sheet as rows of cells (number, string, Date or null).
 // Formula cells give the value Excel saved with the file. Needs pako (inflateRaw) for zip entries.
+// copy(): the same workbook with some cells changed and rows/cells coloured (the original file is never written).
 (function () {
   'use strict';
 
@@ -177,10 +225,16 @@ table.grid tr.done td { color: var(--muted); }
       var method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
       var nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true), commentLen = dv.getUint16(p + 32, true);
       var local = dv.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
-      files[name.replace(/^\//, '')] = {method: method, size: size, local: local};
+      files[name.replace(/^\//, '')] = {method: method, size: size, local: local, crc: dv.getUint32(p + 16, true), usize: dv.getUint32(p + 24, true), order: k};
       p += 46 + nameLen + extraLen + commentLen;
     }
     return {
+      files: files,
+      raw: function (name) {
+        var f = files[name];
+        var start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
+        return u8.subarray(start, start + f.size);
+      },
       has: function (name) { return !!files[name]; },
       text: function (name) {
         var f = files[name];
@@ -282,7 +336,7 @@ table.grid tr.done td { color: var(--muted); }
       var path = rels[rid] || ('xl/worksheets/sheet' + (i + 1) + '.xml');
       var text = zip.text(path);
       if (text === null) continue;
-      sheets.push({name: s.getAttribute('name'), rows: readSheet(xml(text), shared, dateStyle, date1904)});
+      sheets.push({name: s.getAttribute('name'), path: path, rows: readSheet(xml(text), shared, dateStyle, date1904)});
     }
     return sheets;
   }
@@ -358,14 +412,227 @@ table.grid tr.done td { color: var(--muted); }
     })}];
   }
 
+  // Some systems save an HTML table with an .xls/.xlsx name; Excel opens it, so read it too.
+  function looksHtml(buf) {
+    var head = new TextDecoder('latin1').decode(new Uint8Array(buf, 0, Math.min(buf.byteLength, 4096)));
+    return /^(\xef\xbb\xbf)?\s*</.test(head) && /<(html|table|!doctype)/i.test(head);
+  }
+
+  function readHtml(buf) {
+    var doc = new DOMParser().parseFromString(decodeText(buf), 'text/html'), best = null;
+    Array.prototype.forEach.call(doc.querySelectorAll('table'), function (t) { if (!best || t.rows.length > best.rows.length) best = t; });
+    if (!best) throw new Error('파일 안에 표가 없습니다');
+    var rows = Array.prototype.map.call(best.rows, function (tr) {
+      return Array.prototype.map.call(tr.cells, function (td) {
+        var s = td.textContent.replace(/\u00a0/g, ' ').trim();
+        if (s === '') return null;
+        var n = s.replace(/,/g, '');
+        return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(n) ? +n : s;
+      });
+    });
+    return [{name: 'Sheet1', rows: rows}];
+  }
+
   // name decides the format; buf is an ArrayBuffer.
   function read(name, buf) {
     if (/\.(csv|txt|tsv)$/i.test(name)) return readCsv(buf);
+    if (/\.html?$/i.test(name) || looksHtml(buf)) return readHtml(buf);
     if (/\.xls$/i.test(name)) throw new Error('.xls(예전 형식)는 읽을 수 없습니다. Excel에서 .xlsx로 다른 이름으로 저장해 주세요');
     return readXlsx(buf);
   }
 
-  window.XLSXLite = {read: read, serialToDate: serialToDate};
+  // ---------- writing a copy ----------
+  var CRC = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(u8) {
+    var c = 0xffffffff;
+    for (var i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  // entries: [{name, data (Uint8Array, stored)} or {name, raw, method, crc, usize} (copied as compressed)]
+  function zip(entries) {
+    var enc = new TextEncoder(), parts = [], central = [], offset = 0;
+    entries.forEach(function (e) {
+      var name = enc.encode(e.name), data = e.raw || e.data;
+      var method = e.raw ? e.method : 0, crc = e.raw ? e.crc : crc32(e.data), usize = e.raw ? e.usize : e.data.length;
+      var h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, method, true);
+      h.setUint16(10, 0, true); h.setUint16(12, 0x21, true);
+      h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, usize, true);
+      h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+      var c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, method, true);
+      c.setUint16(12, 0, true); c.setUint16(14, 0x21, true);
+      c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, usize, true);
+      c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+      parts.push(new Uint8Array(h.buffer), name, data);
+      central.push(new Uint8Array(c.buffer), name);
+      offset += 30 + name.length + data.length;
+    });
+    var size = 0;
+    central.forEach(function (p) { size += p.length; });
+    var end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+    end.setUint32(12, size, true); end.setUint32(16, offset, true);
+    var all = parts.concat(central, [new Uint8Array(end.buffer)]), total = 0;
+    all.forEach(function (p) { total += p.length; });
+    var out = new Uint8Array(total), at = 0;
+    all.forEach(function (p) { out.set(p, at); at += p.length; });
+    return out;
+  }
+
+  var NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  var FILL = {yellow: 'FFFFFF00', red: 'FFFF0000'};
+
+  function colRef(i) {
+    var s = '';
+    for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s;
+    return s;
+  }
+
+  function serialize(doc) {
+    var s = new XMLSerializer().serializeToString(doc);
+    return /^<\?xml/.test(s) ? s : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + s;
+  }
+
+  // Add yellow and red fills to styles.xml; style(orig, colour) gives the cellXfs index of orig with that fill.
+  function styler(doc) {
+    var fills = tags(doc, 'fills')[0], xfs = tags(doc, 'cellXfs')[0], made = {}, fillId = {};
+    Object.keys(FILL).forEach(function (k) {
+      var f = doc.createElementNS(NS, 'fill'), p = doc.createElementNS(NS, 'patternFill'), fg = doc.createElementNS(NS, 'fgColor'), bg = doc.createElementNS(NS, 'bgColor');
+      p.setAttribute('patternType', 'solid');
+      fg.setAttribute('rgb', FILL[k]);
+      bg.setAttribute('indexed', '64');
+      p.appendChild(fg); p.appendChild(bg); f.appendChild(p); fills.appendChild(f);
+      fillId[k] = fills.children.length - 1;
+    });
+    fills.setAttribute('count', fills.children.length);
+    return function (orig, colour) {
+      var key = (orig || 0) + colour;
+      if (made[key] === undefined) {
+        var base = xfs.children[orig || 0], xf = base ? base.cloneNode(true) : doc.createElementNS(NS, 'xf');
+        if (!base) { xf.setAttribute('numFmtId', '0'); xf.setAttribute('fontId', '0'); xf.setAttribute('borderId', '0'); }
+        xf.setAttribute('fillId', fillId[colour]);
+        xf.setAttribute('applyFill', '1');
+        xfs.appendChild(xf);
+        xfs.setAttribute('count', xfs.children.length);
+        made[key] = xfs.children.length - 1;
+      }
+      return made[key];
+    };
+  }
+
+  // Patch one sheet of an .xlsx/.xlsm: edits [{row (1-based Excel row), col (0-based), value}], yellow [Excel rows].
+  function copyXlsx(buf, sheetPath, edits, yellow) {
+    var z = unzip(buf), changed = {};
+    var styleText = z.text('xl/styles.xml');
+    if (!styleText) throw new Error('엑셀 서식(styles.xml)이 없는 파일이라 색을 넣을 수 없습니다');
+    var sdoc = xml(styleText), style = styler(sdoc), doc = xml(z.text(sheetPath));
+    var rowsByNum = {}, rowNodes = tags(doc, 'row');
+    for (var i = 0; i < rowNodes.length; i++) rowsByNum[rowNodes[i].getAttribute('r')] = rowNodes[i];
+    var editAt = {};
+    edits.forEach(function (e) { editAt[e.row + ':' + e.col] = e; });
+    function cellsOf(rn) {
+      var out = {}, col = 0;
+      for (var c = rn.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.localName !== 'c') continue;
+        if (c.getAttribute('r')) col = colIndex(c.getAttribute('r'));
+        out[col++] = c;
+      }
+      return out;
+    }
+    var yellowSet = {};
+    yellow.forEach(function (r) { yellowSet[r] = 1; });
+    Object.keys(yellowSet).forEach(function (r) {
+      var rn = rowsByNum[r];
+      if (!rn) return;
+      rn.setAttribute('s', style(+(rn.getAttribute('s') || 0), 'yellow'));
+      rn.setAttribute('customFormat', '1');
+      var cells = cellsOf(rn);
+      Object.keys(cells).forEach(function (col) {
+        if (!editAt[r + ':' + col]) cells[col].setAttribute('s', style(+(cells[col].getAttribute('s') || 0), 'yellow'));
+      });
+    });
+    edits.forEach(function (e) {
+      var rn = rowsByNum[e.row];
+      if (!rn) throw new Error(e.row + '행을 엑셀 파일에서 찾지 못했습니다');
+      var c = cellsOf(rn)[e.col];
+      if (!c) throw new Error(colRef(e.col) + e.row + ' 칸을 엑셀 파일에서 찾지 못했습니다');
+      c.removeAttribute('t');
+      while (c.firstChild) c.removeChild(c.firstChild);  // drop formula / inline string
+      var v = doc.createElementNS(NS, 'v');
+      v.textContent = String(e.value);
+      c.appendChild(v);
+      c.setAttribute('s', style(+(c.getAttribute('s') || 0), 'red'));
+    });
+    changed[sheetPath] = serialize(doc);
+    changed['xl/styles.xml'] = serialize(sdoc);
+    // Excel rebuilds the calculation chain; recalculate formulas that used the changed cells.
+    var drop = {'xl/calcChain.xml': 1};
+    var ct = z.text('[Content_Types].xml');
+    if (ct) changed['[Content_Types].xml'] = ct.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/, '');
+    var rels = z.text('xl/_rels/workbook.xml.rels');
+    if (rels) changed['xl/_rels/workbook.xml.rels'] = rels.replace(/<Relationship[^>]*Target="[^"]*calcChain\.xml"[^>]*\/>/, '');
+    var wb = z.text('xl/workbook.xml');
+    if (/<calcPr\b/.test(wb)) changed['xl/workbook.xml'] = wb.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"').replace(/(<calcPr fullCalcOnLoad="1"[^>]*?)\sfullCalcOnLoad="[^"]*"/, '$1');
+    var enc = new TextEncoder(), entries = [];
+    Object.keys(z.files).sort(function (a, b) { return z.files[a].order - z.files[b].order; }).forEach(function (name) {
+      if (drop[name]) return;
+      if (changed[name] !== undefined) entries.push({name: name, data: enc.encode(changed[name])});
+      else { var f = z.files[name]; entries.push({name: name, raw: z.raw(name), method: f.method, crc: f.crc, usize: f.usize}); }
+    });
+    return zip(entries);
+  }
+
+  function xmlEsc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+
+  // New one-sheet .xlsx from rows (for CSV / HTML-table / demo sources).
+  function buildXlsx(rows, sheetName, edits, yellow) {
+    var editAt = {}, yellowSet = {};
+    edits.forEach(function (e) { editAt[e.row + ':' + e.col] = e; });
+    yellow.forEach(function (r) { yellowSet[r] = 1; });
+    var x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="' + NS + '"><sheetData>';
+    rows.forEach(function (row, ri) {
+      var r = ri + 1, ys = yellowSet[r];
+      x += '<row r="' + r + '"' + (ys ? ' s="1" customFormat="1"' : '') + '>';
+      for (var c = 0; c < row.length; c++) {
+        var e = editAt[r + ':' + c], v = e ? e.value : row[c], s = e ? 2 : (ys ? 1 : 0), ref = colRef(c) + r, sa = s ? ' s="' + s + '"' : '';
+        if (v === null || v === undefined) { if (s) x += '<c r="' + ref + '"' + sa + '/>'; continue; }
+        if (v instanceof Date) v = v.getFullYear() + '-' + ('0' + (v.getMonth() + 1)).slice(-2) + '-' + ('0' + v.getDate()).slice(-2) + ' ' + ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2) + ':' + ('0' + v.getSeconds()).slice(-2);
+        if (typeof v === 'number' && isFinite(v)) x += '<c r="' + ref + '"' + sa + '><v>' + v + '</v></c>';
+        else x += '<c r="' + ref + '"' + sa + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+      }
+      x += '</row>';
+    });
+    x += '</sheetData></worksheet>';
+    var fill = function (rgb) { return '<fill><patternFill patternType="solid"><fgColor rgb="' + rgb + '"/><bgColor indexed="64"/></patternFill></fill>'; };
+    var files = {
+      '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
+      '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+      'xl/workbook.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="' + NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlEsc(String(sheetName || 'Sheet1').slice(0, 31).replace(/[\\\/?*\[\]:]/g, '_')) + '" sheetId="1" r:id="rId1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+      'xl/styles.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="1"><font><sz val="11"/><name val="맑은 고딕"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' + fill(FILL.yellow) + fill(FILL.red) + '</fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>',
+      'xl/worksheets/sheet1.xml': x
+    };
+    var enc = new TextEncoder();
+    return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
+  }
+
+  // src: {buf, name, sheetPath} for an .xlsx/.xlsm, or {rows, sheetName} for anything else.
+  function copy(src, edits, yellow) {
+    if (src.buf && src.sheetPath) return copyXlsx(src.buf, src.sheetPath, edits, yellow);
+    return buildXlsx(src.rows, src.sheetName, edits, yellow);
+  }
+
+  window.XLSXLite = {read: read, copy: copy, serialToDate: serialToDate};
 })();
 
 </script>
@@ -621,7 +888,87 @@ table.grid tr.done td { color: var(--muted); }
     return 99;
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, analyze: analyze, mean: mean, sd: sd};
+  // Rules whose rows the data table marks yellow and the recommended value must clear:
+  // OCAP (spec limit, control limit) and 7 run (run on one side, trend).
+  var FIX_RULES = ['OOS', 'R1', 'R2', 'R3'];
+
+  function flagged(res, rules) {
+    var s = {};
+    rules.forEach(function (id) { (res.flags[id] || []).forEach(function (i) { s[i] = 1; }); });
+    return s;
+  }
+
+  function decimals(values, sigma) {
+    var d = 0;
+    values.forEach(function (v) {
+      if (!isNum(v)) return;
+      var m = String(+v.toPrecision(12)).match(/\.(\d+)$/);  // 6.9 + 0.03 -> 6.93, not 6.930000000000001
+      if (m) d = Math.max(d, m[1].length);
+    });
+    if (sigma > 0) d = Math.max(d, Math.ceil(-Math.log10(sigma)) + 1);
+    return Math.max(0, Math.min(10, d));
+  }
+
+  // Recommended value for item.values[row] (I-MR only): the point no longer breaks `rules` and no other
+  // point starts breaking them. Tried in order: moving toward CL (staying inside ±2σ and the spec),
+  // just across CL, then anything inside ±2σ nearest the old value. null if the point is fine or nothing works.
+  function suggest(item, opts, row, rules) {
+    if ((opts.subgroup | 0) > 1) return null;
+    var res = analyze(item, opts), pi = -1;
+    for (var k = 0; k < res.points.length; k++) if (res.points[k].row === row) { pi = k; break; }
+    if (pi < 0) return null;
+    var before = flagged(res, rules);
+    if (!before[pi]) return null;
+    var L = res.limits, cl = L.CL.values ? L.CL.values[pi] : res.stats.mean, sw = res.stats.sigmaW;
+    var up = L.UCL.values ? (L.UCL.values[pi] - cl) / 3 : sw, dn = L.LCL.values ? (cl - L.LCL.values[pi]) / 3 : sw;
+    if (!(up > 0)) up = sw;
+    if (!(dn > 0)) dn = sw;
+    if (!isNum(cl) || !(up > 0) || !(dn > 0)) return null;
+    var x0 = item.values[row], d = x0 - cl, side = d >= 0 ? 1 : -1, other = side > 0 ? dn : up;
+    var digits = decimals(item.values, Math.min(up, dn)), f = Math.pow(10, digits);
+    var usl = L.USL.values ? L.USL.values[pi] : null, lsl = L.LSL.values ? L.LSL.values[pi] : null;
+    var cands = [], t;
+    for (t = 1; t <= 9; t++) cands.push(cl + d * (1 - t / 10));
+    [0.25, 0.5, 0.75, 1].forEach(function (z) { cands.push(cl - side * z * other); });
+    cands.push(cl);
+    var grid = [];
+    for (t = -8; t <= 8; t++) grid.push(cl + (t > 0 ? up : dn) * t / 4);
+    grid.sort(function (a, b) { return Math.abs(a - x0) - Math.abs(b - x0); });
+    cands = cands.concat(grid);
+    var tried = {}, eps = 1e-9 * (Math.abs(cl) + up + dn);
+    for (var c = 0; c < cands.length; c++) {
+      var v = Math.round(cands[c] * f) / f;
+      if (tried[v] || v === x0) continue;
+      tried[v] = 1;
+      if (v - cl > 2 * up + eps || cl - v > 2 * dn + eps) continue;
+      if ((usl !== null && v > usl) || (lsl !== null && v < lsl)) continue;
+      var vals = item.values.slice();
+      vals[row] = v;
+      var after = flagged(analyze(Object.assign({}, item, {values: vals}), opts), rules);
+      if (after[pi] || Object.keys(after).some(function (i) { return !before[i]; })) continue;
+      return v;
+    }
+    return null;
+  }
+
+  // Every point breaking `rules`, oldest first, gets its recommended value (a fixed run point usually
+  // clears the rest of the run). Returns {changes: [{row, value}], failed: point count without a value}.
+  function fixAll(item, opts, rules) {
+    var vals = item.values.slice(), changes = [], failed = {};
+    for (var guard = 0; guard <= vals.length; guard++) {
+      var it = Object.assign({}, item, {values: vals}), res = analyze(it, opts), f = flagged(res, rules);
+      var next = Object.keys(f).map(Number).sort(function (a, b) { return a - b; }).filter(function (i) { return !failed[i]; })[0];
+      if (next === undefined) break;
+      var row = res.points[next].row, v = suggest(it, opts, row, rules);
+      if (v === null) { failed[next] = 1; continue; }
+      vals = vals.slice();
+      vals[row] = v;
+      changes.push({row: row, value: v});
+    }
+    return {changes: changes, failed: Object.keys(failed).length};
+  }
+
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, flagged: flagged, suggest: suggest, fixAll: fixAll, mean: mean, sd: sd};
 })();
 
 </script>
@@ -637,10 +984,13 @@ table.grid tr.done td { color: var(--muted); }
   var ROLE_WORDS = {
     USL: ['usl', '규격상한', '상한규격', 'upperspec', 'specupper', 'specmax'],
     LSL: ['lsl', '규격하한', '하한규격', 'lowerspec', 'speclower', 'specmin'],
-    UCL: ['ucl', '관리상한', '상한관리', 'uppercontrol'],
-    LCL: ['lcl', '관리하한', '하한관리', 'lowercontrol'],
-    CL: ['cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
+    UCL: ['extmvucl', 'ucl', '관리상한', '상한관리', 'uppercontrol'],
+    LCL: ['extmvlcl', 'lcl', '관리하한', '하한관리', 'lowercontrol'],
+    CL: ['extmvcenter', 'cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
   };
+  // SPC system export (one row per lot: EXT_MV with EXT_MV_UCL/CENTER/LCL, USL/LSL, LOT_ID, VALUE_1..25):
+  // chart EXT_MV only, X axis LOT_ID.
+  var SPC_FORMAT = {value: 'extmv', needs: 'extmvucl', label: ['lotid', 'trantime']};
   var ITEM_WORDS = ['item', '항목', '측정항목', 'parameter', 'param', '파라미터', 'para'];
   var LABEL_WORDS = ['date', 'time', 'datetime', '날짜', '일자', '시간', '일시', '측정일', '측정시간', 'lot', 'lotid', 'wafer', 'waferid', 'no', '번호', 'sample', '시료'];
   var DEFAULT_OCAP = {
@@ -687,6 +1037,12 @@ table.grid tr.done td { color: var(--muted); }
   var seen = null;         // event keys already shown (null until the first read of a source)
   var newKeys = {};
   var busy = false, timer = null;
+  var lastBuf = null;      // bytes of the file last read (the saved copy is made from them)
+  var edits = {};          // 'excelRow:col' -> {row, col, value, orig}: recommended values, only in the copy
+  var yellow = {};         // excelRow -> rule ids breaking OCAP / 7 run in the file as read
+  var nowFlags = {};       // excelRow -> rule ids breaking them with the edits applied
+  var selectedRow = null;  // Excel row picked in the data table or by double-clicking a chart point
+  var fixItems = [];       // items (with edits) behind results, for the recommended values
 
   $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
 
@@ -732,6 +1088,9 @@ table.grid tr.done td { color: var(--muted); }
     lastKey = null;
     seen = null;
     newKeys = {};
+    edits = {};
+    selectedRow = null;
+    lastBuf = null;
     hideAlarm();
     $('reloadBtn').disabled = false;
     refresh(true);
@@ -768,6 +1127,7 @@ table.grid tr.done td { color: var(--muted); }
         buf = await file.arrayBuffer();
         try {
           book = window.XLSXLite.read(name, buf);
+          lastBuf = buf;
         } catch (e) {
           setStatus(name + ' · ' + e.message + ' · ' + stamp(), 'err');
           return;  // keep the last good charts; lastKey unchanged so the next tick retries
@@ -787,11 +1147,6 @@ table.grid tr.done td { color: var(--muted); }
   // ---------- table: header, columns, roles ----------
   function norm(s) { return String(s).toLowerCase().replace(/[\s_\-.()\[\]]/g, ''); }
 
-  function roleOf(header) {
-    var h = norm(header);
-    for (var r = 0; r < ROLES.length; r++) if (ROLE_WORDS[ROLES[r]].indexOf(h) >= 0) return ROLES[r];
-    return null;
-  }
 
   function colName(i) {
     var s = '';
@@ -840,20 +1195,30 @@ table.grid tr.done td { color: var(--muted); }
       });
       return num > 0 && num >= text + date ? 'num' : (date + text > 0 ? 'text' : 'empty');
     });
-    var roles = {};
-    headers.forEach(function (name, i) { var r = roleOf(name); if (r && !roles[r] && kinds[i] !== 'text') roles[r] = name; });
-    table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles};
+    // Limit columns: the first word of a role wins (EXT_MV_UCL before UCL), columns with numbers only.
+    var roles = {}, normed = headers.map(norm);
+    ROLES.forEach(function (r) {
+      ROLE_WORDS[r].some(function (w) {
+        var i = normed.indexOf(w);
+        if (i >= 0 && kinds[i] === 'num') { roles[r] = headers[i]; return true; }
+        return false;
+      });
+    });
+    var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
+    table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
+      spcForm: spcForm, path: sheet && sheet.path, rows: rows};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
     var roleCols = ROLES.map(function (r) { return roles[r]; });
     var item = cols.item === '' || has(cols.item) ? cols.item : headers.filter(function (n, i) { return kinds[i] === 'text' && ITEM_WORDS.indexOf(norm(n)) >= 0; })[0] || '';
     var label = cols.label === '' || has(cols.label) ? cols.label
-      : headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
+      : (spcForm && headers.filter(function (n, i) { return kinds[i] !== 'empty' && SPC_FORMAT.label.indexOf(norm(n)) >= 0; })[0])
+      || headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
       || headers.filter(function (n, i) { return n !== item && kinds[i] === 'text'; })[0] || '';
     var numeric = headers.filter(function (n, i) { return kinds[i] === 'num' && roleCols.indexOf(n) < 0 && n !== label && n !== item; });
     var values = (cols.values || []).filter(function (n) { return numeric.indexOf(n) >= 0; });
-    if (!values.length || cols.sig !== numeric.join('|')) values = numeric.slice();
+    if (!values.length || cols.sig !== numeric.join('|')) values = spcForm ? [headers[normed.indexOf(SPC_FORMAT.value)]] : numeric.slice();
     table.label = label;
     table.item = item;
     table.numeric = numeric;
@@ -861,6 +1226,24 @@ table.grid tr.done td { color: var(--muted); }
     settings.sheet = table.sheet;
     settings.cols = {label: label, item: item, values: values, sig: numeric.join('|')};
     save();
+
+    // An edit stays only while the file still has the value it replaced (the file may have been saved meanwhile).
+    var byRow = {};
+    data.forEach(function (d) { byRow[d.excelRow] = d.cells; });
+    Object.keys(edits).forEach(function (k) {
+      var e = edits[k], cells = byRow[e.row];
+      if (!cells || !same(cells[e.col], e.orig)) delete edits[k];
+    });
+  }
+
+  function same(a, b) {
+    if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+    return a === b || (a === undefined && b === null) || (a === null && b === undefined);
+  }
+
+  function cell(d, col, withEdits) {
+    var e = withEdits && edits[d.excelRow + ':' + col];
+    return e ? e.value : d.cells[col];
   }
 
   function fmtLabel(v, excelRow) {
@@ -873,7 +1256,7 @@ table.grid tr.done td { color: var(--muted); }
     return String(v);
   }
 
-  function items() {
+  function items(withEdits) {
     var t = table, idx = function (n) { return t.headers.indexOf(n); };
     var li = idx(t.label), ii = idx(t.item), groups = [], byName = {};
     t.data.forEach(function (d) {
@@ -891,10 +1274,10 @@ table.grid tr.done td { color: var(--muted); }
         ROLES.forEach(function (r) {
           if (t.roles[r]) { var ri = idx(t.roles[r]); cols[r] = rows.map(function (d) { return toNum(d.cells[ri]); }); }
         });
-        var vals = rows.map(function (d) { return toNum(d.cells[vi]); });
+        var vals = rows.map(function (d) { return toNum(cell(d, vi, withEdits)); });
         if (!vals.some(function (v) { return v !== null; })) return;
         list.push({
-          name: name, values: vals, cols: cols, excelRows: rows.map(function (d) { return d.excelRow; }),
+          name: name, values: vals, cols: cols, col: vi, excelRows: rows.map(function (d) { return d.excelRow; }),
           labels: rows.map(function (d) { return li >= 0 ? fmtLabel(d.cells[li], d.excelRow) : d.excelRow + '행'; })
         });
       });
@@ -902,13 +1285,42 @@ table.grid tr.done td { color: var(--muted); }
     return list;
   }
 
-  function analyzeAll() {
-    var opts = {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n};
-    results = items().map(function (it) {
-      var res = SPC.analyze(it, Object.assign({}, opts, {manual: settings.manual[it.name] || {}}));
-      res.excelRows = it.excelRows;
-      return res;
+  function optsFor(name) {
+    return {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n, manual: settings.manual[name] || {}};
+  }
+  function fixRules() { return SPC.FIX_RULES.filter(function (id) { return settings.rules[id]; }); }
+
+  // excelRow -> rule ids (OCAP / 7 run) of the points on that row
+  function rowFlags(list) {
+    var out = {}, rules = fixRules();
+    list.forEach(function (res) {
+      rules.forEach(function (id) {
+        (res.flags[id] || []).forEach(function (i) {
+          res.points[i].rows.forEach(function (k) {
+            var row = res.excelRows[k];
+            out[row] = out[row] || [];
+            if (out[row].indexOf(id) < 0) out[row].push(id);
+          });
+        });
+      });
     });
+    return out;
+  }
+
+  // quiet: the values changed by recommended values, not by a save of the file (no alarm).
+  function analyzeAll(quiet) {
+    var run = function (list) {
+      return list.map(function (it) {
+        var res = SPC.analyze(it, optsFor(it.name));
+        res.excelRows = it.excelRows;
+        res.col = it.col;
+        return res;
+      });
+    };
+    fixItems = items(true);
+    results = run(fixItems);
+    yellow = rowFlags(Object.keys(edits).length ? run(items(false)) : results);
+    nowFlags = rowFlags(results);
     // New out-of-control events since the last read raise the alarm (not on the first read of a file).
     var keys = {}, fresh = [];
     results.forEach(function (res) {
@@ -919,7 +1331,7 @@ table.grid tr.done td { color: var(--muted); }
         if (seen && !seen[ev.key]) fresh.push(ev);
       });
     });
-    if (seen && fresh.length) {
+    if (seen && fresh.length && !quiet) {
       fresh.forEach(function (ev) { newKeys[ev.key] = 1; });
       showAlarm(fresh);
     }
@@ -989,7 +1401,7 @@ table.grid tr.done td { color: var(--muted); }
     $('itemSel').innerHTML = opt('', '(없음)', !t.item) + t.headers.filter(function (h, i) { return t.kinds[i] === 'text'; }).map(function (h) { return opt(h, h, h === t.item); }).join('');
     $('valueBox').innerHTML = t.numeric.map(function (h) {
       return '<label class="chk"><input type="checkbox" value="' + esc(h) + '"' + (t.values.indexOf(h) >= 0 ? ' checked' : '') + '> ' + esc(h) + '</label>';
-    }).join('') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
+    }).join('') + (t.spcForm ? ' <span class="badge ok">SPC 시스템 양식</span>' : '') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
     $('sizeIn').value = settings.subgroup;
     $('baseIn').value = settings.baseline;
     $('winIn').value = settings.window;
@@ -1055,7 +1467,179 @@ table.grid tr.done td { color: var(--muted); }
       card._res = r;
     });
     drawAll();
+    renderData();
     renderEvents();
+  }
+
+  // ---------- data table: yellow = OCAP / 7 run rows, red = recommended values ----------
+  function cellText(v) {
+    if (v instanceof Date) {
+      return v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate()) + ' ' + pad(v.getHours()) + ':' + pad(v.getMinutes()) + ':' + pad(v.getSeconds());
+    }
+    return v === null || v === undefined ? '' : String(v);
+  }
+
+  function shortRule(id) {
+    return {OOS: '규격 이탈', R1: '관리한계 이탈'}[id] || ruleName(id);
+  }
+
+  function renderData() {
+    var t = table, box = $('dataBox');
+    box.classList.toggle('hidden', !t || !t.data.length);
+    if (!t) return;
+    var only = $('flagOnly').checked;
+    // The charted value columns are repeated after 판정 so a changed value shows without scrolling right.
+    var vcols = t.values.map(function (n) { return t.headers.indexOf(n); });
+    var td = function (d, c) {
+      var e = edits[d.excelRow + ':' + c];
+      return e ? '<td class="fixed" title="원래 값 ' + esc(cellText(e.orig)) + '">' + esc(cellText(e.value)) + '</td>' : '<td>' + esc(cellText(d.cells[c])) + '</td>';
+    };
+    var h = '<thead><tr><th class="rn">행</th><th class="l">판정</th>' + vcols.map(function (c) { return '<th class="vcol">' + esc(t.headers[c]) + '</th>'; }).join('') +
+      '<th class="gap"></th>' + t.headers.map(function (n) {
+      var c = t.values.indexOf(n) >= 0 ? ' class="vcol"' : '';
+      return '<th' + c + '>' + esc(n) + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    var shown = 0;
+    t.data.forEach(function (d) {
+      var row = d.excelRow, y = yellow[row], now = nowFlags[row];
+      if (only && !y && !now) return;
+      shown++;
+      var cls = (y || now ? 'y' : '') + (row === selectedRow ? ' sel' : '');
+      var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
+      if (now) verdict = esc(verdict);
+      h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
+        vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
+      for (var c = 0; c < t.headers.length; c++) h += td(d, c);
+      h += '</tr>';
+    });
+    if (!shown) h += '<tr><td colspan="' + (t.headers.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
+    $('dataTable').innerHTML = h + '</tbody>';
+    dataInfo();
+  }
+
+  function dataInfo() {
+    var nEdits = Object.keys(edits).length, nYellow = Object.keys(yellow).length, nowCount = Object.keys(nowFlags).length;
+    $('dataInfo').textContent = '노란 행 ' + nYellow + '개 (남은 ' + nowCount + ') · 수정 ' + nEdits + '칸' + (selectedRow ? ' · 선택 ' + selectedRow + '행' : ' · 표의 행을 누르거나 차트의 점을 더블클릭해 선택');
+    var sub = settings.subgroup > 1;
+    $('fixOneBtn').disabled = sub || !selectedRow;
+    $('fixAllBtn').disabled = sub || !nowCount;
+    $('undoBtn').disabled = !nEdits;
+    $('fixOneBtn').title = sub ? 'subgroup 1 (I-MR)에서만 추천값을 계산합니다' : '선택한 행(표에서 클릭 또는 차트 점 더블클릭)의 값을 추천값으로 바꿉니다';
+  }
+
+  function selectRow(row, scroll) {
+    selectedRow = row;
+    if ($('flagOnly').checked && !yellow[row] && !nowFlags[row]) {
+      $('flagOnly').checked = false;
+      renderData();
+    } else {
+      Array.prototype.forEach.call($('dataTable').querySelectorAll('tr.sel'), function (x) { x.classList.remove('sel'); });
+      var cur = $('dataTable').querySelector('tr[data-row="' + row + '"]');
+      if (cur) cur.classList.add('sel');
+      dataInfo();
+    }
+    var tr = $('dataTable').querySelector('tr[data-row="' + row + '"]');
+    if (tr && scroll) {
+      tr.scrollIntoView({block: 'center'});
+      tr.classList.remove('flash');
+      void tr.offsetWidth;
+      tr.classList.add('flash');
+    }
+  }
+
+  function setEdit(row, col, value) {
+    var d = table.data.filter(function (x) { return x.excelRow === row; })[0];
+    if (!d) return;
+    edits[row + ':' + col] = {row: row, col: col, value: value, orig: d.cells[col] === undefined ? null : d.cells[col]};
+  }
+
+  function afterEdits(msg) {
+    analyzeAll(true);
+    render();
+    setStatus(msg, 'muted');
+  }
+
+  function fixOne() {
+    var row = selectedRow, rules = fixRules(), made = 0, tried = 0;
+    if (!row || settings.subgroup > 1) return;
+    fixItems.forEach(function (it, j) {
+      var k = it.excelRows.indexOf(row);
+      if (k < 0) return;
+      var res = results[j], pi = -1;
+      res.points.forEach(function (p, i) { if (p.row === k) pi = i; });
+      if (pi < 0 || !SPC.flagged(res, rules)[pi]) return;
+      tried++;
+      var v = SPC.suggest(it, optsFor(it.name), k, rules);
+      if (v !== null) { setEdit(row, it.col, v); made++; }
+    });
+    if (!tried) setStatus(row + '행은 OCAP · 7run이 없습니다 (이미 수정됐거나 정상)', 'warn');
+    else if (!made) setStatus(row + '행: 다른 점을 새로 걸리게 하지 않는 추천값을 찾지 못했습니다', 'warn');
+    else afterEdits(row + '행에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
+  }
+
+  function fixAll() {
+    if (settings.subgroup > 1) return;
+    var rules = fixRules(), made = 0, failed = 0;
+    fixItems.forEach(function (it) {
+      var out = SPC.fixAll(it, optsFor(it.name), rules);
+      out.changes.forEach(function (ch) { setEdit(it.excelRows[ch.row], it.col, ch.value); made++; });
+      failed += out.failed;
+    });
+    afterEdits('추천값 ' + made + '칸 입력' + (failed ? ' · ' + failed + '점은 추천값을 찾지 못함' : '') + ' · 저장하려면 [수정본 엑셀 저장]');
+    if (failed) setStatus($('status').textContent, 'warn');
+  }
+
+  function undoEdits() {
+    edits = {};
+    afterEdits('추천값 수정을 모두 취소했습니다');
+  }
+
+  // The copy: the file as read, recommended values in red cells, OCAP / 7 run rows yellow. The original is not touched.
+  function copyBytes() {
+    var list = Object.keys(edits).map(function (k) { return edits[k]; });
+    var rows = Object.keys(yellow).map(Number);
+    var xlsx = source && source.kind !== 'demo' && lastBuf && table.path && /\.(xlsx|xlsm)$/i.test(source.name);
+    return window.XLSXLite.copy(xlsx ? {buf: lastBuf, sheetPath: table.path} : {rows: table.rows, sheetName: table.sheet}, list, rows);
+  }
+
+  function copyName() {
+    var d = new Date(), base = source.kind === 'demo' ? '예제' : source.name.replace(/\.[^.]+$/, '');
+    var ext = /\.xlsm$/i.test(source.name) ? '.xlsm' : '.xlsx';
+    return base + '_SPC수정_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + ext;
+  }
+
+  async function saveCopy() {
+    if (!table) return;
+    var bytes, name = copyName();
+    try {
+      bytes = copyBytes();
+    } catch (e) {
+      setStatus('수정본을 만들지 못했습니다: ' + e.message, 'err');
+      return;
+    }
+    var type = /\.xlsm$/.test(name) ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (window.showSaveFilePicker) {
+      try {
+        var h = await window.showSaveFilePicker({suggestedName: name, types: [{description: 'Excel', accept: {[type]: [name.slice(-5)]}}]});
+        if (source.kind === 'handle' && (await h.isSameEntry(source.handle))) {
+          setStatus('원본 파일에는 덮어쓰지 않습니다. 다른 이름으로 저장해 주세요', 'err');
+          return;
+        }
+        var w = await h.createWritable();
+        await w.write(bytes);
+        await w.close();
+        setStatus('수정본 저장: ' + h.name + ' (원본 ' + source.name + '은 그대로)', 'muted');
+      } catch (e) {
+        if (!e || e.name !== 'AbortError') setStatus('수정본을 저장하지 못했습니다: ' + e.message, 'err');
+      }
+      return;
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], {type: type}));
+    a.download = name;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+    setStatus('수정본 내려받기: ' + name + ' (원본은 그대로)', 'muted');
   }
 
   function renderEvents() {
@@ -1197,6 +1781,21 @@ table.grid tr.done td { color: var(--muted); }
       ctx.fillStyle = !f ? '#2563eb' : (f.indexOf('OOS') >= 0 ? '#dc2626' : '#f59e0b');
       ctx.fill();
       if (f) { ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = 1; ctx.stroke(); }
+      var row = r.excelRows[r.points[i].rows[0]];
+      if (edits[row + ':' + r.col]) {
+        ctx.beginPath();
+        ctx.arc(X(i), Y(r.x[i]), rad + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      if (row === selectedRow) {
+        ctx.beginPath();
+        ctx.arc(X(i), Y(r.x[i]), rad + 7, 0, Math.PI * 2);
+        ctx.strokeStyle = '#111827';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
     xLabels(g, X, r.points.map(function (p) { return p.label; }), from, n, bottom);
   }
@@ -1318,7 +1917,9 @@ table.grid tr.done td { color: var(--muted); }
       ROLES.forEach(function (k) { if (L[k].values) lines.push(k + ' ' + fmt(L[k].values[i])); });
       var f = flagMap(r)[i];
       if (f) lines.push('⚠ ' + f.map(ruleName).join(', '));
-      lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행');
+      var ed = edits[r.excelRows[p.rows[0]] + ':' + r.col];
+      if (ed) lines.push('추천값으로 수정됨 (원래 ' + cellText(ed.orig) + ')');
+      lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행 · 더블클릭: 아래 표의 그 행으로');
     } else {
       lines.push(r.range.name + ' ' + fmt(r.range.values[i]));
       if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ ' + r.range.name + ' 관리한계 이탈');
@@ -1329,6 +1930,22 @@ table.grid tr.done td { color: var(--muted); }
     tip.style.top = (e.clientY + 14) + 'px';
   });
   $('cards').addEventListener('mouseleave', function () { $('tip').classList.add('hidden'); });
+
+  // Double-click a point: select its row in the data table below and scroll there.
+  function pointAt(e) {
+    var c = e.target, hit = c && c._hit;
+    if (!hit || hit.to <= hit.from) return null;
+    var rect = c.getBoundingClientRect(), step = hit.X(1) - hit.X(0);
+    var i = Math.round((e.clientX - rect.left - hit.X(hit.from)) / step) + hit.from;
+    return i < hit.from || i >= hit.to ? null : {res: hit.res, i: i};
+  }
+  $('cards').addEventListener('dblclick', function (e) {
+    var p = pointAt(e);
+    if (!p) return;
+    e.preventDefault();
+    selectRow(p.res.excelRows[p.res.points[p.i].rows[0]], true);
+    drawAll();
+  });
 
   // ---------- dialogs ----------
   function modal(html, bind) {
@@ -1422,7 +2039,7 @@ table.grid tr.done td { color: var(--muted); }
 
   function recompute() {
     if (!table) return;
-    analyzeAll();
+    analyzeAll(true);
     render();
   }
 
@@ -1514,7 +2131,18 @@ table.grid tr.done td { color: var(--muted); }
     buildTable();
     recompute();
   }
-  $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; buildTable(); recompute(); };
+  $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; edits = {}; selectedRow = null; buildTable(); recompute(); };
+  $('flagOnly').onchange = renderData;
+  $('dataTable').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-row]');
+    if (!tr) return;
+    selectRow(+tr.dataset.row, false);
+    drawAll();
+  });
+  $('fixOneBtn').onclick = fixOne;
+  $('fixAllBtn').onclick = fixAll;
+  $('undoBtn').onclick = undoEdits;
+  $('saveBtn').onclick = saveCopy;
   $('labelSel').onchange = onColumns;
   $('itemSel').onchange = onColumns;
   $('valueBox').onchange = onColumns;
@@ -1553,7 +2181,9 @@ table.grid tr.done td { color: var(--muted); }
   });
 
   // For tests: open a file handle without the picker.
-  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings};
+  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
+    edits: function () { return edits; }, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName};
 })();
 
 </script>

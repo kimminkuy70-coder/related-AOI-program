@@ -38,6 +38,8 @@
       <li><b>[엑셀 열기]</b>로 .xlsx 파일을 고릅니다 (.xlsm, .csv도 가능). Edge가 파일 보기를 물으면 [허용].</li>
       <li>첫 줄(제목 줄) 아래에 데이터가 있으면 숫자 열이 자동으로 차트가 됩니다.</li>
       <li>엑셀에서 데이터를 고치고 <kbd>Ctrl</kbd>+<kbd>S</kbd>로 저장하면 몇 초 안에 차트가 바뀝니다.</li>
+      <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
+        [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을 저장합니다.</li>
     </ol>
     <table class="sample">
       <tr><th>날짜</th><th>Lot</th><th>두께</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>CL</th></tr>
@@ -47,10 +49,24 @@
     <p class="muted">USL · LSL · UCL · LCL · CL(Target) 열은 있으면 쓰고, 없으면 관리한계(UCL · CL · LCL)는 데이터로 계산합니다. 항목별로 [한계 설정]에서 직접 넣을 수도 있습니다.<br>
       여러 측정 항목이 한 열에 섞인 형식(항목 · 값)도 됩니다: [항목 열]에서 항목 이름 열을 고르세요.<br>
       판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(7점 연속 상승·하강), 2/3 &gt; 2σ, 4/5 &gt; 1σ 등. 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
-    <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 엑셀 파일은 읽기만 하고 고치지 않습니다.</p>
+    <p class="muted">SPC 시스템에서 내려받은 양식(EXT_MV, EXT_MV_UCL / CENTER / LCL, USL, LSL, LOT_ID …)은 자동으로 알아보고 EXT_MV를 차트로 그립니다.</p>
+    <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 원본 엑셀 파일은 고치지 않고, 수정본은 새 파일로 저장합니다.</p>
   </section>
   <section id="summary" class="summary hidden"></section>
   <section id="cards" class="cards"></section>
+  <section id="dataBox" class="databox hidden">
+    <div class="dhead"><h2>데이터 표</h2>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸</span>
+      <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
+      <span id="dataInfo" class="muted small"></span>
+      <span class="spacer"></span>
+      <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>
+      <button id="fixAllBtn" class="fix-all" disabled title="노란 행 전체를 한 번에 추천값으로 바꿉니다">전체 일괄 추천값 입력</button>
+      <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
+      <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
+    </div>
+    <div class="dwrap"><table id="dataTable" class="data"></table></div>
+  </section>
   <section id="eventsBox" class="events hidden">
     <div class="ehead"><h2>이상 목록 · OCAP</h2><label class="chk"><input type="checkbox" id="openOnly"> 미조치만</label><span class="spacer"></span><button id="csvBtn" class="ghost small">CSV로 저장</button></div>
     <table id="events"></table>

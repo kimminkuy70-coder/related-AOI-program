@@ -9,10 +9,13 @@
   var ROLE_WORDS = {
     USL: ['usl', '규격상한', '상한규격', 'upperspec', 'specupper', 'specmax'],
     LSL: ['lsl', '규격하한', '하한규격', 'lowerspec', 'speclower', 'specmin'],
-    UCL: ['ucl', '관리상한', '상한관리', 'uppercontrol'],
-    LCL: ['lcl', '관리하한', '하한관리', 'lowercontrol'],
-    CL: ['cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
+    UCL: ['extmvucl', 'ucl', '관리상한', '상한관리', 'uppercontrol'],
+    LCL: ['extmvlcl', 'lcl', '관리하한', '하한관리', 'lowercontrol'],
+    CL: ['extmvcenter', 'cl', 'target', 'tgt', '목표', '목표값', '중심', '중심선', 'centerline', 'nominal']
   };
+  // SPC system export (one row per lot: EXT_MV with EXT_MV_UCL/CENTER/LCL, USL/LSL, LOT_ID, VALUE_1..25):
+  // chart EXT_MV only, X axis LOT_ID.
+  var SPC_FORMAT = {value: 'extmv', needs: 'extmvucl', label: ['lotid', 'trantime']};
   var ITEM_WORDS = ['item', '항목', '측정항목', 'parameter', 'param', '파라미터', 'para'];
   var LABEL_WORDS = ['date', 'time', 'datetime', '날짜', '일자', '시간', '일시', '측정일', '측정시간', 'lot', 'lotid', 'wafer', 'waferid', 'no', '번호', 'sample', '시료'];
   var DEFAULT_OCAP = {
@@ -59,6 +62,12 @@
   var seen = null;         // event keys already shown (null until the first read of a source)
   var newKeys = {};
   var busy = false, timer = null;
+  var lastBuf = null;      // bytes of the file last read (the saved copy is made from them)
+  var edits = {};          // 'excelRow:col' -> {row, col, value, orig}: recommended values, only in the copy
+  var yellow = {};         // excelRow -> rule ids breaking OCAP / 7 run in the file as read
+  var nowFlags = {};       // excelRow -> rule ids breaking them with the edits applied
+  var selectedRow = null;  // Excel row picked in the data table or by double-clicking a chart point
+  var fixItems = [];       // items (with edits) behind results, for the recommended values
 
   $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
 
@@ -104,6 +113,9 @@
     lastKey = null;
     seen = null;
     newKeys = {};
+    edits = {};
+    selectedRow = null;
+    lastBuf = null;
     hideAlarm();
     $('reloadBtn').disabled = false;
     refresh(true);
@@ -140,6 +152,7 @@
         buf = await file.arrayBuffer();
         try {
           book = window.XLSXLite.read(name, buf);
+          lastBuf = buf;
         } catch (e) {
           setStatus(name + ' · ' + e.message + ' · ' + stamp(), 'err');
           return;  // keep the last good charts; lastKey unchanged so the next tick retries
@@ -159,11 +172,6 @@
   // ---------- table: header, columns, roles ----------
   function norm(s) { return String(s).toLowerCase().replace(/[\s_\-.()\[\]]/g, ''); }
 
-  function roleOf(header) {
-    var h = norm(header);
-    for (var r = 0; r < ROLES.length; r++) if (ROLE_WORDS[ROLES[r]].indexOf(h) >= 0) return ROLES[r];
-    return null;
-  }
 
   function colName(i) {
     var s = '';
@@ -212,20 +220,30 @@
       });
       return num > 0 && num >= text + date ? 'num' : (date + text > 0 ? 'text' : 'empty');
     });
-    var roles = {};
-    headers.forEach(function (name, i) { var r = roleOf(name); if (r && !roles[r] && kinds[i] !== 'text') roles[r] = name; });
-    table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles};
+    // Limit columns: the first word of a role wins (EXT_MV_UCL before UCL), columns with numbers only.
+    var roles = {}, normed = headers.map(norm);
+    ROLES.forEach(function (r) {
+      ROLE_WORDS[r].some(function (w) {
+        var i = normed.indexOf(w);
+        if (i >= 0 && kinds[i] === 'num') { roles[r] = headers[i]; return true; }
+        return false;
+      });
+    });
+    var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
+    table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
+      spcForm: spcForm, path: sheet && sheet.path, rows: rows};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
     var roleCols = ROLES.map(function (r) { return roles[r]; });
     var item = cols.item === '' || has(cols.item) ? cols.item : headers.filter(function (n, i) { return kinds[i] === 'text' && ITEM_WORDS.indexOf(norm(n)) >= 0; })[0] || '';
     var label = cols.label === '' || has(cols.label) ? cols.label
-      : headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
+      : (spcForm && headers.filter(function (n, i) { return kinds[i] !== 'empty' && SPC_FORMAT.label.indexOf(norm(n)) >= 0; })[0])
+      || headers.filter(function (n, i) { return n !== item && kinds[i] !== 'empty' && LABEL_WORDS.indexOf(norm(n)) >= 0; })[0]
       || headers.filter(function (n, i) { return n !== item && kinds[i] === 'text'; })[0] || '';
     var numeric = headers.filter(function (n, i) { return kinds[i] === 'num' && roleCols.indexOf(n) < 0 && n !== label && n !== item; });
     var values = (cols.values || []).filter(function (n) { return numeric.indexOf(n) >= 0; });
-    if (!values.length || cols.sig !== numeric.join('|')) values = numeric.slice();
+    if (!values.length || cols.sig !== numeric.join('|')) values = spcForm ? [headers[normed.indexOf(SPC_FORMAT.value)]] : numeric.slice();
     table.label = label;
     table.item = item;
     table.numeric = numeric;
@@ -233,6 +251,24 @@
     settings.sheet = table.sheet;
     settings.cols = {label: label, item: item, values: values, sig: numeric.join('|')};
     save();
+
+    // An edit stays only while the file still has the value it replaced (the file may have been saved meanwhile).
+    var byRow = {};
+    data.forEach(function (d) { byRow[d.excelRow] = d.cells; });
+    Object.keys(edits).forEach(function (k) {
+      var e = edits[k], cells = byRow[e.row];
+      if (!cells || !same(cells[e.col], e.orig)) delete edits[k];
+    });
+  }
+
+  function same(a, b) {
+    if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+    return a === b || (a === undefined && b === null) || (a === null && b === undefined);
+  }
+
+  function cell(d, col, withEdits) {
+    var e = withEdits && edits[d.excelRow + ':' + col];
+    return e ? e.value : d.cells[col];
   }
 
   function fmtLabel(v, excelRow) {
@@ -245,7 +281,7 @@
     return String(v);
   }
 
-  function items() {
+  function items(withEdits) {
     var t = table, idx = function (n) { return t.headers.indexOf(n); };
     var li = idx(t.label), ii = idx(t.item), groups = [], byName = {};
     t.data.forEach(function (d) {
@@ -263,10 +299,10 @@
         ROLES.forEach(function (r) {
           if (t.roles[r]) { var ri = idx(t.roles[r]); cols[r] = rows.map(function (d) { return toNum(d.cells[ri]); }); }
         });
-        var vals = rows.map(function (d) { return toNum(d.cells[vi]); });
+        var vals = rows.map(function (d) { return toNum(cell(d, vi, withEdits)); });
         if (!vals.some(function (v) { return v !== null; })) return;
         list.push({
-          name: name, values: vals, cols: cols, excelRows: rows.map(function (d) { return d.excelRow; }),
+          name: name, values: vals, cols: cols, col: vi, excelRows: rows.map(function (d) { return d.excelRow; }),
           labels: rows.map(function (d) { return li >= 0 ? fmtLabel(d.cells[li], d.excelRow) : d.excelRow + '행'; })
         });
       });
@@ -274,13 +310,42 @@
     return list;
   }
 
-  function analyzeAll() {
-    var opts = {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n};
-    results = items().map(function (it) {
-      var res = SPC.analyze(it, Object.assign({}, opts, {manual: settings.manual[it.name] || {}}));
-      res.excelRows = it.excelRows;
-      return res;
+  function optsFor(name) {
+    return {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n, manual: settings.manual[name] || {}};
+  }
+  function fixRules() { return SPC.FIX_RULES.filter(function (id) { return settings.rules[id]; }); }
+
+  // excelRow -> rule ids (OCAP / 7 run) of the points on that row
+  function rowFlags(list) {
+    var out = {}, rules = fixRules();
+    list.forEach(function (res) {
+      rules.forEach(function (id) {
+        (res.flags[id] || []).forEach(function (i) {
+          res.points[i].rows.forEach(function (k) {
+            var row = res.excelRows[k];
+            out[row] = out[row] || [];
+            if (out[row].indexOf(id) < 0) out[row].push(id);
+          });
+        });
+      });
     });
+    return out;
+  }
+
+  // quiet: the values changed by recommended values, not by a save of the file (no alarm).
+  function analyzeAll(quiet) {
+    var run = function (list) {
+      return list.map(function (it) {
+        var res = SPC.analyze(it, optsFor(it.name));
+        res.excelRows = it.excelRows;
+        res.col = it.col;
+        return res;
+      });
+    };
+    fixItems = items(true);
+    results = run(fixItems);
+    yellow = rowFlags(Object.keys(edits).length ? run(items(false)) : results);
+    nowFlags = rowFlags(results);
     // New out-of-control events since the last read raise the alarm (not on the first read of a file).
     var keys = {}, fresh = [];
     results.forEach(function (res) {
@@ -291,7 +356,7 @@
         if (seen && !seen[ev.key]) fresh.push(ev);
       });
     });
-    if (seen && fresh.length) {
+    if (seen && fresh.length && !quiet) {
       fresh.forEach(function (ev) { newKeys[ev.key] = 1; });
       showAlarm(fresh);
     }
@@ -361,7 +426,7 @@
     $('itemSel').innerHTML = opt('', '(없음)', !t.item) + t.headers.filter(function (h, i) { return t.kinds[i] === 'text'; }).map(function (h) { return opt(h, h, h === t.item); }).join('');
     $('valueBox').innerHTML = t.numeric.map(function (h) {
       return '<label class="chk"><input type="checkbox" value="' + esc(h) + '"' + (t.values.indexOf(h) >= 0 ? ' checked' : '') + '> ' + esc(h) + '</label>';
-    }).join('') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
+    }).join('') + (t.spcForm ? ' <span class="badge ok">SPC 시스템 양식</span>' : '') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
     $('sizeIn').value = settings.subgroup;
     $('baseIn').value = settings.baseline;
     $('winIn').value = settings.window;
@@ -427,7 +492,179 @@
       card._res = r;
     });
     drawAll();
+    renderData();
     renderEvents();
+  }
+
+  // ---------- data table: yellow = OCAP / 7 run rows, red = recommended values ----------
+  function cellText(v) {
+    if (v instanceof Date) {
+      return v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate()) + ' ' + pad(v.getHours()) + ':' + pad(v.getMinutes()) + ':' + pad(v.getSeconds());
+    }
+    return v === null || v === undefined ? '' : String(v);
+  }
+
+  function shortRule(id) {
+    return {OOS: '규격 이탈', R1: '관리한계 이탈'}[id] || ruleName(id);
+  }
+
+  function renderData() {
+    var t = table, box = $('dataBox');
+    box.classList.toggle('hidden', !t || !t.data.length);
+    if (!t) return;
+    var only = $('flagOnly').checked;
+    // The charted value columns are repeated after 판정 so a changed value shows without scrolling right.
+    var vcols = t.values.map(function (n) { return t.headers.indexOf(n); });
+    var td = function (d, c) {
+      var e = edits[d.excelRow + ':' + c];
+      return e ? '<td class="fixed" title="원래 값 ' + esc(cellText(e.orig)) + '">' + esc(cellText(e.value)) + '</td>' : '<td>' + esc(cellText(d.cells[c])) + '</td>';
+    };
+    var h = '<thead><tr><th class="rn">행</th><th class="l">판정</th>' + vcols.map(function (c) { return '<th class="vcol">' + esc(t.headers[c]) + '</th>'; }).join('') +
+      '<th class="gap"></th>' + t.headers.map(function (n) {
+      var c = t.values.indexOf(n) >= 0 ? ' class="vcol"' : '';
+      return '<th' + c + '>' + esc(n) + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    var shown = 0;
+    t.data.forEach(function (d) {
+      var row = d.excelRow, y = yellow[row], now = nowFlags[row];
+      if (only && !y && !now) return;
+      shown++;
+      var cls = (y || now ? 'y' : '') + (row === selectedRow ? ' sel' : '');
+      var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
+      if (now) verdict = esc(verdict);
+      h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
+        vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
+      for (var c = 0; c < t.headers.length; c++) h += td(d, c);
+      h += '</tr>';
+    });
+    if (!shown) h += '<tr><td colspan="' + (t.headers.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
+    $('dataTable').innerHTML = h + '</tbody>';
+    dataInfo();
+  }
+
+  function dataInfo() {
+    var nEdits = Object.keys(edits).length, nYellow = Object.keys(yellow).length, nowCount = Object.keys(nowFlags).length;
+    $('dataInfo').textContent = '노란 행 ' + nYellow + '개 (남은 ' + nowCount + ') · 수정 ' + nEdits + '칸' + (selectedRow ? ' · 선택 ' + selectedRow + '행' : ' · 표의 행을 누르거나 차트의 점을 더블클릭해 선택');
+    var sub = settings.subgroup > 1;
+    $('fixOneBtn').disabled = sub || !selectedRow;
+    $('fixAllBtn').disabled = sub || !nowCount;
+    $('undoBtn').disabled = !nEdits;
+    $('fixOneBtn').title = sub ? 'subgroup 1 (I-MR)에서만 추천값을 계산합니다' : '선택한 행(표에서 클릭 또는 차트 점 더블클릭)의 값을 추천값으로 바꿉니다';
+  }
+
+  function selectRow(row, scroll) {
+    selectedRow = row;
+    if ($('flagOnly').checked && !yellow[row] && !nowFlags[row]) {
+      $('flagOnly').checked = false;
+      renderData();
+    } else {
+      Array.prototype.forEach.call($('dataTable').querySelectorAll('tr.sel'), function (x) { x.classList.remove('sel'); });
+      var cur = $('dataTable').querySelector('tr[data-row="' + row + '"]');
+      if (cur) cur.classList.add('sel');
+      dataInfo();
+    }
+    var tr = $('dataTable').querySelector('tr[data-row="' + row + '"]');
+    if (tr && scroll) {
+      tr.scrollIntoView({block: 'center'});
+      tr.classList.remove('flash');
+      void tr.offsetWidth;
+      tr.classList.add('flash');
+    }
+  }
+
+  function setEdit(row, col, value) {
+    var d = table.data.filter(function (x) { return x.excelRow === row; })[0];
+    if (!d) return;
+    edits[row + ':' + col] = {row: row, col: col, value: value, orig: d.cells[col] === undefined ? null : d.cells[col]};
+  }
+
+  function afterEdits(msg) {
+    analyzeAll(true);
+    render();
+    setStatus(msg, 'muted');
+  }
+
+  function fixOne() {
+    var row = selectedRow, rules = fixRules(), made = 0, tried = 0;
+    if (!row || settings.subgroup > 1) return;
+    fixItems.forEach(function (it, j) {
+      var k = it.excelRows.indexOf(row);
+      if (k < 0) return;
+      var res = results[j], pi = -1;
+      res.points.forEach(function (p, i) { if (p.row === k) pi = i; });
+      if (pi < 0 || !SPC.flagged(res, rules)[pi]) return;
+      tried++;
+      var v = SPC.suggest(it, optsFor(it.name), k, rules);
+      if (v !== null) { setEdit(row, it.col, v); made++; }
+    });
+    if (!tried) setStatus(row + '행은 OCAP · 7run이 없습니다 (이미 수정됐거나 정상)', 'warn');
+    else if (!made) setStatus(row + '행: 다른 점을 새로 걸리게 하지 않는 추천값을 찾지 못했습니다', 'warn');
+    else afterEdits(row + '행에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
+  }
+
+  function fixAll() {
+    if (settings.subgroup > 1) return;
+    var rules = fixRules(), made = 0, failed = 0;
+    fixItems.forEach(function (it) {
+      var out = SPC.fixAll(it, optsFor(it.name), rules);
+      out.changes.forEach(function (ch) { setEdit(it.excelRows[ch.row], it.col, ch.value); made++; });
+      failed += out.failed;
+    });
+    afterEdits('추천값 ' + made + '칸 입력' + (failed ? ' · ' + failed + '점은 추천값을 찾지 못함' : '') + ' · 저장하려면 [수정본 엑셀 저장]');
+    if (failed) setStatus($('status').textContent, 'warn');
+  }
+
+  function undoEdits() {
+    edits = {};
+    afterEdits('추천값 수정을 모두 취소했습니다');
+  }
+
+  // The copy: the file as read, recommended values in red cells, OCAP / 7 run rows yellow. The original is not touched.
+  function copyBytes() {
+    var list = Object.keys(edits).map(function (k) { return edits[k]; });
+    var rows = Object.keys(yellow).map(Number);
+    var xlsx = source && source.kind !== 'demo' && lastBuf && table.path && /\.(xlsx|xlsm)$/i.test(source.name);
+    return window.XLSXLite.copy(xlsx ? {buf: lastBuf, sheetPath: table.path} : {rows: table.rows, sheetName: table.sheet}, list, rows);
+  }
+
+  function copyName() {
+    var d = new Date(), base = source.kind === 'demo' ? '예제' : source.name.replace(/\.[^.]+$/, '');
+    var ext = /\.xlsm$/i.test(source.name) ? '.xlsm' : '.xlsx';
+    return base + '_SPC수정_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + ext;
+  }
+
+  async function saveCopy() {
+    if (!table) return;
+    var bytes, name = copyName();
+    try {
+      bytes = copyBytes();
+    } catch (e) {
+      setStatus('수정본을 만들지 못했습니다: ' + e.message, 'err');
+      return;
+    }
+    var type = /\.xlsm$/.test(name) ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (window.showSaveFilePicker) {
+      try {
+        var h = await window.showSaveFilePicker({suggestedName: name, types: [{description: 'Excel', accept: {[type]: [name.slice(-5)]}}]});
+        if (source.kind === 'handle' && (await h.isSameEntry(source.handle))) {
+          setStatus('원본 파일에는 덮어쓰지 않습니다. 다른 이름으로 저장해 주세요', 'err');
+          return;
+        }
+        var w = await h.createWritable();
+        await w.write(bytes);
+        await w.close();
+        setStatus('수정본 저장: ' + h.name + ' (원본 ' + source.name + '은 그대로)', 'muted');
+      } catch (e) {
+        if (!e || e.name !== 'AbortError') setStatus('수정본을 저장하지 못했습니다: ' + e.message, 'err');
+      }
+      return;
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], {type: type}));
+    a.download = name;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+    setStatus('수정본 내려받기: ' + name + ' (원본은 그대로)', 'muted');
   }
 
   function renderEvents() {
@@ -569,6 +806,21 @@
       ctx.fillStyle = !f ? '#2563eb' : (f.indexOf('OOS') >= 0 ? '#dc2626' : '#f59e0b');
       ctx.fill();
       if (f) { ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = 1; ctx.stroke(); }
+      var row = r.excelRows[r.points[i].rows[0]];
+      if (edits[row + ':' + r.col]) {
+        ctx.beginPath();
+        ctx.arc(X(i), Y(r.x[i]), rad + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      if (row === selectedRow) {
+        ctx.beginPath();
+        ctx.arc(X(i), Y(r.x[i]), rad + 7, 0, Math.PI * 2);
+        ctx.strokeStyle = '#111827';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
     xLabels(g, X, r.points.map(function (p) { return p.label; }), from, n, bottom);
   }
@@ -690,7 +942,9 @@
       ROLES.forEach(function (k) { if (L[k].values) lines.push(k + ' ' + fmt(L[k].values[i])); });
       var f = flagMap(r)[i];
       if (f) lines.push('⚠ ' + f.map(ruleName).join(', '));
-      lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행');
+      var ed = edits[r.excelRows[p.rows[0]] + ':' + r.col];
+      if (ed) lines.push('추천값으로 수정됨 (원래 ' + cellText(ed.orig) + ')');
+      lines.push('엑셀 ' + p.rows.map(function (k) { return r.excelRows[k]; }).join(', ') + '행 · 더블클릭: 아래 표의 그 행으로');
     } else {
       lines.push(r.range.name + ' ' + fmt(r.range.values[i]));
       if (r.rangeFlags.indexOf(i) >= 0) lines.push('⚠ ' + r.range.name + ' 관리한계 이탈');
@@ -701,6 +955,22 @@
     tip.style.top = (e.clientY + 14) + 'px';
   });
   $('cards').addEventListener('mouseleave', function () { $('tip').classList.add('hidden'); });
+
+  // Double-click a point: select its row in the data table below and scroll there.
+  function pointAt(e) {
+    var c = e.target, hit = c && c._hit;
+    if (!hit || hit.to <= hit.from) return null;
+    var rect = c.getBoundingClientRect(), step = hit.X(1) - hit.X(0);
+    var i = Math.round((e.clientX - rect.left - hit.X(hit.from)) / step) + hit.from;
+    return i < hit.from || i >= hit.to ? null : {res: hit.res, i: i};
+  }
+  $('cards').addEventListener('dblclick', function (e) {
+    var p = pointAt(e);
+    if (!p) return;
+    e.preventDefault();
+    selectRow(p.res.excelRows[p.res.points[p.i].rows[0]], true);
+    drawAll();
+  });
 
   // ---------- dialogs ----------
   function modal(html, bind) {
@@ -794,7 +1064,7 @@
 
   function recompute() {
     if (!table) return;
-    analyzeAll();
+    analyzeAll(true);
     render();
   }
 
@@ -886,7 +1156,18 @@
     buildTable();
     recompute();
   }
-  $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; buildTable(); recompute(); };
+  $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; edits = {}; selectedRow = null; buildTable(); recompute(); };
+  $('flagOnly').onchange = renderData;
+  $('dataTable').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-row]');
+    if (!tr) return;
+    selectRow(+tr.dataset.row, false);
+    drawAll();
+  });
+  $('fixOneBtn').onclick = fixOne;
+  $('fixAllBtn').onclick = fixAll;
+  $('undoBtn').onclick = undoEdits;
+  $('saveBtn').onclick = saveCopy;
   $('labelSel').onchange = onColumns;
   $('itemSel').onchange = onColumns;
   $('valueBox').onchange = onColumns;
@@ -925,5 +1206,7 @@
   });
 
   // For tests: open a file handle without the picker.
-  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings};
+  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
+    edits: function () { return edits; }, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName};
 })();
