@@ -1,4 +1,4 @@
-// Minimal .xlsx / .xlsm / .csv / HTML-table reader: every sheet as rows of cells (number, string, Date or null).
+// Minimal .xlsx / .xlsm / .ods / .csv / HTML-table reader: every sheet as rows of cells (number, string, Date or null).
 // Formula cells give the value Excel saved with the file. Needs pako (inflateRaw) for zip entries.
 // copy(): the same workbook with some cells changed and rows/cells coloured (the original file is never written).
 (function () {
@@ -11,25 +11,27 @@
     }
     if (eocd < 0) throw new Error('엑셀 파일 형식이 아닙니다 (zip 끝을 찾지 못함)');
     var count = dv.getUint16(eocd + 10, true), p = dv.getUint32(eocd + 16, true), files = {};
-    var dec = new TextDecoder('utf-8');
+    var dec = new TextDecoder('utf-8'), index = {};
     for (var k = 0; k < count; k++) {
       if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('엑셀 파일이 손상되었거나 저장 중입니다');
       var method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true);
       var nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true), commentLen = dv.getUint16(p + 32, true);
       var local = dv.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
-      files[name.replace(/^\//, '')] = {method: method, size: size, local: local, crc: dv.getUint32(p + 16, true), usize: dv.getUint32(p + 24, true), order: k};
+      files[name] = {method: method, size: size, local: local, crc: dv.getUint32(p + 16, true), usize: dv.getUint32(p + 24, true), order: k};
+      index[partKey(name)] = name;
       p += 46 + nameLen + extraLen + commentLen;
     }
+    function get(name) { return files[index[partKey(name)]]; }
     return {
       files: files,
       raw: function (name) {
-        var f = files[name];
+        var f = get(name);
         var start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
         return u8.subarray(start, start + f.size);
       },
-      has: function (name) { return !!files[name]; },
+      has: function (name) { return !!get(name); },
       text: function (name) {
-        var f = files[name];
+        var f = get(name);
         if (!f) return null;
         var start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
         var data = u8.subarray(start, start + f.size);
@@ -39,6 +41,10 @@
       }
     };
   }
+
+  // Part names are found without regard to case, '\' separators or a leading '/' (issue #25: an
+  // exporter's zip that Excel opens but whose names differ from Excel's own).
+  function partKey(name) { return name.replace(/\\/g, '/').replace(/^(\.?\/)+/, '').toLowerCase(); }
 
   function xml(text) {
     var doc = new DOMParser().parseFromString(text, 'application/xml');
@@ -94,23 +100,68 @@
     return n - 1;
   }
 
+  function relsPath(part) {
+    var i = part.lastIndexOf('/');
+    return part.slice(0, i + 1) + '_rels/' + part.slice(i + 1) + '.rels';
+  }
+
+  // [{id, type (last word of the Type URI), target (part name)}] of a part's .rels file.
+  function relsOf(zip, part) {
+    var text = zip.text(relsPath(part)), out = [];
+    if (!text) return out;
+    var rs = tags(xml(text), 'Relationship');
+    for (var i = 0; i < rs.length; i++) {
+      if (/^external$/i.test(rs[i].getAttribute('TargetMode') || '')) continue;
+      out.push({id: rs[i].getAttribute('Id'), type: (rs[i].getAttribute('Type') || '').split('/').pop(),
+                target: resolve(part, (rs[i].getAttribute('Target') || '').replace(/\\/g, '/'))});
+    }
+    return out;
+  }
+
+  function entryList(zip) {
+    var names = Object.keys(zip.files);
+    return names.slice(0, 8).join(', ') + (names.length > 8 ? ' 외 ' + (names.length - 8) + '개' : '');
+  }
+
+  // Workbook part and the parts it points to. Excel finds the workbook through _rels/.rels, not by its name.
+  function parts(zip) {
+    var wb = null;
+    relsOf(zip, '').forEach(function (r) { if (!wb && r.type === 'officeDocument' && zip.has(r.target)) wb = r.target; });
+    if (!wb) {
+      var ct = zip.text('[Content_Types].xml'), m = ct && /PartName="([^"]+)"[^>]*ContentType="[^"]*spreadsheetml\.(sheet|template)\.main[^"]*"/i.exec(ct);
+      if (m && zip.has(m[1])) wb = partKey(m[1]);
+    }
+    if (!wb) wb = Object.keys(zip.files).map(partKey).filter(function (n) { return /(^|\/)workbook\d*\.xml$/.test(n); })[0] || null;
+    if (!wb) {
+      if (Object.keys(zip.files).map(partKey).some(function (n) { return /\.bin$/.test(n) && /workbook/.test(n); }))
+        throw new Error('엑셀 바이너리 통합 문서(.xlsb)는 읽을 수 없습니다. Excel에서 .xlsx로 다른 이름으로 저장해 주세요');
+      throw new Error('엑셀 통합 문서(.xlsx)가 아닙니다 — 파일 안에 workbook 부분이 없습니다 (안에 든 것: ' + entryList(zip) + ')');
+    }
+    var out = {workbook: wb, rels: relsOf(zip, wb), styles: null, shared: null};
+    out.rels.forEach(function (r) {
+      if (r.type === 'styles' && !out.styles) out.styles = r.target;
+      if (r.type === 'sharedStrings' && !out.shared) out.shared = r.target;
+    });
+    var dir = wb.slice(0, wb.lastIndexOf('/') + 1);
+    if (!out.styles && zip.has(dir + 'styles.xml')) out.styles = dir + 'styles.xml';
+    if (!out.shared && zip.has(dir + 'sharedStrings.xml')) out.shared = dir + 'sharedStrings.xml';
+    return out;
+  }
+
   function readXlsx(buf) {
     var zip = unzip(buf);
-    var wbPath = 'xl/workbook.xml';
-    if (!zip.has(wbPath)) throw new Error('엑셀 통합 문서(.xlsx)가 아닙니다. .xls 파일은 Excel에서 .xlsx로 저장해 주세요');
+    if (zip.has('content.xml') && /opendocument\.spreadsheet/.test(zip.text('mimetype') || '')) return readOds(zip);
+    var pt = parts(zip), wbPath = pt.workbook;
     var wb = xml(zip.text(wbPath));
     var pr = tags(wb, 'workbookPr')[0], date1904 = pr && /^(1|true)$/.test(pr.getAttribute('date1904') || '');
-    var rels = {}, relText = zip.text('xl/_rels/workbook.xml.rels');
-    if (relText) {
-      var rs = tags(xml(relText), 'Relationship');
-      for (var i = 0; i < rs.length; i++) rels[rs[i].getAttribute('Id')] = resolve(wbPath, rs[i].getAttribute('Target'));
-    }
-    var shared = [], sst = zip.text('xl/sharedStrings.xml');
+    var rels = {};
+    for (var i = 0; i < pt.rels.length; i++) rels[pt.rels[i].id] = pt.rels[i].target;
+    var shared = [], sst = pt.shared && zip.text(pt.shared);
     if (sst) {
       var sis = tags(xml(sst), 'si');
       for (i = 0; i < sis.length; i++) shared.push(stringText(sis[i]));
     }
-    var dateStyle = [], styles = zip.text('xl/styles.xml');
+    var dateStyle = [], styles = pt.styles && zip.text(pt.styles);
     if (styles) {
       var sd = xml(styles), custom = {}, nf = tags(sd, 'numFmt');
       for (i = 0; i < nf.length; i++) custom[nf[i].getAttribute('numFmtId')] = nf[i].getAttribute('formatCode') || '';
@@ -124,11 +175,52 @@
     }
     var sheets = [], sheetNodes = tags(wb, 'sheet');
     for (i = 0; i < sheetNodes.length; i++) {
-      var s = sheetNodes[i], rid = s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || s.getAttribute('r:id');
-      var path = rels[rid] || ('xl/worksheets/sheet' + (i + 1) + '.xml');
+      var s = sheetNodes[i], rid = sheetRid(s);
+      var path = rels[rid] || resolve(wbPath, 'worksheets/sheet' + (i + 1) + '.xml');
       var text = zip.text(path);
       if (text === null) continue;
       sheets.push({name: s.getAttribute('name'), path: path, rows: readSheet(xml(text), shared, dateStyle, date1904)});
+    }
+    return sheets;
+  }
+
+  // r:id of a <sheet>, also in Strict Open XML (another namespace) or with another prefix.
+  function sheetRid(s) {
+    for (var i = 0; i < s.attributes.length; i++) {
+      var a = s.attributes[i];
+      if (a.localName === 'id' && a.namespaceURI && /relationships$/.test(a.namespaceURI)) return a.value;
+    }
+    return s.getAttribute('r:id');
+  }
+
+  // OpenDocument spreadsheet (.ods, or an .ods saved with an .xlsx name): every table as rows.
+  function readOds(zip) {
+    var doc = xml(zip.text('content.xml')), sheets = [], tables = tags(doc, 'table');
+    function attr(n, name) {
+      for (var i = 0; i < n.attributes.length; i++) if (n.attributes[i].localName === name) return n.attributes[i].value;
+      return null;
+    }
+    for (var t = 0; t < tables.length; t++) {
+      var rows = [], rowNodes = tags(tables[t], 'table-row');
+      for (var r = 0; r < rowNodes.length && rows.length < 1048576; r++) {
+        var row = [];
+        for (var c = rowNodes[r].firstElementChild; c; c = c.nextElementSibling) {
+          if (c.localName !== 'table-cell' && c.localName !== 'covered-table-cell') continue;
+          var type = attr(c, 'value-type'), val = null;
+          if (type === 'float' || type === 'percentage' || type === 'currency') val = +attr(c, 'value');
+          else if (type === 'date') { var m = /^(\d+)-(\d+)-(\d+)(?:T(\d+):(\d+):(\d+))?/.exec(attr(c, 'date-value') || ''); if (m) val = new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)); }
+          else if (type === 'boolean') val = attr(c, 'boolean-value') === 'true' ? 'TRUE' : 'FALSE';
+          else if (type) val = Array.prototype.map.call(tags(c, 'p'), function (p) { return p.textContent; }).join('\n') || null;
+          var rep = Math.min(+(attr(c, 'number-columns-repeated') || 1), 16384);
+          if (val === null && !c.nextElementSibling) break;  // trailing empty cells
+          for (var k = 0; k < rep; k++) row.push(val);
+        }
+        var rrep = Math.min(+(attr(rowNodes[r], 'number-rows-repeated') || 1), 1048576);
+        if (!row.length && r === rowNodes.length - 1) break;
+        for (k = 0; k < rrep && (row.length || k < 1); k++) rows.push(row.slice());
+      }
+      while (rows.length && !rows[rows.length - 1].some(function (v) { return v !== null; })) rows.pop();
+      sheets.push({name: attr(tables[t], 'name') || ('Sheet' + (t + 1)), rows: rows});
     }
     return sheets;
   }
@@ -145,6 +237,7 @@
         if (t === 's') val = v ? shared[+v.textContent] : null;
         else if (t === 'inlineStr') { var is = child(c, 'is'); val = is ? stringText(is) : null; }
         else if (t === 'str' || t === 'e') val = v ? v.textContent : null;
+        else if (t === 'd') { val = v ? new Date(v.textContent.replace(/Z$/, '')) : null; if (val && isNaN(val)) val = v.textContent; }
         else if (t === 'b') val = v ? (v.textContent === '1' ? 'TRUE' : 'FALSE') : null;
         else if (v && v.textContent !== '') {
           val = +v.textContent;
@@ -324,8 +417,8 @@
 
   // Patch one sheet of an .xlsx/.xlsm: edits [{row (1-based Excel row), col (0-based), value}], yellow [Excel rows].
   function copyXlsx(buf, sheetPath, edits, yellow) {
-    var z = unzip(buf), changed = {};
-    var styleText = z.text('xl/styles.xml');
+    var z = unzip(buf), changed = {}, pt = parts(z);
+    var styleText = pt.styles && z.text(pt.styles);
     if (!styleText) throw new Error('엑셀 서식(styles.xml)이 없는 파일이라 색을 넣을 수 없습니다');
     var sdoc = xml(styleText), style = styler(sdoc), doc = xml(z.text(sheetPath));
     var rowsByNum = {}, rowNodes = tags(doc, 'row');
@@ -365,20 +458,23 @@
       c.appendChild(v);
       c.setAttribute('s', style(+(c.getAttribute('s') || 0), 'red'));
     });
-    changed[sheetPath] = serialize(doc);
-    changed['xl/styles.xml'] = serialize(sdoc);
+    // changed / drop are keyed by partKey (the zip may spell names differently, issue #25)
+    changed[partKey(sheetPath)] = serialize(doc);
+    changed[partKey(pt.styles)] = serialize(sdoc);
     // Excel rebuilds the calculation chain; recalculate formulas that used the changed cells.
-    var drop = {'xl/calcChain.xml': 1};
+    var drop = {};
+    pt.rels.forEach(function (r) { if (r.type === 'calcChain') drop[partKey(r.target)] = 1; });
     var ct = z.text('[Content_Types].xml');
-    if (ct) changed['[Content_Types].xml'] = ct.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/, '');
-    var rels = z.text('xl/_rels/workbook.xml.rels');
-    if (rels) changed['xl/_rels/workbook.xml.rels'] = rels.replace(/<Relationship[^>]*Target="[^"]*calcChain\.xml"[^>]*\/>/, '');
-    var wb = z.text('xl/workbook.xml');
-    if (/<calcPr\b/.test(wb)) changed['xl/workbook.xml'] = wb.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"').replace(/(<calcPr fullCalcOnLoad="1"[^>]*?)\sfullCalcOnLoad="[^"]*"/, '$1');
+    if (ct) changed['[content_types].xml'] = ct.replace(/<Override[^>]*PartName="[^"]*calcChain\.xml"[^>]*\/>/i, '');
+    var rels = z.text(relsPath(pt.workbook));
+    if (rels) changed[partKey(relsPath(pt.workbook))] = rels.replace(/<Relationship[^>]*Target="[^"]*calcChain\.xml"[^>]*\/>/i, '');
+    var wb = z.text(pt.workbook);
+    if (/<calcPr\b/.test(wb)) changed[partKey(pt.workbook)] = wb.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"').replace(/(<calcPr fullCalcOnLoad="1"[^>]*?)\sfullCalcOnLoad="[^"]*"/, '$1');
     var enc = new TextEncoder(), entries = [];
     Object.keys(z.files).sort(function (a, b) { return z.files[a].order - z.files[b].order; }).forEach(function (name) {
-      if (drop[name]) return;
-      if (changed[name] !== undefined) entries.push({name: name, data: enc.encode(changed[name])});
+      var key = partKey(name);
+      if (drop[key]) return;
+      if (changed[key] !== undefined) entries.push({name: name, data: enc.encode(changed[key])});
       else { var f = z.files[name]; entries.push({name: name, raw: z.raw(name), method: f.method, crc: f.crc, usize: f.usize}); }
     });
     return zip(entries);

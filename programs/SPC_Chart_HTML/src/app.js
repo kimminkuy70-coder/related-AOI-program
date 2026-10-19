@@ -96,7 +96,7 @@
       try {
         handles = await window.showOpenFilePicker({
           id: 'spc-excel',
-          types: [{description: 'Excel / CSV', accept: {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'], 'text/csv': ['.csv', '.txt']}}]
+          types: [{description: 'Excel / CSV', accept: {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'], 'application/vnd.oasis.opendocument.spreadsheet': ['.ods'], 'text/csv': ['.csv', '.txt']}}]
         });
       } catch (e) {
         if (e && e.name === 'AbortError') return;

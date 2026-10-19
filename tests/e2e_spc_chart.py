@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 
 try:
@@ -61,6 +62,42 @@ def workbook(rows, sheet='Data'):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def respell(data, rename):
+    """The same .xlsx with its zip entries renamed by rename(name) -> name and text rewritten (other exporters)."""
+    src, out = zipfile.ZipFile(io.BytesIO(data)), io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            new, body = rename(info.filename, body)
+            zi = zipfile.ZipInfo(new, info.date_time)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(zi, body)
+    return out.getvalue()
+
+
+def ods(rows):
+    """A small OpenDocument spreadsheet (LibreOffice's own .ods layout)."""
+    def cell(v):
+        if v is None:
+            return '<table:table-cell/>'
+        if isinstance(v, datetime.datetime):
+            return '<table:table-cell office:value-type="date" office:date-value="%s"><text:p>x</text:p></table:table-cell>' % v.isoformat()
+        if isinstance(v, (int, float)):
+            return '<table:table-cell office:value-type="float" office:value="%r"><text:p>%r</text:p></table:table-cell>' % (v, v)
+        return '<table:table-cell office:value-type="string"><text:p>%s</text:p></table:table-cell>' % v
+    body = ''.join('<table:table-row>' + ''.join(cell(v) for v in r) + '<table:table-cell table:number-columns-repeated="1000"/></table:table-row>' for r in rows)
+    content = ('<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+               'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+               '<office:body><office:spreadsheet><table:table table:name="Data">' + body +
+               '<table:table-row table:number-rows-repeated="1048000"><table:table-cell table:number-columns-repeated="1024"/></table:table-row>'
+               '</table:table></office:spreadsheet></office:body></office:document-content>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w') as z:
+        z.writestr('mimetype', 'application/vnd.oasis.opendocument.spreadsheet')
+        z.writestr('content.xml', content, zipfile.ZIP_DEFLATED)
+    return out.getvalue()
 
 
 def long_rows(n, extra=()):
@@ -527,6 +564,50 @@ class SpcChartTest(unittest.TestCase):
         self.page.select_option('#pitchSel', '0')
         geo = self.js("""() => { const s = document.querySelector('.xscroll'), h = s.querySelector('.cx')._hit; return [s.scrollWidth - s.clientWidth, h.from, h.to]; }""")
         self.assertEqual(geo, [0, 0, 400])
+
+    # issue #25: an exporter's .xlsx that Excel opens but whose zip spells the parts differently
+    def test_xlsx_with_other_part_names(self):
+        rows = spc_rows()
+        def renamed(name, body):  # workbook under another name, found through _rels/.rels
+            body = body.replace(b'xl/workbook.xml', b'xl/book.xml').replace(b'workbook.xml.rels', b'book.xml.rels')
+            return name.replace('xl/workbook.xml', 'xl/book.xml').replace('workbook.xml.rels', 'book.xml.rels'), body
+        def windows(name, body):  # '\\' separators and other letter case
+            return name.replace('/', '\\').replace('xl', 'XL').replace('sheet1', 'Sheet1').replace('styles', 'Styles'), body
+        for i, rename in enumerate((renamed, windows)):
+            data = respell(workbook(rows), rename)
+            self.open_file('export%d.xlsx' % i, data)
+            self.assertEqual(self.js('() => window.__spc.table().spcForm'), True)
+            self.assertEqual(self.results()[0]['n'], len(rows) - 1)
+            self.page.click('#fixAllBtn')
+            saved = bytes(self.js('() => Array.from(window.__spc.copyBytes())'))
+            names = zipfile.ZipFile(io.BytesIO(saved)).namelist()
+            self.assertEqual(sorted(names), sorted(zipfile.ZipFile(io.BytesIO(data)).namelist()))
+            z = zipfile.ZipFile(io.BytesIO(saved))
+            sheet = [n for n in names if n.lower().replace('\\', '/').endswith('worksheets/sheet1.xml')][0]
+            styles = [n for n in names if n.lower().endswith('styles.xml')][0]
+            self.assertIn(b'FFFF0000', z.read(styles))
+            self.assertNotEqual(z.read(sheet), zipfile.ZipFile(io.BytesIO(data)).read(sheet))
+            if rename is renamed:  # openpyxl follows _rels/.rels too
+                ws = openpyxl.load_workbook(io.BytesIO(saved)).active
+                self.assertEqual(ws.cell(SPC_OUT + 2, SPC_HEADERS.index('EXT_MV') + 1).fill.fgColor.rgb, 'FFFF0000')
+
+    def test_ods_and_clear_errors(self):
+        self.open_file('data.ods', ods(long_rows(30)))
+        res = self.results()
+        self.assertEqual([r['n'] for r in res], [30, 30])
+        self.assertEqual(res[0]['usl'], 10.5)
+        # a zip without a workbook names what is inside it; .xlsb says what to do
+        msg = self.js("""(b64) => { try { XLSXLite.read('x.xlsx', Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer); return ''; }
+            catch (e) { return e.message; } }""", base64.b64encode(respell(workbook([[1, 2]]), lambda n, b: (n.replace('workbook', 'wb').replace('xl/', 'q/'), b.replace(b'workbook', b'wb')))).decode())
+        self.assertIn('workbook', msg)
+        self.assertIn('q/wb.xml', msg)  # names what is inside
+        xlsb = io.BytesIO()
+        with zipfile.ZipFile(xlsb, 'w') as z:
+            z.writestr('[Content_Types].xml', '<Types/>')
+            z.writestr('xl/workbook.bin', b'\x83\x01')
+        msg = self.js("""(b64) => { try { XLSXLite.read('x.xlsx', Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer); return ''; }
+            catch (e) { return e.message; } }""", base64.b64encode(xlsb.getvalue()).decode())
+        self.assertIn('.xlsb', msg)
 
 
 if __name__ == '__main__':
