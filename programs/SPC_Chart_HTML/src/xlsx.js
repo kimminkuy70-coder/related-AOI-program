@@ -514,11 +514,67 @@
     return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
   }
 
+  function sheetName(name) { return String(name || 'Sheet').replace(/[\\\/?*\[\]:]/g, '_').slice(0, 31) || 'Sheet'; }
+
+  // New .xlsx with several sheets and a few cell styles (OCAP 삭제 양식, issue #28).
+  // sheets: [{name, rows: [[cell]], widths: [column width]}], cell = value or {v: value, s: style name}.
+  var BOOK_STYLE = {title: 1, head: 2, cell: 3, text: 4};
+  function book(sheets) {
+    var used = {};
+    sheets.forEach(function (sh) {
+      var n = sheetName(sh.name), k = 2;
+      while (used[n.toLowerCase()]) n = sheetName(sh.name).slice(0, 27) + ' (' + k++ + ')';
+      used[n.toLowerCase()] = 1;
+      sh.safe = n;
+    });
+    var files = {}, ct = '', wbRels = '', wbSheets = '';
+    sheets.forEach(function (sh, i) {
+      var x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="' + NS + '">';
+      if (sh.widths) x += '<cols>' + sh.widths.map(function (w, c) { return '<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('') + '</cols>';
+      x += '<sheetData>';
+      sh.rows.forEach(function (row, ri) {
+        var r = ri + 1;
+        x += '<row r="' + r + '">';
+        (row || []).forEach(function (cell, c) {
+          var v = cell && typeof cell === 'object' && !(cell instanceof Date) ? cell.v : cell;
+          var s = cell && typeof cell === 'object' && cell.s ? BOOK_STYLE[cell.s] : 0, ref = colRef(c) + r, sa = s ? ' s="' + s + '"' : '';
+          if (v instanceof Date) v = v.getFullYear() + '-' + ('0' + (v.getMonth() + 1)).slice(-2) + '-' + ('0' + v.getDate()).slice(-2) + ' ' + ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2) + ':' + ('0' + v.getSeconds()).slice(-2);
+          if (v === null || v === undefined || v === '') { if (s) x += '<c r="' + ref + '"' + sa + '/>'; }
+          else if (typeof v === 'number' && isFinite(v)) x += '<c r="' + ref + '"' + sa + '><v>' + v + '</v></c>';
+          else x += '<c r="' + ref + '"' + sa + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+        });
+        x += '</row>';
+      });
+      x += '</sheetData></worksheet>';
+      files['xl/worksheets/sheet' + (i + 1) + '.xml'] = x;
+      ct += '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+      wbRels += '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>';
+      wbSheets += '<sheet name="' + xmlEsc(sh.safe) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>';
+    });
+    var thin = '<left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/>';
+    files['[Content_Types].xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + ct + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>';
+    files['_rels/.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+    files['xl/workbook.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="' + NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + wbSheets + '</sheets></workbook>';
+    files['xl/_rels/workbook.xml.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + wbRels + '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+    // xf 1 title (bold), 2 head (grey fill, border, centre), 3 cell (border, centre), 4 text (border, left, wrap)
+    files['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="3"><font><sz val="11"/><name val="맑은 고딕"/></font><font><b/><sz val="12"/><name val="맑은 고딕"/></font><font><sz val="10"/><name val="맑은 고딕"/></font></fonts>' +
+      '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAEAAAA"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+      '<borders count="2"><border/><border>' + thin + '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5">' +
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+      '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+      '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+      '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+      '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    var enc = new TextEncoder();
+    return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
+  }
+
   // src: {buf, name, sheetPath} for an .xlsx/.xlsm, or {rows, sheetName} for anything else.
   function copy(src, edits, yellow) {
     if (src.buf && src.sheetPath) return copyXlsx(src.buf, src.sheetPath, edits, yellow);
     return buildXlsx(src.rows, src.sheetName, edits, yellow);
   }
 
-  window.XLSXLite = {read: read, copy: copy, serialToDate: serialToDate};
+  window.XLSXLite = {read: read, copy: copy, book: book, serialToDate: serialToDate};
 })();

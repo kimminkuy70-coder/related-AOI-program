@@ -689,6 +689,51 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(self.js('() => window.__spc.nowFlags()'), yellow)
         self.assertEqual(self.js('() => window.__spc.results()[0].points.length'), len(rows) - 1)
 
+    # issue #28: the delete rows saved in the OCAP 삭제 양식 (EDC Plan · Spec seq# · Data seq#), one sheet per spec
+    def test_ocap_delete_form(self):
+        rows = spc_rows(sigma_out=True, sigma_run=True)
+        hp, hs, hd = (SPC_HEADERS.index(h) for h in ('PLAN_NAME', 'SPEC_SEQ', 'DATA_SEQ'))
+        for k, r in enumerate(rows[1:]):
+            r[hp] = 'ITEM-A(TARGET 13 UM)_0/13 : F01(LINE-1)'
+            r[hs] = 129588 if k < 15 else 130121  # two specs in one file
+        self.open_file('ocap.xlsx', workbook(rows))
+        self.page.click('#delBtn')
+        plan = self.js('() => window.__spc.delPlan()')
+        keys = sorted(x['key'] for rd in plan['rounds'] for x in rd)
+        self.assertTrue(keys)
+        self.page.click('#ocapFormBtn')
+        self.page.wait_for_function("() => /OCAP 삭제 양식 저장: /.test(document.body.textContent) && window.__savedAs")
+        self.assertRegex(self.js('() => window.__savedAs'), r'^OCAP 삭제 양식_\d{8}_\d{4}\.xlsx$')
+        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))
+        specs = sorted({rows[k - 1][hs] for k in keys})
+        self.assertEqual(wb.sheetnames, ['OCAP 삭제 양식'] + [str(s) for s in specs])
+        ws = wb['OCAP 삭제 양식']
+        self.assertEqual(ws['B2'].value, 'OCAP 삭제 양식')
+        self.assertEqual([ws.cell(4, c).value for c in range(3, 6)], ['OCAP 전체 삭제 시', 'OCAP 일부 삭제 시', '요청 사항'])
+        self.assertEqual([ws.cell(5, c).value for c in range(2, 6)], ['EDC Plan', 'Spec seq#', 'Data seq#', '요청 내용'])
+        self.assertEqual(ws['B5'].fill.fgColor.rgb, 'FFAEAAAA')
+        self.assertEqual(ws['B5'].border.left.style, 'thin')
+        for i, spec in enumerate(specs):
+            self.assertEqual([ws.cell(6 + i, c).value for c in range(2, 5)], ['ITEM-A(TARGET 13 UM)_0/13 : F01(LINE-1)', spec, '각 개별 sheet에 기입'])
+            self.assertIn('완전 삭제', ws.cell(6 + i, 5).value)
+        self.assertIsNone(ws.cell(6 + len(specs), 2).value)
+        # each spec sheet lists the DATA_SEQ of its delete rows, in row order
+        seen = []
+        for spec in specs:
+            sh = wb[str(spec)]
+            self.assertEqual(sh['B2'].value, spec)
+            head = [c.value for c in sh[4]]
+            self.assertEqual(head[:4], ['No', 'Data seq#', 'LOT_ID', 'X축'])
+            self.assertEqual(head[-3:], ['삭제 차수', '판정', '엑셀 행'])
+            data = [[c.value for c in r] for r in sh.iter_rows(min_row=5)]
+            self.assertEqual([d[0] for d in data], list(range(1, len(data) + 1)))
+            for d in data:
+                self.assertEqual(rows[d[-1] - 1][hs], spec)
+                self.assertEqual(d[1], rows[d[-1] - 1][hd])
+                self.assertRegex(d[-3], r'^\d+차$')
+            seen += [d[-1] for d in data]
+        self.assertEqual(sorted(seen), keys)
+
     # issue #25: an exporter's .xlsx that Excel opens but whose zip spells the parts differently
     def test_xlsx_with_other_part_names(self):
         rows = spc_rows()

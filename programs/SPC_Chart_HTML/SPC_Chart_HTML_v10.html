@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v9"><title>SPC Chart HTML v9</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v10"><title>SPC Chart HTML v10</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -755,13 +755,69 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
   }
 
+  function sheetName(name) { return String(name || 'Sheet').replace(/[\\\/?*\[\]:]/g, '_').slice(0, 31) || 'Sheet'; }
+
+  // New .xlsx with several sheets and a few cell styles (OCAP 삭제 양식, issue #28).
+  // sheets: [{name, rows: [[cell]], widths: [column width]}], cell = value or {v: value, s: style name}.
+  var BOOK_STYLE = {title: 1, head: 2, cell: 3, text: 4};
+  function book(sheets) {
+    var used = {};
+    sheets.forEach(function (sh) {
+      var n = sheetName(sh.name), k = 2;
+      while (used[n.toLowerCase()]) n = sheetName(sh.name).slice(0, 27) + ' (' + k++ + ')';
+      used[n.toLowerCase()] = 1;
+      sh.safe = n;
+    });
+    var files = {}, ct = '', wbRels = '', wbSheets = '';
+    sheets.forEach(function (sh, i) {
+      var x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="' + NS + '">';
+      if (sh.widths) x += '<cols>' + sh.widths.map(function (w, c) { return '<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('') + '</cols>';
+      x += '<sheetData>';
+      sh.rows.forEach(function (row, ri) {
+        var r = ri + 1;
+        x += '<row r="' + r + '">';
+        (row || []).forEach(function (cell, c) {
+          var v = cell && typeof cell === 'object' && !(cell instanceof Date) ? cell.v : cell;
+          var s = cell && typeof cell === 'object' && cell.s ? BOOK_STYLE[cell.s] : 0, ref = colRef(c) + r, sa = s ? ' s="' + s + '"' : '';
+          if (v instanceof Date) v = v.getFullYear() + '-' + ('0' + (v.getMonth() + 1)).slice(-2) + '-' + ('0' + v.getDate()).slice(-2) + ' ' + ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2) + ':' + ('0' + v.getSeconds()).slice(-2);
+          if (v === null || v === undefined || v === '') { if (s) x += '<c r="' + ref + '"' + sa + '/>'; }
+          else if (typeof v === 'number' && isFinite(v)) x += '<c r="' + ref + '"' + sa + '><v>' + v + '</v></c>';
+          else x += '<c r="' + ref + '"' + sa + ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+        });
+        x += '</row>';
+      });
+      x += '</sheetData></worksheet>';
+      files['xl/worksheets/sheet' + (i + 1) + '.xml'] = x;
+      ct += '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+      wbRels += '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>';
+      wbSheets += '<sheet name="' + xmlEsc(sh.safe) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>';
+    });
+    var thin = '<left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/>';
+    files['[Content_Types].xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + ct + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>';
+    files['_rels/.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+    files['xl/workbook.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="' + NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + wbSheets + '</sheets></workbook>';
+    files['xl/_rels/workbook.xml.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + wbRels + '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+    // xf 1 title (bold), 2 head (grey fill, border, centre), 3 cell (border, centre), 4 text (border, left, wrap)
+    files['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="3"><font><sz val="11"/><name val="맑은 고딕"/></font><font><b/><sz val="12"/><name val="맑은 고딕"/></font><font><sz val="10"/><name val="맑은 고딕"/></font></fonts>' +
+      '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAEAAAA"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+      '<borders count="2"><border/><border>' + thin + '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5">' +
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+      '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+      '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+      '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+      '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    var enc = new TextEncoder();
+    return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
+  }
+
   // src: {buf, name, sheetPath} for an .xlsx/.xlsm, or {rows, sheetName} for anything else.
   function copy(src, edits, yellow) {
     if (src.buf && src.sheetPath) return copyXlsx(src.buf, src.sheetPath, edits, yellow);
     return buildXlsx(src.rows, src.sheetName, edits, yellow);
   }
 
-  window.XLSXLite = {read: read, copy: copy, serialToDate: serialToDate};
+  window.XLSXLite = {read: read, copy: copy, book: book, serialToDate: serialToDate};
 })();
 
 </script>
@@ -1836,7 +1892,8 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     if (!delPlan) return;
     var p = delPlan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
     var h = '<div class="dhead"><b>삭제 시뮬레이션</b><span class="muted small">파일 원래 값 기준 (추천값 수정은 빼고 계산) · 아래 차트 · 표는 이 행들을 지운 모습</span>' +
-      '<span class="spacer"></span><button id="delCsvBtn" class="ghost small"' + (p.count ? '' : ' disabled') + '>삭제 목록 CSV</button></div>';
+      '<span class="spacer"></span><button id="ocapFormBtn" class="small"' + (p.count ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 저장</button>' +
+      '<button id="delCsvBtn" class="ghost small"' + (p.count ? '' : ' disabled') + '>삭제 목록 CSV</button></div>';
     if (!p.count) {
       h += '<p class="ok">OCAP · 7run 행이 없어 지울 행이 없습니다.</p>';
     } else {
@@ -1872,6 +1929,63 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     a.download = 'SPC_삭제목록_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+
+  // [OCAP 삭제 양식 저장] (#28): the [삭제 시뮬레이션] rows in the company's OCAP 삭제 양식, apart from the copy above.
+  // Sheet 1 = the form: one line per EDC Plan (PLAN_NAME) · Spec seq# (SPEC_SEQ), Data seq# "각 개별 sheet에 기입";
+  // then one sheet per line (named by its Spec seq#) listing the Data seq# (DATA_SEQ) to delete.
+  var OCAP_FORM = {title: 'OCAP 삭제 양식', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제)'};
+  function ocapFormSheets(plan) {
+    var hs = table.headers.map(norm), at = function (d, w) { var i = hs.indexOf(w); return i < 0 ? null : d.cells[i]; };
+    var ii = table.headers.indexOf(table.item), byRow = {}, groups = [], byKey = {};
+    table.data.forEach(function (d) { byRow[d.excelRow] = d; });
+    Object.keys(plan.round).map(Number).sort(function (a, b) { return a - b; }).forEach(function (row) {
+      var d = byRow[row];
+      if (!d) return;
+      var edc = cellText(at(d, 'planname')) || (ii >= 0 ? cellText(d.cells[ii]) : '') || (table.sheet || ''), spec = at(d, 'specseq');
+      var key = edc + '\u0000' + cellText(spec);
+      if (!byKey[key]) { byKey[key] = {edc: edc, spec: spec, rows: []}; groups.push(byKey[key]); }
+      byKey[key].rows.push(d);
+    });
+    var H = function (v) { return {v: v, s: 'head'}; }, C = function (v) { return {v: v, s: 'cell'}; }, T = function (v) { return {v: v, s: 'text'}; };
+    var form = [[], [null, {v: OCAP_FORM.title, s: 'title'}], [], [null, null, H('OCAP 전체 삭제 시'), H('OCAP 일부 삭제 시'), H('요청 사항')],
+      [null, H('EDC Plan'), H('Spec seq#'), H('Data seq#'), H('요청 내용')]];
+    groups.forEach(function (g) { form.push([null, T(g.edc), C(g.spec), C(OCAP_FORM.data), T(OCAP_FORM.request)]); });
+    var sheets = [{name: OCAP_FORM.title, rows: form, widths: [3, 52, 14, 22, 60]}];
+    var has = function (w) { return hs.indexOf(w) >= 0; }, lotCol = has(SPC_FORMAT.lot), mv = has(SPC_FORMAT.value), sg = has(SPC_FORMAT.sigma.value);
+    groups.forEach(function (g, n) {
+      var head = ['No', 'Data seq#'].concat(lotCol ? ['LOT_ID'] : [], ['X축'], mv ? ['EXT_MV'] : [], sg ? ['EXT_SIGMA'] : [], ['삭제 차수', '판정', '엑셀 행']);
+      var rows = [[{v: 'EDC Plan', s: 'head'}, T(g.edc)], [{v: 'Spec seq#', s: 'head'}, C(g.spec)], [], head.map(H)];
+      g.rows.forEach(function (d, k) {
+        var tx = rowText(d.excelRow), line = [C(k + 1), C(at(d, 'dataseq'))];
+        if (lotCol) line.push(C(cellText(at(d, SPC_FORMAT.lot))));
+        line.push(C(tx.label));
+        if (mv) line.push(C(at(d, SPC_FORMAT.value)));
+        if (sg) line.push(C(at(d, SPC_FORMAT.sigma.value)));
+        line.push(C(plan.round[d.excelRow] + '차'), C(delRules(d.excelRow).map(shortRule).join(', ')), C(d.excelRow));
+        rows.push(line);
+      });
+      var name = cellText(g.spec) || ('Sheet' + (n + 2));
+      sheets.push({name: name, rows: rows, widths: [10, 14].concat(lotCol ? [16] : [], [20], mv ? [10] : [], sg ? [10] : [], [10, 22, 9])});
+    });
+    return sheets;
+  }
+
+  function ocapFormName() {
+    var d = new Date();
+    return OCAP_FORM.title + '_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.xlsx';
+  }
+
+  async function saveOcapForm() {
+    if (!delPlan || !delPlan.count) return;
+    var bytes;
+    try {
+      bytes = window.XLSXLite.book(ocapFormSheets(delPlan));
+    } catch (e) {
+      setStatus('OCAP 삭제 양식을 만들지 못했습니다: ' + e.message, 'err');
+      return;
+    }
+    await saveBytes(bytes, ocapFormName(), 'OCAP 삭제 양식');
   }
 
   function toggleDelete() {
@@ -2005,6 +2119,11 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       setStatus('수정본을 만들지 못했습니다: ' + e.message, 'err');
       return;
     }
+    await saveBytes(bytes, name, '수정본');
+  }
+
+  // Save picker (never over the opened file), or a download when the browser has no picker.
+  async function saveBytes(bytes, name, what) {
     var type = /\.xlsm$/.test(name) ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     if (window.showSaveFilePicker) {
       try {
@@ -2016,9 +2135,9 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
         var w = await h.createWritable();
         await w.write(bytes);
         await w.close();
-        setStatus('수정본 저장: ' + h.name + ' (원본 ' + source.name + '은 그대로)', 'muted');
+        setStatus(what + ' 저장: ' + h.name + ' (원본 ' + source.name + '은 그대로)', 'muted');
       } catch (e) {
-        if (!e || e.name !== 'AbortError') setStatus('수정본을 저장하지 못했습니다: ' + e.message, 'err');
+        if (!e || e.name !== 'AbortError') setStatus(what + '을 저장하지 못했습니다: ' + e.message, 'err');
       }
       return;
     }
@@ -2027,7 +2146,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     a.download = name;
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
-    setStatus('수정본 내려받기: ' + name + ' (원본은 그대로)', 'muted');
+    setStatus(what + ' 내려받기: ' + name + ' (원본은 그대로)', 'muted');
   }
 
   function renderEvents() {
@@ -2695,6 +2814,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   $('delBtn').onclick = toggleDelete;
   $('delBox').addEventListener('click', function (e) {
     if (e.target.id === 'delCsvBtn') { delCsv(); return; }
+    if (e.target.id === 'ocapFormBtn') { saveOcapForm(); return; }
     var a = e.target.closest('a[data-row]');
     if (!a) return;
     e.preventDefault();
@@ -2743,7 +2863,8 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   // For tests: open a file handle without the picker.
   window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
     edits: function () { return edits; }, revealRow: revealRow, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
-    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; }};
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; },
+    ocapFormSheets: function () { return delPlan && ocapFormSheets(delPlan); }, ocapFormName: ocapFormName};
 })();
 
 </script>

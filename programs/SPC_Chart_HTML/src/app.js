@@ -669,7 +669,8 @@
     if (!delPlan) return;
     var p = delPlan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
     var h = '<div class="dhead"><b>삭제 시뮬레이션</b><span class="muted small">파일 원래 값 기준 (추천값 수정은 빼고 계산) · 아래 차트 · 표는 이 행들을 지운 모습</span>' +
-      '<span class="spacer"></span><button id="delCsvBtn" class="ghost small"' + (p.count ? '' : ' disabled') + '>삭제 목록 CSV</button></div>';
+      '<span class="spacer"></span><button id="ocapFormBtn" class="small"' + (p.count ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 저장</button>' +
+      '<button id="delCsvBtn" class="ghost small"' + (p.count ? '' : ' disabled') + '>삭제 목록 CSV</button></div>';
     if (!p.count) {
       h += '<p class="ok">OCAP · 7run 행이 없어 지울 행이 없습니다.</p>';
     } else {
@@ -705,6 +706,63 @@
     a.download = 'SPC_삭제목록_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+
+  // [OCAP 삭제 양식 저장] (#28): the [삭제 시뮬레이션] rows in the company's OCAP 삭제 양식, apart from the copy above.
+  // Sheet 1 = the form: one line per EDC Plan (PLAN_NAME) · Spec seq# (SPEC_SEQ), Data seq# "각 개별 sheet에 기입";
+  // then one sheet per line (named by its Spec seq#) listing the Data seq# (DATA_SEQ) to delete.
+  var OCAP_FORM = {title: 'OCAP 삭제 양식', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제)'};
+  function ocapFormSheets(plan) {
+    var hs = table.headers.map(norm), at = function (d, w) { var i = hs.indexOf(w); return i < 0 ? null : d.cells[i]; };
+    var ii = table.headers.indexOf(table.item), byRow = {}, groups = [], byKey = {};
+    table.data.forEach(function (d) { byRow[d.excelRow] = d; });
+    Object.keys(plan.round).map(Number).sort(function (a, b) { return a - b; }).forEach(function (row) {
+      var d = byRow[row];
+      if (!d) return;
+      var edc = cellText(at(d, 'planname')) || (ii >= 0 ? cellText(d.cells[ii]) : '') || (table.sheet || ''), spec = at(d, 'specseq');
+      var key = edc + '\u0000' + cellText(spec);
+      if (!byKey[key]) { byKey[key] = {edc: edc, spec: spec, rows: []}; groups.push(byKey[key]); }
+      byKey[key].rows.push(d);
+    });
+    var H = function (v) { return {v: v, s: 'head'}; }, C = function (v) { return {v: v, s: 'cell'}; }, T = function (v) { return {v: v, s: 'text'}; };
+    var form = [[], [null, {v: OCAP_FORM.title, s: 'title'}], [], [null, null, H('OCAP 전체 삭제 시'), H('OCAP 일부 삭제 시'), H('요청 사항')],
+      [null, H('EDC Plan'), H('Spec seq#'), H('Data seq#'), H('요청 내용')]];
+    groups.forEach(function (g) { form.push([null, T(g.edc), C(g.spec), C(OCAP_FORM.data), T(OCAP_FORM.request)]); });
+    var sheets = [{name: OCAP_FORM.title, rows: form, widths: [3, 52, 14, 22, 60]}];
+    var has = function (w) { return hs.indexOf(w) >= 0; }, lotCol = has(SPC_FORMAT.lot), mv = has(SPC_FORMAT.value), sg = has(SPC_FORMAT.sigma.value);
+    groups.forEach(function (g, n) {
+      var head = ['No', 'Data seq#'].concat(lotCol ? ['LOT_ID'] : [], ['X축'], mv ? ['EXT_MV'] : [], sg ? ['EXT_SIGMA'] : [], ['삭제 차수', '판정', '엑셀 행']);
+      var rows = [[{v: 'EDC Plan', s: 'head'}, T(g.edc)], [{v: 'Spec seq#', s: 'head'}, C(g.spec)], [], head.map(H)];
+      g.rows.forEach(function (d, k) {
+        var tx = rowText(d.excelRow), line = [C(k + 1), C(at(d, 'dataseq'))];
+        if (lotCol) line.push(C(cellText(at(d, SPC_FORMAT.lot))));
+        line.push(C(tx.label));
+        if (mv) line.push(C(at(d, SPC_FORMAT.value)));
+        if (sg) line.push(C(at(d, SPC_FORMAT.sigma.value)));
+        line.push(C(plan.round[d.excelRow] + '차'), C(delRules(d.excelRow).map(shortRule).join(', ')), C(d.excelRow));
+        rows.push(line);
+      });
+      var name = cellText(g.spec) || ('Sheet' + (n + 2));
+      sheets.push({name: name, rows: rows, widths: [10, 14].concat(lotCol ? [16] : [], [20], mv ? [10] : [], sg ? [10] : [], [10, 22, 9])});
+    });
+    return sheets;
+  }
+
+  function ocapFormName() {
+    var d = new Date();
+    return OCAP_FORM.title + '_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.xlsx';
+  }
+
+  async function saveOcapForm() {
+    if (!delPlan || !delPlan.count) return;
+    var bytes;
+    try {
+      bytes = window.XLSXLite.book(ocapFormSheets(delPlan));
+    } catch (e) {
+      setStatus('OCAP 삭제 양식을 만들지 못했습니다: ' + e.message, 'err');
+      return;
+    }
+    await saveBytes(bytes, ocapFormName(), 'OCAP 삭제 양식');
   }
 
   function toggleDelete() {
@@ -838,6 +896,11 @@
       setStatus('수정본을 만들지 못했습니다: ' + e.message, 'err');
       return;
     }
+    await saveBytes(bytes, name, '수정본');
+  }
+
+  // Save picker (never over the opened file), or a download when the browser has no picker.
+  async function saveBytes(bytes, name, what) {
     var type = /\.xlsm$/.test(name) ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     if (window.showSaveFilePicker) {
       try {
@@ -849,9 +912,9 @@
         var w = await h.createWritable();
         await w.write(bytes);
         await w.close();
-        setStatus('수정본 저장: ' + h.name + ' (원본 ' + source.name + '은 그대로)', 'muted');
+        setStatus(what + ' 저장: ' + h.name + ' (원본 ' + source.name + '은 그대로)', 'muted');
       } catch (e) {
-        if (!e || e.name !== 'AbortError') setStatus('수정본을 저장하지 못했습니다: ' + e.message, 'err');
+        if (!e || e.name !== 'AbortError') setStatus(what + '을 저장하지 못했습니다: ' + e.message, 'err');
       }
       return;
     }
@@ -860,7 +923,7 @@
     a.download = name;
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
-    setStatus('수정본 내려받기: ' + name + ' (원본은 그대로)', 'muted');
+    setStatus(what + ' 내려받기: ' + name + ' (원본은 그대로)', 'muted');
   }
 
   function renderEvents() {
@@ -1528,6 +1591,7 @@
   $('delBtn').onclick = toggleDelete;
   $('delBox').addEventListener('click', function (e) {
     if (e.target.id === 'delCsvBtn') { delCsv(); return; }
+    if (e.target.id === 'ocapFormBtn') { saveOcapForm(); return; }
     var a = e.target.closest('a[data-row]');
     if (!a) return;
     e.preventDefault();
@@ -1576,5 +1640,6 @@
   // For tests: open a file handle without the picker.
   window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
     edits: function () { return edits; }, revealRow: revealRow, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
-    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; }};
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; },
+    ocapFormSheets: function () { return delPlan && ocapFormSheets(delPlan); }, ocapFormName: ocapFormName};
 })();
