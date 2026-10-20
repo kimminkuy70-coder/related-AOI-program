@@ -734,32 +734,33 @@ class SpcChartTest(unittest.TestCase):
         self.assertRegex(self.js('() => window.__savedAs'), r'^OCAP 삭제 양식_\d{8}_\d{4}\.xlsx$')
         wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))
         specs = sorted({rows[k - 1][hs] for k in keys})
-        self.assertEqual(wb.sheetnames, ['OCAP 삭제 양식'] + [str(s) for s in specs])
-        ws = wb['OCAP 삭제 양식']
+        self.assertEqual(wb.sheetnames, ['전체'] + [str(s) for s in specs])
+        ws = wb['전체']  # laid out like the owner's form (screenshot, #27 follow-up)
         self.assertEqual(ws['B2'].value, 'OCAP 삭제 양식')
-        self.assertEqual([ws.cell(4, c).value for c in range(3, 6)], ['OCAP 전체 삭제 시', 'OCAP 일부 삭제 시', '요청 사항'])
-        self.assertEqual([ws.cell(5, c).value for c in range(2, 6)], ['EDC Plan', 'Spec seq#', 'Data seq#', '요청 내용'])
-        self.assertEqual(ws['B5'].fill.fgColor.rgb, 'FFAEAAAA')
-        self.assertEqual(ws['B5'].border.left.style, 'thin')
+        self.assertTrue(ws['B2'].font.b)
+        self.assertEqual([ws.cell(r, 5).value for r in (1, 2, 3)][0], '[Option]')
+        self.assertEqual(ws['E3'].fill.fgColor.rgb, 'FFDDEBF7')
+        self.assertEqual([ws.cell(5, c).value for c in range(3, 6)], ['OCAP 전체 삭제 시', 'OCAP 일부 삭제 시', '요청 사항'])
+        self.assertEqual([ws.cell(6, c).value for c in range(2, 6)], ['EDC Plan', 'Spec seq#', 'Data seq#', '요청 내용'])
+        self.assertEqual(ws['B6'].fill.fgColor.rgb, 'FFAEAAAA')
+        self.assertEqual(ws['B6'].border.left.style, 'thin')
         for i, spec in enumerate(specs):
-            self.assertEqual([ws.cell(6 + i, c).value for c in range(2, 5)], ['ITEM-A(TARGET 13 UM)_0/13 : F01(LINE-1)', spec, '각 개별 sheet에 기입'])
-            self.assertIn('완전 삭제', ws.cell(6 + i, 5).value)
-        self.assertIsNone(ws.cell(6 + len(specs), 2).value)
-        # each spec sheet lists the DATA_SEQ of its delete rows, in row order
+            self.assertEqual([ws.cell(7 + i, c).value for c in range(2, 5)], ['ITEM-A(TARGET 13 UM)_0/13 : F01(LINE-1)', spec, '각 개별 sheet에 기입'])
+            self.assertEqual(ws.cell(7 + i, 5).value, 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제')
+        self.assertIsNone(ws.cell(7 + len(specs), 2).value)
+        self.assertEqual(ws.cell(23, 5).border.bottom.style, 'thin')  # empty bordered lines down to row 23
+        self.assertEqual(ws.max_row, 23)
+        # each spec sheet = the file's header row + its delete rows, every column as in the file
         seen = []
         for spec in specs:
             sh = wb[str(spec)]
-            self.assertEqual(sh['B2'].value, spec)
-            head = [c.value for c in sh[4]]
-            self.assertEqual(head[:4], ['No', 'Data seq#', 'LOT_ID', 'X축'])
-            self.assertEqual(head[-3:], ['삭제 차수', '판정', '엑셀 행'])
-            data = [[c.value for c in r] for r in sh.iter_rows(min_row=5)]
-            self.assertEqual([d[0] for d in data], list(range(1, len(data) + 1)))
+            self.assertEqual([c.value for c in sh[1]], SPC_HEADERS)
+            data = [[c.value for c in r] for r in sh.iter_rows(min_row=2)]
             for d in data:
-                self.assertEqual(rows[d[-1] - 1][hs], spec)
-                self.assertEqual(d[1], rows[d[-1] - 1][hd])
-                self.assertRegex(d[-3], r'^\d+차$')
-            seen += [d[-1] for d in data]
+                self.assertEqual(d[hs], spec)
+                k = [n for n, r in enumerate(rows) if r[hd] == d[hd]][0]
+                self.assertEqual(d[SPC_HEADERS.index('EXT_MV')], rows[k][SPC_HEADERS.index('EXT_MV')])
+                seen.append(k + 1)
         self.assertEqual(sorted(seen), keys)
 
     # issue #25: an exporter's .xlsx that Excel opens but whose zip spells the parts differently

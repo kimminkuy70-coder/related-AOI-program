@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v11"><title>SPC Chart HTML v11</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v12"><title>SPC Chart HTML v12</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -759,7 +759,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
 
   // New .xlsx with several sheets and a few cell styles (OCAP 삭제 양식, issue #28).
   // sheets: [{name, rows: [[cell]], widths: [column width]}], cell = value or {v: value, s: style name}.
-  var BOOK_STYLE = {title: 1, head: 2, cell: 3, text: 4};
+  var BOOK_STYLE = {title: 1, head: 2, cell: 3, text: 4, group: 5, small: 6, option: 7};
   function book(sheets) {
     var used = {};
     sheets.forEach(function (sh) {
@@ -797,15 +797,20 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     files['_rels/.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
     files['xl/workbook.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="' + NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + wbSheets + '</sheets></workbook>';
     files['xl/_rels/workbook.xml.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + wbRels + '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
-    // xf 1 title (bold), 2 head (grey fill, border, centre), 3 cell (border, centre), 4 text (border, left, wrap)
-    files['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="3"><font><sz val="11"/><name val="맑은 고딕"/></font><font><b/><sz val="12"/><name val="맑은 고딕"/></font><font><sz val="10"/><name val="맑은 고딕"/></font></fonts>' +
-      '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAEAAAA"/><bgColor indexed="64"/></patternFill></fill></fills>' +
-      '<borders count="2"><border/><border>' + thin + '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5">' +
+    // xf 1 title (bold, centre), 2 head (grey fill, border, centre), 3 cell (border, centre), 4 text (border, left, wrap),
+    // 5 group (centre, no border), 6 small (border, left, 9 pt), 7 option (light blue fill, left, 9 pt)
+    files['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="4"><font><sz val="11"/><name val="맑은 고딕"/></font><font><b/><sz val="11"/><name val="맑은 고딕"/></font><font><sz val="10"/><name val="맑은 고딕"/></font><font><sz val="9"/><name val="맑은 고딕"/></font></fonts>' +
+      '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAEAAAA"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFDDEBF7"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+      '<borders count="2"><border/><border>' + thin + '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8">' +
       '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
       '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
       '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
       '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+      '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+      '<xf numFmtId="0" fontId="3" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
+      '<xf numFmtId="0" fontId="3" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
       '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
     var enc = new TextEncoder();
     return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
@@ -1484,7 +1489,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     });
     var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
     table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
-      spcForm: spcForm, path: sheet && sheet.path, rows: rows};
+      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
@@ -1953,9 +1958,12 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   }
 
   // [OCAP 삭제 양식 저장] (#28): the [삭제 시뮬레이션] rows in the company's OCAP 삭제 양식, apart from the copy above.
-  // Sheet 1 = the form: one line per EDC Plan (PLAN_NAME) · Spec seq# (SPEC_SEQ), Data seq# "각 개별 sheet에 기입";
-  // then one sheet per line (named by its Spec seq#) listing the Data seq# (DATA_SEQ) to delete.
-  var OCAP_FORM = {title: 'OCAP 삭제 양식', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제)'};
+  // Laid out like the owner's form (#27 follow-up, screenshot): sheet "전체" = title B2, [Option] box E1:E3,
+  // row 5 "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항", row 6 the grey header, one line per EDC Plan (PLAN_NAME)
+  // · Spec seq# (SPEC_SEQ) from row 7, empty bordered lines down to row 23; then one sheet per line named by its
+  // Spec seq#: the rows to delete picked out of the file's sheet as they are (its header row, every column).
+  var OCAP_FORM = {title: 'OCAP 삭제 양식', sheet: '전체', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제',
+    option: ['[Option]', '1. 플래그 & 히스토리 삭제 (Data 값 유지)', '2. Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제'], lastRow: 23};
   function ocapFormSheets(plan) {
     var hs = table.headers.map(norm), at = function (d, w) { var i = hs.indexOf(w); return i < 0 ? null : d.cells[i]; };
     var ii = table.headers.indexOf(table.item), byRow = {}, groups = [], byKey = {};
@@ -1968,26 +1976,17 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       if (!byKey[key]) { byKey[key] = {edc: edc, spec: spec, rows: []}; groups.push(byKey[key]); }
       byKey[key].rows.push(d);
     });
-    var H = function (v) { return {v: v, s: 'head'}; }, C = function (v) { return {v: v, s: 'cell'}; }, T = function (v) { return {v: v, s: 'text'}; };
-    var form = [[], [null, {v: OCAP_FORM.title, s: 'title'}], [], [null, null, H('OCAP 전체 삭제 시'), H('OCAP 일부 삭제 시'), H('요청 사항')],
+    var S = function (s) { return function (v) { return {v: v, s: s}; }; }, H = S('head'), C = S('cell'), O = S('option'), G = S('group');
+    var form = [[null, null, null, null, O(OCAP_FORM.option[0])], [null, {v: OCAP_FORM.title, s: 'title'}, null, null, O(OCAP_FORM.option[1])],
+      [null, null, null, null, O(OCAP_FORM.option[2])], [],
+      [null, null, G('OCAP 전체 삭제 시'), G('OCAP 일부 삭제 시'), G('요청 사항')],
       [null, H('EDC Plan'), H('Spec seq#'), H('Data seq#'), H('요청 내용')]];
-    groups.forEach(function (g) { form.push([null, T(g.edc), C(g.spec), C(OCAP_FORM.data), T(OCAP_FORM.request)]); });
-    var sheets = [{name: OCAP_FORM.title, rows: form, widths: [3, 52, 14, 22, 60]}];
-    var has = function (w) { return hs.indexOf(w) >= 0; }, lotCol = has(SPC_FORMAT.lot), mv = has(SPC_FORMAT.value), sg = has(SPC_FORMAT.sigma.value);
+    groups.forEach(function (g) { form.push([null, C(g.edc), C(g.spec), C(OCAP_FORM.data), S('small')(OCAP_FORM.request)]); });
+    while (form.length < OCAP_FORM.lastRow) form.push([null, C(null), C(null), C(null), C(null)]);
+    var sheets = [{name: OCAP_FORM.sheet, rows: form, widths: [12, 75, 22, 27, 58]}];
+    var head = (table.rows[table.head] || table.headers).map(function (v) { return v === null || v === undefined ? null : H(v); });
     groups.forEach(function (g, n) {
-      var head = ['No', 'Data seq#'].concat(lotCol ? ['LOT_ID'] : [], ['X축'], mv ? ['EXT_MV'] : [], sg ? ['EXT_SIGMA'] : [], ['삭제 차수', '판정', '엑셀 행']);
-      var rows = [[{v: 'EDC Plan', s: 'head'}, T(g.edc)], [{v: 'Spec seq#', s: 'head'}, C(g.spec)], [], head.map(H)];
-      g.rows.forEach(function (d, k) {
-        var tx = rowText(d.excelRow), line = [C(k + 1), C(at(d, 'dataseq'))];
-        if (lotCol) line.push(C(cellText(at(d, SPC_FORMAT.lot))));
-        line.push(C(tx.label));
-        if (mv) line.push(C(at(d, SPC_FORMAT.value)));
-        if (sg) line.push(C(at(d, SPC_FORMAT.sigma.value)));
-        line.push(C(plan.round[d.excelRow] + '차'), C(delRules(d.excelRow).map(shortRule).join(', ')), C(d.excelRow));
-        rows.push(line);
-      });
-      var name = cellText(g.spec) || ('Sheet' + (n + 2));
-      sheets.push({name: name, rows: rows, widths: [10, 14].concat(lotCol ? [16] : [], [20], mv ? [10] : [], sg ? [10] : [], [10, 22, 9])});
+      sheets.push({name: cellText(g.spec) || ('Sheet' + (n + 2)), rows: [head].concat(g.rows.map(function (d) { return d.cells; }))});
     });
     return sheets;
   }

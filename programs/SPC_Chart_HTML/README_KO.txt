@@ -1,7 +1,7 @@
-SPC Chart HTML v11 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge에서 바로 실행)
+SPC Chart HTML v12 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge에서 바로 실행)
 
 무엇인가
-- SPC_Chart_HTML_v11.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
+- SPC_Chart_HTML_v12.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
 - 실시간 감시가 아니라, 정해진 기간 동안의 데이터(엑셀 시트 .xlsx / .xlsm / .csv)를 SPC 차트로 보는 프로그램입니다.
 - 기간 전체를 그립니다. 점이 많아 화면을 넘으면 차트 아래 가로 스크롤 막대(또는 Shift + 마우스 휠)로 넘겨 봅니다.
   XBAR와 SIGMA(또는 MR) 차트는 같이 움직이고, 왼쪽 Y축 눈금과 오른쪽 UCL/LCL 글자는 제자리에 있습니다.
@@ -20,7 +20,7 @@ SPC Chart HTML v11 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge
 - xlsx 압축 풀기용 pako(MIT) 코드를 파일 안에 넣었습니다 (외부에서 불러오지 않음).
 
 사용 순서
-1. SPC_Chart_HTML_v11.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터(300시간 기간)로 화면을 미리 볼 수 있습니다.
+1. SPC_Chart_HTML_v12.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터(300시간 기간)로 화면을 미리 볼 수 있습니다.
 2. [엑셀 열기] → 엑셀 파일 선택. Edge가 파일 보기를 물으면 [허용]. 파일을 창에 끌어 놓아도 됩니다.
 3. 엑셀에서 데이터를 고쳐 저장했으면 [새로고침]을 누르면 다시 읽습니다.
    [자동 새로고침]을 켜면(기본 꺼짐) 파일이 저장될 때마다 자동으로 다시 읽습니다 (기본 2초마다 파일 확인).
@@ -118,15 +118,16 @@ OCAP (Out of Control Action Plan)
   데이터로 계산하는 한계(한계 열 없음)는 지운 뒤 데이터로 다시 계산합니다.
 - 한 행씩 앞에서부터 지우는 방법이라 v9 · v10보다 적게 지우지만, 수학적으로 가장 적은 조합이라는 보장은 없습니다.
 
-OCAP 삭제 양식 저장 (v10, #28)
+OCAP 삭제 양식 저장 (v10, #28 / v12 양식 맞춤)
 - [삭제 시뮬레이션]을 켠 뒤 상자 오른쪽 [OCAP 삭제 양식 저장]을 누르면, 지울 행(모든 차수)을 회사 OCAP 삭제 양식 엑셀로 저장합니다.
   [수정본 엑셀 저장], [삭제 목록 CSV]와는 별개의 새 파일이고 원본은 바꾸지 않습니다.
 - 파일 이름: "OCAP 삭제 양식_YYYYMMDD_HHMM.xlsx".
-- 첫 시트 "OCAP 삭제 양식": 제목, 머리글 "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항",
-  "EDC Plan / Spec seq# / Data seq# / 요청 내용" 아래에 EDC Plan(PLAN_NAME) · Spec seq#(SPEC_SEQ)마다 한 줄.
-  Data seq# 칸은 "각 개별 sheet에 기입", 요청 내용은 "Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제)".
-- 그다음 Spec seq#마다 시트 하나(시트 이름 = Spec seq#): EDC Plan, Spec seq#, 그리고
-  No, Data seq#(DATA_SEQ), LOT_ID, X축, EXT_MV, EXT_SIGMA, 삭제 차수, 판정, 엑셀 행 표.
+- 회사 OCAP 삭제 양식 그대로 (v12):
+  첫 시트 "전체": B2 제목 "OCAP 삭제 양식", E1~E3 [Option] 상자(1. 플래그 & 히스토리 삭제 / 2. Data 자체를 완전 삭제 & 히스토리 삭제),
+  5행 "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항", 6행 회색 머리글 "EDC Plan / Spec seq# / Data seq# / 요청 내용",
+  7행부터 EDC Plan(PLAN_NAME) · Spec seq#(SPEC_SEQ)마다 한 줄 (Data seq# = "각 개별 sheet에 기입",
+  요청 내용 = "Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제"), 23행까지 빈 테두리 줄.
+- 그다음 Spec seq#마다 시트 하나(시트 이름 = Spec seq#): 원본 시트에서 지울 행만 추려 낸 것 (원본 머리글 줄 + 그 행들, 모든 열 그대로).
 - PLAN_NAME 열이 없으면 EDC Plan 칸에 항목(Item) 이름을 씁니다. SPEC_SEQ · DATA_SEQ 열이 없으면 그 칸은 비어 있습니다.
 
 알아 둘 것

@@ -245,7 +245,7 @@
     });
     var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
     table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
-      spcForm: spcForm, path: sheet && sheet.path, rows: rows};
+      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
@@ -714,9 +714,12 @@
   }
 
   // [OCAP 삭제 양식 저장] (#28): the [삭제 시뮬레이션] rows in the company's OCAP 삭제 양식, apart from the copy above.
-  // Sheet 1 = the form: one line per EDC Plan (PLAN_NAME) · Spec seq# (SPEC_SEQ), Data seq# "각 개별 sheet에 기입";
-  // then one sheet per line (named by its Spec seq#) listing the Data seq# (DATA_SEQ) to delete.
-  var OCAP_FORM = {title: 'OCAP 삭제 양식', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제)'};
+  // Laid out like the owner's form (#27 follow-up, screenshot): sheet "전체" = title B2, [Option] box E1:E3,
+  // row 5 "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항", row 6 the grey header, one line per EDC Plan (PLAN_NAME)
+  // · Spec seq# (SPEC_SEQ) from row 7, empty bordered lines down to row 23; then one sheet per line named by its
+  // Spec seq#: the rows to delete picked out of the file's sheet as they are (its header row, every column).
+  var OCAP_FORM = {title: 'OCAP 삭제 양식', sheet: '전체', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제',
+    option: ['[Option]', '1. 플래그 & 히스토리 삭제 (Data 값 유지)', '2. Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제'], lastRow: 23};
   function ocapFormSheets(plan) {
     var hs = table.headers.map(norm), at = function (d, w) { var i = hs.indexOf(w); return i < 0 ? null : d.cells[i]; };
     var ii = table.headers.indexOf(table.item), byRow = {}, groups = [], byKey = {};
@@ -729,26 +732,17 @@
       if (!byKey[key]) { byKey[key] = {edc: edc, spec: spec, rows: []}; groups.push(byKey[key]); }
       byKey[key].rows.push(d);
     });
-    var H = function (v) { return {v: v, s: 'head'}; }, C = function (v) { return {v: v, s: 'cell'}; }, T = function (v) { return {v: v, s: 'text'}; };
-    var form = [[], [null, {v: OCAP_FORM.title, s: 'title'}], [], [null, null, H('OCAP 전체 삭제 시'), H('OCAP 일부 삭제 시'), H('요청 사항')],
+    var S = function (s) { return function (v) { return {v: v, s: s}; }; }, H = S('head'), C = S('cell'), O = S('option'), G = S('group');
+    var form = [[null, null, null, null, O(OCAP_FORM.option[0])], [null, {v: OCAP_FORM.title, s: 'title'}, null, null, O(OCAP_FORM.option[1])],
+      [null, null, null, null, O(OCAP_FORM.option[2])], [],
+      [null, null, G('OCAP 전체 삭제 시'), G('OCAP 일부 삭제 시'), G('요청 사항')],
       [null, H('EDC Plan'), H('Spec seq#'), H('Data seq#'), H('요청 내용')]];
-    groups.forEach(function (g) { form.push([null, T(g.edc), C(g.spec), C(OCAP_FORM.data), T(OCAP_FORM.request)]); });
-    var sheets = [{name: OCAP_FORM.title, rows: form, widths: [3, 52, 14, 22, 60]}];
-    var has = function (w) { return hs.indexOf(w) >= 0; }, lotCol = has(SPC_FORMAT.lot), mv = has(SPC_FORMAT.value), sg = has(SPC_FORMAT.sigma.value);
+    groups.forEach(function (g) { form.push([null, C(g.edc), C(g.spec), C(OCAP_FORM.data), S('small')(OCAP_FORM.request)]); });
+    while (form.length < OCAP_FORM.lastRow) form.push([null, C(null), C(null), C(null), C(null)]);
+    var sheets = [{name: OCAP_FORM.sheet, rows: form, widths: [12, 75, 22, 27, 58]}];
+    var head = (table.rows[table.head] || table.headers).map(function (v) { return v === null || v === undefined ? null : H(v); });
     groups.forEach(function (g, n) {
-      var head = ['No', 'Data seq#'].concat(lotCol ? ['LOT_ID'] : [], ['X축'], mv ? ['EXT_MV'] : [], sg ? ['EXT_SIGMA'] : [], ['삭제 차수', '판정', '엑셀 행']);
-      var rows = [[{v: 'EDC Plan', s: 'head'}, T(g.edc)], [{v: 'Spec seq#', s: 'head'}, C(g.spec)], [], head.map(H)];
-      g.rows.forEach(function (d, k) {
-        var tx = rowText(d.excelRow), line = [C(k + 1), C(at(d, 'dataseq'))];
-        if (lotCol) line.push(C(cellText(at(d, SPC_FORMAT.lot))));
-        line.push(C(tx.label));
-        if (mv) line.push(C(at(d, SPC_FORMAT.value)));
-        if (sg) line.push(C(at(d, SPC_FORMAT.sigma.value)));
-        line.push(C(plan.round[d.excelRow] + '차'), C(delRules(d.excelRow).map(shortRule).join(', ')), C(d.excelRow));
-        rows.push(line);
-      });
-      var name = cellText(g.spec) || ('Sheet' + (n + 2));
-      sheets.push({name: name, rows: rows, widths: [10, 14].concat(lotCol ? [16] : [], [20], mv ? [10] : [], sg ? [10] : [], [10, 22, 9])});
+      sheets.push({name: cellText(g.spec) || ('Sheet' + (n + 2)), rows: [head].concat(g.rows.map(function (d) { return d.cells; }))});
     });
     return sheets;
   }
