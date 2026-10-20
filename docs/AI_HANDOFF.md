@@ -1,6 +1,6 @@
 # AI 인수인계 (related-AOI-program)
 
-마지막 갱신: 2026-10-20 · 기준 커밋 `dafa315` (SPC 브랜치 `claude/loving-curie-79nq5k`, 기본 브랜치 `2f77709`) · 이슈 #27 + 후속 질문(대화: 삭제 시뮬레이션 결과가 파일마다 다른 이유)
+마지막 갱신: 2026-10-20 · 기준 커밋 `40d396a` (SPC 브랜치 `claude/loving-curie-79nq5k`, 기본 브랜치 `3c0e0df`) · 이슈 #28 (수정사항3: OCAP 삭제 양식 저장, SPC v10) + #27 후속 질문(대화: 삭제 시뮬레이션 결과가 파일마다 다른 이유)
 
 ## 지금 상태
 - **SPC 프로그램(#21~#25)은 브랜치 `claude/loving-curie-79nq5k`에만 있음** (#21 이슈 제목 "새 브랜치에 작성"; #22~#24도 그 파일 수정이라 같은 브랜치에서 이어 작업). 기본 브랜치에는 이 문서만 같은 내용으로 올림. 합칠지는 소유자 결정 (아래 남은 일).
@@ -8,9 +8,10 @@
 - 프로그램:
   - `programs/AOI_Photo_Sorter_HTML/` **AOI Photo Sorter HTML v2** (`AOI_Photo_Sorter_HTML_v2.html`, Edge에서 여는 HTML 한 파일, Python·.exe 없음)가 sorter의 유일한 버전. 소스 `src/`, 빌드 `python tools/build_html.py` (`--check`로 최신인지 확인). 버전 이름은 `version.json`.
   - `AOI_Color_Gray_Matcher` (Final_v16), `Wafer_Map_Converter` (WebView2_v6): 그대로.
-  - `programs/SPC_Chart_HTML/` **SPC Chart HTML v9** (`SPC_Chart_HTML_v9.html`, 브랜치 `claude/loving-curie-79nq5k`; v1→v2(#22)→v3(#23)→v4(#24)→v5(#25)→v6(#25 후속)→v7(#25 후속 2)→v8(#25 후속 4)→v9(#27), 옛 파일은 git history에 남음). v9: [삭제 시뮬레이션] (아래 #27 내용). v8: 2/3>2σ(R4)·4/5>1σ(R5) 기본 꺼짐. v7: 점 하나로 안 풀리는 Run/Trend는 같은 런의 다른 점을 고침. v6: SIGMA 차트도 OCAP·7run 판정, 추천값은 XBAR·SIGMA 두 칸을 같이 (아래 #25 후속). v5(#25): 다른 프로그램이 만든 .xlsx(zip 안 부분 이름이 엑셀과 다름)를 읽음 + .ods 읽기 + 못 읽을 때 파일 안 이름을 오류 글에 보여 줌 (아래 #25 내용). **실시간 감시가 아니라 정해진 기간의 데이터를 보는 프로그램** (소유자 #24). v4 추가(#24): 기간 전체를 그리고 가로 스크롤 (`표시 점 수` 기본 0 = 전체, `점 간격` 기본 16 px / 화면에 맞춤), XBAR와 SIGMA(MR)가 같이 스크롤, Y축 고정, 표의 행을 누르면 차트가 그 점으로 넘어감, [자동 새로고침](옛 [실시간]) 기본 꺼짐, 예제는 300점 고정 기간. v3 추가(#23): SPC 시스템 양식이면 SPC 시스템 화면처럼 XBAR 차트(EXT_MV, UCL/LCL 선만) 바로 아래 SIGMA 차트(EXT_SIGMA, EXT_SIGMA_UCL/LCL 선), X축 날짜·시간 두 줄(TRAN_TIME → 수정일시 → LOT_ID 순), 히스토그램 = 도수 글자 + 정규분포 곡선 + USL/LSL + 평균±3σ(모든 양식 공통, CL 선은 뺌). v2 추가(#22): SPC 시스템 양식 자동 인식(EXT_MV, EXT_MV_UCL/CENTER/LCL), HTML 표 파일 읽기, 차트 아래 데이터 표(OCAP·7run 행 노랑), 차트 점 더블클릭 → 표의 그 행, 추천값 입력(선택 행 / 전체 일괄), 수정본 xlsx 저장(원본 복사 + 고친 칸 빨강). 나머지는 v1과 같음: 엑셀(.xlsx/.xlsm/.csv)을 골라 I-MR / Xbar-R 관리도, MR/R 차트, 히스토그램, Cp/Cpk/Ppk를 그림. File System Access API 파일 handle을 2초마다 확인(lastModified·size)해 엑셀 저장 시 자동 갱신. 판정 규칙(규격 이탈, 관리한계 이탈, Run 7, Trend 7, 2/3>2σ, 4/5>1σ, 선택: 14 교대, 15 hugging, 8 1σ 밖), 새 이상 알림(배너+소리), OCAP 조치 표(규칙별 조치 문구 편집, 조치 완료·메모는 localStorage), CSV 저장, 예제 데이터. 소스 `src/` (`xlsx.js` 자체 xlsx 읽기 + pako, `spc.js` 계산, `app.js` 화면), 빌드 `python tools/build_html.py --program SPC_Chart_HTML`.
+  - `programs/SPC_Chart_HTML/` **SPC Chart HTML v10** (`SPC_Chart_HTML_v10.html`, 브랜치 `claude/loving-curie-79nq5k`; v1→v2(#22)→v3(#23)→v4(#24)→v5(#25)→v6(#25 후속)→v7(#25 후속 2)→v8(#25 후속 4)→v9(#27)→v10(#28), 옛 파일은 git history에 남음). v10: [OCAP 삭제 양식 저장] (아래 #28 내용). v9: [삭제 시뮬레이션] (아래 #27 내용). v8: 2/3>2σ(R4)·4/5>1σ(R5) 기본 꺼짐. v7: 점 하나로 안 풀리는 Run/Trend는 같은 런의 다른 점을 고침. v6: SIGMA 차트도 OCAP·7run 판정, 추천값은 XBAR·SIGMA 두 칸을 같이 (아래 #25 후속). v5(#25): 다른 프로그램이 만든 .xlsx(zip 안 부분 이름이 엑셀과 다름)를 읽음 + .ods 읽기 + 못 읽을 때 파일 안 이름을 오류 글에 보여 줌 (아래 #25 내용). **실시간 감시가 아니라 정해진 기간의 데이터를 보는 프로그램** (소유자 #24). v4 추가(#24): 기간 전체를 그리고 가로 스크롤 (`표시 점 수` 기본 0 = 전체, `점 간격` 기본 16 px / 화면에 맞춤), XBAR와 SIGMA(MR)가 같이 스크롤, Y축 고정, 표의 행을 누르면 차트가 그 점으로 넘어감, [자동 새로고침](옛 [실시간]) 기본 꺼짐, 예제는 300점 고정 기간. v3 추가(#23): SPC 시스템 양식이면 SPC 시스템 화면처럼 XBAR 차트(EXT_MV, UCL/LCL 선만) 바로 아래 SIGMA 차트(EXT_SIGMA, EXT_SIGMA_UCL/LCL 선), X축 날짜·시간 두 줄(TRAN_TIME → 수정일시 → LOT_ID 순), 히스토그램 = 도수 글자 + 정규분포 곡선 + USL/LSL + 평균±3σ(모든 양식 공통, CL 선은 뺌). v2 추가(#22): SPC 시스템 양식 자동 인식(EXT_MV, EXT_MV_UCL/CENTER/LCL), HTML 표 파일 읽기, 차트 아래 데이터 표(OCAP·7run 행 노랑), 차트 점 더블클릭 → 표의 그 행, 추천값 입력(선택 행 / 전체 일괄), 수정본 xlsx 저장(원본 복사 + 고친 칸 빨강). 나머지는 v1과 같음: 엑셀(.xlsx/.xlsm/.csv)을 골라 I-MR / Xbar-R 관리도, MR/R 차트, 히스토그램, Cp/Cpk/Ppk를 그림. File System Access API 파일 handle을 2초마다 확인(lastModified·size)해 엑셀 저장 시 자동 갱신. 판정 규칙(규격 이탈, 관리한계 이탈, Run 7, Trend 7, 2/3>2σ, 4/5>1σ, 선택: 14 교대, 15 hugging, 8 1σ 밖), 새 이상 알림(배너+소리), OCAP 조치 표(규칙별 조치 문구 편집, 조치 완료·메모는 localStorage), CSV 저장, 예제 데이터. 소스 `src/` (`xlsx.js` 자체 xlsx 읽기 + pako, `spc.js` 계산, `app.js` 화면), 빌드 `python tools/build_html.py --program SPC_Chart_HTML`.
   - 속도 시험 페이지: `experiments/browser_speed_test/AOI_Browser_Speed_Test.html`.
 - 시험 (2026-10-19~20, Linux):
+  - #28 v10: `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 42개 통과 (SPC 31 = 30 + #28 1). `pip install playwright==1.56.0 openpyxl` + `pip install --force-reinstall pillow` 필요했음. 저장한 양식 파일을 LibreOffice(headless)로 PDF 변환해 열리는지 확인. Windows Excel, 회사 실제 양식·시스템 업로드로는 확인 못 함.
   - #27 v9: `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 41개 통과 (SPC 30 = 28 + #27 2). `tests.test_startup`/`test_wafer_engine` 11개 오류는 전과 같음 (numpy·webview 없음). 이 환경의 시스템 Pillow가 깨져 있어(`cannot import name '_imaging'`) `pip install --force-reinstall pillow` 해야 sorter 시험이 건너뛰지 않음. headless Chromium으로 예제 데이터 삭제 시뮬레이션 화면 확인. Windows Edge, 실제 파일로는 확인 못 함.
   - #25 후속 4 v8: 39개 통과 (SPC 28 = 27 + 기본 꺼짐·옛 설정 시험 1, R4 시험은 규칙을 직접 켜도록 고침). 실제 파일: 일괄 수정 → 저장 → 다시 열기 후 XBAR·SIGMA 이상 점 0.
   - #25 후속 2 v7 (브랜치 `claude/loving-curie-79nq5k`): 38개 통과 (SPC 27 = 26 + 1). 소유자가 대화로 준 실제 파일(고객 데이터, 저장소에 넣지 않음, scratchpad에서만)로 확인: 열기 OK(v4도 OK), 일괄 추천값 → 남은 노란 행 0, 노란 행마다 [선택 행] 하나씩 → 모두 성공, 수정본 = 고친 칸 수만큼만 다르고 빨강.
@@ -27,7 +28,8 @@
 ## 이슈 이력
 | 날짜 | 이슈 | 요청 | 결과 |
 |---|---|---|---|
-| 2026-10-20 | #27 후속 (대화) | "삭제 전 파일은 3차까지, XBAR 노란 행만 지운 파일은 1차만 → 왜 다르냐" (실제 파일 2개, scratchpad에서만) | 코드 수정 없음. 원인: ① 두 파일의 기간이 다름 (삭제 전 파일 1,344행 2025-08-29~, 지운 파일 651행 2026-07-01~; 2·3차 행 대부분이 7월 이전) ② 차수는 지운 횟수가 아니라 연쇄 단계 (같은 기간이면 원래 59+4=63행, 소유자 방식 48+12=60행). 한 행씩(가장 앞 행부터) 지우고 다시 판정하면 7월~ 기간 48행, 전체 기간 184행(차수 방식 237행)으로 줄어듦 → 방식 바꿀지 물음 |
+| 2026-10-20 | #27 후속 (대화) | "삭제 전 파일은 3차까지, XBAR 노란 행만 지운 파일은 1차만 → 왜 다르냐" (실제 파일 2개, scratchpad에서만, v9로 확인) | 코드 수정 없음. 원인: ① 두 파일의 기간이 다름 (삭제 전 파일 1,344행 2025-08-29~, 지운 파일 651행 2026-07-01~; 2·3차 행 대부분이 7월 이전) ② 차수는 지운 횟수가 아니라 연쇄 단계 (같은 기간이면 원래 59+4=63행, 소유자 방식 48+12=60행). 한 행씩(가장 앞 행부터) 지우고 다시 판정하면 7월~ 기간 48행, 전체 기간 184행(차수 방식 237행)으로 줄어듦 → 방식 바꿀지 물음 |
+| 2026-10-20 | #28 | 이슈 본문의 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#(각 개별 sheet에 기입) · 요청 내용)에 맞게 삭제 아이템을 저장하는 기능, 지금 저장 기능과 별개, 이름은 OCAP 삭제 양식 | SPC Chart HTML v10 (브랜치 `claude/loving-curie-79nq5k`): 삭제 시뮬레이션 상자에 [OCAP 삭제 양식 저장] → `OCAP 삭제 양식_YYYYMMDD_HHMM.xlsx` (양식 시트 + Spec seq#별 시트에 DATA_SEQ 목록). 시험 1개 추가, 42개 통과. 릴리스 없음 |
 | 2026-10-20 | #27 | 노란 행(OCAP·7run)을 지우면 다른 곳에서 다시 생길 수 있음 → 지웠을 때 추가로 생기는 점을 확인하고, XBAR·SIGMA 모두 OCAP·7run이 안 나오려면 어떤 점을 지워야 하는지 알려 주는 기능 | SPC Chart HTML v9 (브랜치 `claude/loving-curie-79nq5k`): [삭제 시뮬레이션] 버튼, 차수별(1차 = 노란 행, 2차 = 1차를 지우면 새로 생기는 행 …) 지울 행 목록, 지운 뒤 차트·표, 삭제 목록 CSV. 시험 2개 추가, 41개 통과. 릴리스 없음 |
 | 2026-10-20 | #26 | 질문: 자동추천값을 어떤 원리로 고치는지, 쉬운 버전·중간 버전 2가지로 설명 | 코드 수정 없음 (SPC v8 그대로). 이슈 댓글로 답: `spc.js` `valueFor`/`suggestChange`/`fixAll` 기준 (후보 순서, CL±2σ·규격·0 이상 제한, 새 이상 금지, 같은 런의 앞 점 대신 고치기, 일괄은 앞에서부터 한 점씩 다시 판정). 시험 안 돌림 (코드 안 바뀜). 릴리스 없음 |
 | 2026-10-18 | (대화) | Sorter HTML v1만 남기고 Python/.exe 버전 삭제, HTML 브랜치 합침, 개발자 워터마크 | `claude/relaxed-goldberg-dnf5nt`에 반영 |
@@ -85,6 +87,11 @@
 - `app.js`: `delMode`(버튼 `#delBtn` 켜기/끄기), `delPlan` = `planDeletes()` (파일 원래 값 `items(false, true)`, XBAR는 `fixRules()`, SIGMA는 `sigmaItem`·`sigmaOpts`·`sigmaRules()` tag `S`, subgroup 1일 때만 SIGMA). 켜 있으면 `items()`가 `delPlan.round`의 행을 null로 → 차트·`nowFlags`는 지운 뒤 모습, `yellow`는 파일 그대로. 표: 지운 행 class `del`(회색 취소선) + "삭제 N차" 표시, 표 위 `#delBox`에 차수별 행 번호(누르면 그 행), 결론 글, [삭제 목록 CSV](`delCsv`: 차수, 엑셀 행, X축, LOT_ID, 판정). 켜 있는 동안 추천값 버튼 꺼짐. 시험용 `window.__spc.delPlan()`.
 - 시험 (`tests/e2e_spc_chart.py`): 엔진 차수 시험(OCAP 점을 지우면 6점+6점 런이 이어져 12점 런 → 2차 6행), SPC 양식 화면 시험(1차 = 노란 행, 켜면 XBAR·SIGMA 이상 0, 점 수 감소, CSV, 끄면 원래대로).
 
+## #28 내용 (SPC Chart HTML v10, OCAP 삭제 양식)
+- 양식은 이슈 본문(엑셀에서 복사한 HTML 표)대로: B2 제목 "OCAP 삭제 양식", 4행 C~E "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항", 5행 B~E "EDC Plan / Spec seq# / Data seq# / 요청 내용" (회색 #AEAAAA, 테두리), 6행부터 한 줄씩. #22 본문의 실제 행을 보면 EDC Plan 문자열 = **PLAN_NAME 열**, Spec seq# = **SPEC_SEQ 열**, Data seq# = **DATA_SEQ 열**.
+- `xlsx.js` `XLSXLite.book(sheets)`: 여러 시트 + 스타일 4개(title, head, cell, text) 새 xlsx. `app.js` `ocapFormSheets(plan)`: `delPlan`의 모든 차수 행을 (PLAN_NAME, SPEC_SEQ)로 묶어 양식 시트 한 줄씩, 묶음마다 시트(이름 = Spec seq#, 겹치면 " (2)") = EDC Plan, Spec seq#, 표(No, Data seq#, LOT_ID, X축, EXT_MV, EXT_SIGMA, 삭제 차수, 판정, 엑셀 행; 없는 열은 뺌). `saveOcapForm` → 공용 `saveBytes`(수정본 저장과 같은 picker, 원본 덮어쓰기 거부). 버튼 `#ocapFormBtn`은 `#delBox` 머리(삭제 시뮬레이션을 켜야 보임). 시험용 `window.__spc.ocapFormSheets()`, `ocapFormName()`.
+- 시험 (`tests/e2e_spc_chart.py` `test_ocap_delete_form`): SPEC_SEQ 두 개 파일 → 시트 이름, 양식 칸·색·테두리, 시트마다 DATA_SEQ가 삭제 행과 같은지.
+
 ## #25 후속 2 (SPC Chart HTML v7)
 - 실제 파일: 부분 이름은 엑셀 표준 그대로였고 v4로도 열림. 파일의 docProps 저장 시각이 이슈 오류 시각보다 약 1분 뒤 (Excel이 다시 저장한 파일) → 오류가 난 원래 파일(SPC 시스템이 내려준 그대로)은 확인 못 함. v5의 "이름이 다름" 원인은 짐작이었고 이 파일과는 맞지 않음. v5의 진단 오류 글(파일 안 이름 목록)은 그대로 둠: 원래 export 파일로 다시 나면 그 글로 원인을 알 수 있음.
 - 추천값 실패 원인: `suggest`는 그 점 하나만 바꿈. Run 7번째 점 → CL 같은 쪽이면 Run 그대로, 반대쪽이면 앞 5점 하강 + 다음 점이 더 낮아 Trend 7점이 새로 생김 → 어떤 값도 안 됨. 그 밖의 실패 가능: CL ± 2σ·규격·0 이상 범위 안에 맞는 값이 없을 때, subgroup > 1.
@@ -96,6 +103,7 @@
 - 데이터 표: 판정 오른쪽 값 열에 EXT_SIGMA도 (SPC 양식일 때).
 
 ## 내가 정한 해석 (확인 전)
+- #28: "삭제 아이템" = [삭제 시뮬레이션]의 모든 차수 행 (1차만이 아니라 다 지워야 OCAP·7run이 안 남으므로). 버튼은 삭제 시뮬레이션 상자 안에만 둠. 우리는 일부 삭제라 "OCAP 일부 삭제 시" Data seq# 칸 = "각 개별 sheet에 기입"(본문 예시 그대로), Spec seq#도 같이 적음. 요청 내용 글은 본문에서 잘려 보인 "…(Data 자체 완전 삭제"에 닫는 괄호를 붙여 고정 문구로 씀. 개별 시트는 Spec seq#마다 하나, 이름 = Spec seq#, 열 구성은 내가 정함 (회사 양식의 개별 시트 모양을 모름). 파일 이름 `OCAP 삭제 양식_YYYYMMDD_HHMM.xlsx`. 본문의 아래 빈 테두리 행(빈 칸 양식)은 넣지 않음.
 - #27: "삭제" = 그 엑셀 행 전체를 지움 (XBAR 점과 SIGMA 점이 같이 빠짐). 원본 파일은 바꾸지 않고 화면에서만 지운 모습을 보여 주고 목록·CSV로 알려 줌 (수정본에서 행을 실제로 지우는 저장은 만들지 않음). 방법은 소유자 설명대로 차수별(그때 걸린 행을 모두 지움) → 지울 행 수가 가장 적은 조합이라는 보장은 없음. 계산은 파일 원래 값 기준 (추천값 수정은 뺌). 관리한계가 엑셀 열이면 지워도 한계 그대로, 계산 한계면 지운 뒤 데이터로 다시 계산. 판정 규칙은 노란 행과 같음 (OCAP·7run, 설정에서 켠 것).
 - #25 후속 2: 그 점으로 안 풀리면 같은 런의 다른 점 하나를 바꿈 (두 점 이상 바꾸는 조합은 시도하지 않음). Trend 점도 같은 방법. OCAP(규격·관리한계 이탈) 점은 그 점 자체가 이탈이라 다른 점으로 대신하지 않음.
 - #25 후속: SIGMA 7run도 XBAR와 같은 Run 7점·Trend 7점 (설정 공유), SIGMA 아래쪽 run(산포가 줄어든 경우)도 걸림. SIGMA 추천값 범위는 SIGMA CL ± 2σ(σ = (UCL−CL)/3 위·아래 따로) 안, 0 이상. 원 데이터(VALUE_1~25, EXT_AVERAGE)는 바꾸지 않음 (원하면 평균·σ가 추천값이 되도록 원 데이터를 바꾸는 방법을 제안해 둠).
@@ -113,7 +121,8 @@
 - 수정 뒤 이름을 v2로 올림 (sorter는 이슈마다 버전을 올려 옴).
 
 ## 남은 일 / 소유자에게 물은 것
-- **#27 후속 (답 기다림)**: 삭제 시뮬레이션을 "한 행씩 지우고 다시 판정"(지울 행 수가 적음)으로 바꿀지, 지금 차수 방식과 둘 다 보여 줄지. 실제 파일 측정: 2026-07-01~ 기간 차수 방식 63행 vs 한 행씩 48행, 전체 기간 237행 vs 184행.
+- **#27 후속 (답 기다림)**: 삭제 시뮬레이션을 "한 행씩 지우고 다시 판정"(지울 행 수가 적음)으로 바꿀지, 지금 차수 방식과 둘 다 보여 줄지. 실제 파일 측정: 2026-07-01~ 기간 차수 방식 63행 vs 한 행씩 48행, 전체 기간 237행 vs 184행. 바꾸면 #28 OCAP 삭제 양식에 들어가는 행도 같이 바뀜.
+- **#28 (확인 요청)**: 실제 파일로 [OCAP 삭제 양식 저장] 결과 확인. 개별 sheet의 회사 양식(열 구성·시트 이름)이 따로 있으면 알려 달라고 함. 요청 내용 문구 전체가 맞는지.
 - **#27 (확인 요청)**: 실제 파일로 [삭제 시뮬레이션] 결과 확인. 행 수가 가장 적은 조합을 찾는 방법, 또는 행을 실제로 지운 수정본 저장이 필요한지 물음.
 - **#25 후속**: 소유자가 SIGMA OCAP·7run을 넣으라고 답함 ("ㅇㅇ 둘다해") → v6에서 끝남. 원 데이터 VALUE_1~25도 맞출지는 묻기만 함.
 - **#25 (답 기다림)**: v6(또는 v5)로 `20261019214451.xlsx`가 열리는지 확인. 안 열리면 오류 글 전체를 알려 주거나 파일을 저장소에 commit.
