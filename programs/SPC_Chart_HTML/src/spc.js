@@ -361,5 +361,36 @@
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, mean: mean, sd: sd};
+  // Rows to delete so that no series breaks its rules any more (#27). Round 1 = the rows breaking them now
+  // (the yellow rows); deleting a row closes the gap, so the points around it can start a new run / trend
+  // (or, with computed limits, fall outside the new limits): round 2 = the rows breaking them once round 1
+  // is gone, and so on until nothing is left. A row is deleted from every series at once (an XBAR point and
+  // its SIGMA point are one Excel row).
+  // series: [{item, opts, rules, keys: row key per item index, tag: prefix for the rule ids}]
+  // Returns {rounds: [[{key, rules}]], clean: true when the last round leaves no point breaking the rules}.
+  function deletePlan(series, maxRounds) {
+    var gone = {}, rounds = [], limit = maxRounds > 0 ? maxRounds : 200;
+    for (var r = 0; r < limit; r++) {
+      var hit = {}, order = [];
+      series.forEach(function (s) {
+        var vals = s.item.values.map(function (v, k) { return gone[s.keys[k]] ? null : v; });
+        var res = analyze(Object.assign({}, s.item, {values: vals}), s.opts);
+        s.rules.forEach(function (id) {
+          (res.flags[id] || []).forEach(function (pi) {
+            res.points[pi].rows.forEach(function (k) {
+              var key = s.keys[k], tag = (s.tag || '') + id;
+              if (!hit[key]) { hit[key] = []; order.push(key); }
+              if (hit[key].indexOf(tag) < 0) hit[key].push(tag);
+            });
+          });
+        });
+      });
+      if (!order.length) return {rounds: rounds, clean: true};
+      order.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
+      rounds.push(order.map(function (key) { gone[key] = 1; return {key: key, rules: hit[key]}; }));
+    }
+    return {rounds: rounds, clean: false};
+  }
+
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, deletePlan: deletePlan, mean: mean, sd: sd};
 })();

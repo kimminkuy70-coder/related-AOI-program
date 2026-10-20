@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v8"><title>SPC Chart HTML v8</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v9"><title>SPC Chart HTML v9</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -98,6 +98,16 @@ button.fix-one { background: #f59e0b; border-color: #d97706; color: #1f1300; fon
 button.fix-all { background: #7c3aed; border-color: #6d28d9; color: #fff; font-weight: 600; }
 button.fix-one:hover:not(:disabled) { background: #fbbf24; }
 button.fix-all:hover:not(:disabled) { background: #8b5cf6; }
+button.del-sim { background: #e2e8f0; border-color: #94a3b8; color: #0f172a; font-weight: 600; }
+button.del-sim.on { background: #334155; border-color: #1e293b; color: #fff; }
+.sw.d { background: #cbd5e1; }
+.delbox { border: 1px solid #94a3b8; background: #f8fafc; border-radius: 6px; padding: 4px 10px 6px; margin-bottom: 8px; font-size: 13px; }
+.delbox .rounds { margin: 4px 0; padding-left: 20px; max-height: 22vh; overflow: auto; }
+.delbox .rounds a { color: #1d4ed8; }
+.delbox p { margin: 4px 0; }
+.delbox .ok { color: var(--ok); }
+.delbox .warn { color: #b45309; }
+.delbox .dhead { margin-bottom: 0; }
 .dwrap { overflow: auto; max-height: 62vh; border: 1px solid var(--line); border-radius: 6px; }
 table.data { border-collapse: separate; border-spacing: 0; font-size: 12px; }
 table.data th, table.data td { padding: 3px 8px; border-right: 1px solid #edf0f4; border-bottom: 1px solid #edf0f4; white-space: nowrap; text-align: right; }
@@ -113,6 +123,12 @@ table.data tbody tr { cursor: pointer; }
 table.data tbody tr:hover td { background: #f3f6fb; }
 table.data tr.y td { background: #fff59d; }
 table.data tr.y:hover td { background: #fff176; }
+table.data tr.del td { background: #cbd5e1; color: #64748b; text-decoration: line-through; }
+table.data tr.del td.rn, table.data tr.del td.verdict { text-decoration: none; }
+table.data tr.del:hover td { background: #b8c4d4; }
+.deltag { display: inline-block; padding: 0 5px; border-radius: 4px; color: #fff; background: #475569; font-size: 11px; }
+.deltag.r2 { background: #b45309; }
+.deltag.r3 { background: #b91c1c; }
 table.data td.fixed { background: #ef4444 !important; color: #fff; font-weight: 700; }
 table.data tr.sel td { box-shadow: inset 0 2px 0 #111827, inset 0 -2px 0 #111827; }
 table.data tr.flash td { animation: flash 1.2s ease-out 2; }
@@ -177,6 +193,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       <li>엑셀을 고쳐 저장했으면 [새로고침]으로 다시 읽습니다 ([자동 새로고침]을 켜면 저장할 때마다 자동).</li>
       <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
         [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을 저장합니다.</li>
+      <li><b>[삭제 시뮬레이션]</b>: 노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 보여 주고, XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지려면 지울 행 목록을 알려 줍니다 (원본은 그대로).</li>
     </ol>
     <table class="sample">
       <tr><th>날짜</th><th>Lot</th><th>두께</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>CL</th></tr>
@@ -193,15 +210,17 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   <section id="cards" class="cards"></section>
   <section id="dataBox" class="databox hidden">
     <div class="dhead"><h2>데이터 표</h2>
-      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸</span>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸 <i class="sw d"></i>삭제 시뮬레이션에서 지운 행</span>
       <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
       <span id="dataInfo" class="muted small"></span>
       <span class="spacer"></span>
+      <button id="delBtn" class="del-sim" title="노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 계산하고, XBAR · SIGMA 차트 모두 깨끗해지려면 지울 행을 알려 줍니다">삭제 시뮬레이션</button>
       <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>
       <button id="fixAllBtn" class="fix-all" disabled title="노란 행 전체를 한 번에 추천값으로 바꿉니다">전체 일괄 추천값 입력</button>
       <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
       <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
     </div>
+    <div id="delBox" class="delbox hidden"></div>
     <div class="dwrap"><table id="dataTable" class="data"></table></div>
   </section>
   <section id="eventsBox" class="events hidden">
@@ -1110,7 +1129,38 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, mean: mean, sd: sd};
+  // Rows to delete so that no series breaks its rules any more (#27). Round 1 = the rows breaking them now
+  // (the yellow rows); deleting a row closes the gap, so the points around it can start a new run / trend
+  // (or, with computed limits, fall outside the new limits): round 2 = the rows breaking them once round 1
+  // is gone, and so on until nothing is left. A row is deleted from every series at once (an XBAR point and
+  // its SIGMA point are one Excel row).
+  // series: [{item, opts, rules, keys: row key per item index, tag: prefix for the rule ids}]
+  // Returns {rounds: [[{key, rules}]], clean: true when the last round leaves no point breaking the rules}.
+  function deletePlan(series, maxRounds) {
+    var gone = {}, rounds = [], limit = maxRounds > 0 ? maxRounds : 200;
+    for (var r = 0; r < limit; r++) {
+      var hit = {}, order = [];
+      series.forEach(function (s) {
+        var vals = s.item.values.map(function (v, k) { return gone[s.keys[k]] ? null : v; });
+        var res = analyze(Object.assign({}, s.item, {values: vals}), s.opts);
+        s.rules.forEach(function (id) {
+          (res.flags[id] || []).forEach(function (pi) {
+            res.points[pi].rows.forEach(function (k) {
+              var key = s.keys[k], tag = (s.tag || '') + id;
+              if (!hit[key]) { hit[key] = []; order.push(key); }
+              if (hit[key].indexOf(tag) < 0) hit[key].push(tag);
+            });
+          });
+        });
+      });
+      if (!order.length) return {rounds: rounds, clean: true};
+      order.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
+      rounds.push(order.map(function (key) { gone[key] = 1; return {key: key, rules: hit[key]}; }));
+    }
+    return {rounds: rounds, clean: false};
+  }
+
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, deletePlan: deletePlan, mean: mean, sd: sd};
 })();
 
 </script>
@@ -1194,6 +1244,8 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   var nowFlags = {};       // excelRow -> rule ids breaking them with the edits applied
   var selectedRow = null;  // Excel row picked in the data table or by double-clicking a chart point
   var fixItems = [];       // items (with edits) behind results, for the recommended values
+  var delMode = false;     // [삭제 시뮬레이션] on: charts and table show the data with delPlan's rows deleted (#27)
+  var delPlan = null;      // {rounds: [[{key: excelRow, rules}]], clean, round: excelRow -> round (1, 2, ...), count}
 
   $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
 
@@ -1408,8 +1460,10 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return String(v);
   }
 
-  function items(withEdits) {
+  // keepAll: every row, also the ones [삭제 시뮬레이션] deletes (the file as read).
+  function items(withEdits, keepAll) {
     var t = table, idx = function (n) { return t.headers.indexOf(n); };
+    var gone = delPlan && !keepAll ? delPlan.round : {};
     var li = idx(t.label), ii = idx(t.item), groups = [], byName = {};
     t.data.forEach(function (d) {
       var g = ii >= 0 ? d.cells[ii] : null;
@@ -1426,7 +1480,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
         ROLES.forEach(function (r) {
           if (t.roles[r]) { var ri = idx(t.roles[r]); cols[r] = rows.map(function (d) { return toNum(d.cells[ri]); }); }
         });
-        var vals = rows.map(function (d) { return toNum(cell(d, vi, withEdits)); });
+        var vals = rows.map(function (d) { return gone[d.excelRow] ? null : toNum(cell(d, vi, withEdits)); });
         if (!vals.some(function (v) { return v !== null; })) return;
         var sigma = null, lots = null;
         if (t.spcForm && norm(vn) === SPC_FORMAT.value) {
@@ -1505,9 +1559,11 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
         return res;
       });
     };
-    fixItems = items(true);
+    delPlan = delMode ? planDeletes() : null;
+    // The deletion is judged on the file's own values, so its charts leave the recommended values out.
+    fixItems = items(!delMode);
     results = run(fixItems);
-    yellow = rowFlags(Object.keys(edits).length ? run(items(false)) : results);
+    yellow = rowFlags(Object.keys(edits).length || delPlan ? run(items(false, true)) : results);
     nowFlags = rowFlags(results);
     // New out-of-control events since the last read raise the alarm (not on the first read of a file).
     var keys = {}, fresh = [];
@@ -1544,6 +1600,22 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     res.rangeFlags = flags.SR1 || [];
     var evs = SPC.events(flags, res.points.map(function (p, i) { return {label: p.label, value: s.values[i]}; }));
     res.events = res.events.concat(evs).sort(function (a, b) { return a.start - b.start; });
+  }
+
+  // [삭제 시뮬레이션] (#27): which rows to delete so that neither the XBAR nor the SIGMA chart has OCAP / 7 run.
+  // Round 1 = the yellow rows; deleting them joins their neighbours, which can start a new run / trend, so
+  // round 2 = the rows breaking a rule once round 1 is gone, and so on (SPC.deletePlan). File values, no edits.
+  function planDeletes() {
+    var series = [], sub = settings.subgroup <= 1;
+    items(false, true).forEach(function (it) {
+      series.push({item: it, opts: optsFor(it.name), rules: fixRules(), keys: it.excelRows, tag: ''});
+      if (it.sigma && sub) series.push({item: sigmaItem(it), opts: sigmaOpts(), rules: sigmaRules(), keys: it.excelRows, tag: 'S'});
+    });
+    var plan = SPC.deletePlan(series), round = {}, count = 0;
+    plan.rounds.forEach(function (list, r) { list.forEach(function (x) { round[x.key] = r + 1; count++; }); });
+    plan.round = round;
+    plan.count = count;
+    return plan;
   }
 
   // point index -> SIGMA rule ids
@@ -1724,13 +1796,15 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       return '<th' + c + '>' + esc(n) + '</th>';
     }).join('') + '</tr></thead><tbody>';
     var shown = 0;
+    var gone = delPlan ? delPlan.round : {};
     t.data.forEach(function (d) {
-      var row = d.excelRow, y = yellow[row], now = nowFlags[row];
-      if (only && !y && !now) return;
+      var row = d.excelRow, y = yellow[row], now = nowFlags[row], del = gone[row];
+      if (only && !y && !now && !del) return;
       shown++;
-      var cls = (y || now ? 'y' : '') + (row === selectedRow ? ' sel' : '');
+      var cls = (y || now ? 'y' : '') + (del ? ' del' : '') + (row === selectedRow ? ' sel' : '');
       var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
       if (now) verdict = esc(verdict);
+      if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">삭제 ' + del + '차</span> ' + esc(delRules(row).map(shortRule).join(', '));
       h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
         vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
       for (var c = 0; c < t.headers.length; c++) h += td(d, c);
@@ -1738,15 +1812,90 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     });
     if (!shown) h += '<tr><td colspan="' + (t.headers.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
     $('dataTable').innerHTML = h + '</tbody>';
+    renderDelBox();
     dataInfo();
+  }
+
+  // Rule ids that put the row on the delete list (in its round).
+  function delRules(row) {
+    var r = delPlan && delPlan.round[row], out = [];
+    if (r) delPlan.rounds[r - 1].forEach(function (x) { if (x.key === row) out = x.rules; });
+    return out;
+  }
+
+  function rowText(row) {
+    var t = table, d = t.data.filter(function (x) { return x.excelRow === row; })[0], li = t.headers.indexOf(t.label);
+    var lot = t.headers.map(norm).indexOf(SPC_FORMAT.lot);
+    return {label: d && li >= 0 ? fmtLabel(d.cells[li], row) : row + '행', lot: d && lot >= 0 && lot !== li ? cellText(d.cells[lot]) : ''};
+  }
+
+  // The rounds of [삭제 시뮬레이션] above the data table: which rows, and what is left after them.
+  function renderDelBox() {
+    var box = $('delBox');
+    box.classList.toggle('hidden', !delPlan);
+    if (!delPlan) return;
+    var p = delPlan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
+    var h = '<div class="dhead"><b>삭제 시뮬레이션</b><span class="muted small">파일 원래 값 기준 (추천값 수정은 빼고 계산) · 아래 차트 · 표는 이 행들을 지운 모습</span>' +
+      '<span class="spacer"></span><button id="delCsvBtn" class="ghost small"' + (p.count ? '' : ' disabled') + '>삭제 목록 CSV</button></div>';
+    if (!p.count) {
+      h += '<p class="ok">OCAP · 7run 행이 없어 지울 행이 없습니다.</p>';
+    } else {
+      h += '<ol class="rounds">';
+      p.rounds.forEach(function (list, r) {
+        h += '<li><b>' + (r + 1) + '차</b> ' + (r ? '(앞 차수를 지우면 새로 생기는 OCAP · 7run)' : '(지금 노란 행)') + ' · ' + list.length + '행: ' +
+          list.map(function (x) { return '<a href="#" data-row="' + x.key + '" title="' + esc(rowText(x.key).label + ' · ' + x.rules.map(shortRule).join(', ')) + '">' + x.key + '</a>'; }).join(', ') + '</li>';
+      });
+      h += '</ol>';
+      h += p.clean
+        ? '<p class="ok"><b>모두 ' + p.count + '행</b>(' + p.rounds.length + '차까지)을 지우면 ' + both + ' OCAP · 7run이 나오지 않습니다.' +
+          (p.rounds.length > 1 ? ' 노란 행(1차)만 지우면 ' + p.rounds.slice(1).reduce(function (n, l) { return n + l.length; }, 0) + '행에서 다시 생깁니다.' : ' 노란 행만 지우면 다시 생기지 않습니다.') + '</p>'
+        : '<p class="warn">' + p.rounds.length + '차까지 지워도 OCAP · 7run이 남습니다 (' + p.count + '행).</p>';
+    }
+    box.innerHTML = h;
+  }
+
+  function delCsv() {
+    if (!delPlan || !delPlan.count) return;
+    var lots = table.headers.map(norm).indexOf(SPC_FORMAT.lot) >= 0;
+    var lines = [['차수', '엑셀 행', 'X축', lots ? 'LOT_ID' : '', '판정'].filter(function (v, i) { return i !== 3 || lots; })];
+    delPlan.rounds.forEach(function (list, r) {
+      list.forEach(function (x) {
+        var tx = rowText(x.key), line = [r + 1, x.key, tx.label];
+        if (lots) line.push(tx.lot);
+        line.push(x.rules.map(shortRule).join(', '));
+        lines.push(line);
+      });
+    });
+    var csv = '\ufeff' + lines.map(function (l) { return l.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\r\n');
+    var a = document.createElement('a'), d = new Date();
+    a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+    a.download = 'SPC_삭제목록_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+
+  function toggleDelete() {
+    delMode = !delMode;
+    analyzeAll(true);
+    render();
+    if (delMode) {
+      setStatus(delPlan.count ? '삭제 시뮬레이션: ' + delPlan.count + '행(' + delPlan.rounds.length + '차)을 지운 차트입니다 · 끄면 원래대로' : '삭제 시뮬레이션: 지울 행 없음', delPlan.clean ? 'muted' : 'warn');
+      $('delBox').scrollIntoView({block: 'nearest'});
+    } else {
+      setStatus('삭제 시뮬레이션을 껐습니다', 'muted');
+    }
   }
 
   function dataInfo() {
     var nEdits = Object.keys(edits).length, nYellow = Object.keys(yellow).length, nowCount = Object.keys(nowFlags).length;
-    $('dataInfo').textContent = '노란 행 ' + nYellow + '개 (남은 ' + nowCount + ') · 수정 ' + nEdits + '칸' + (selectedRow ? ' · 선택 ' + selectedRow + '행' : ' · 표의 행을 누르거나 차트의 점을 더블클릭해 선택');
+    $('dataInfo').textContent = '노란 행 ' + nYellow + '개 (남은 ' + nowCount + ') · 수정 ' + nEdits + '칸' + (delPlan ? ' · 삭제 ' + delPlan.count + '행' : '') +
+      (selectedRow ? ' · 선택 ' + selectedRow + '행' : ' · 표의 행을 누르거나 차트의 점을 더블클릭해 선택');
     var sub = settings.subgroup > 1;
-    $('fixOneBtn').disabled = sub || !selectedRow;
-    $('fixAllBtn').disabled = sub || !nowCount;
+    // Recommended values work on the file's rows; while rows are deleted in the simulation they wait.
+    $('fixOneBtn').disabled = sub || !selectedRow || delMode;
+    $('fixAllBtn').disabled = sub || !nowCount || delMode;
+    $('delBtn').textContent = delMode ? '삭제 시뮬레이션 끄기' : '삭제 시뮬레이션';
+    $('delBtn').classList.toggle('on', delMode);
     $('undoBtn').disabled = !nEdits;
     $('fixOneBtn').title = sub ? 'subgroup 1 (I-MR)에서만 추천값을 계산합니다' : '선택한 행(표에서 클릭 또는 차트 점 더블클릭)의 값을 추천값으로 바꿉니다';
   }
@@ -2543,6 +2692,14 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   });
   $('fixOneBtn').onclick = fixOne;
   $('fixAllBtn').onclick = fixAll;
+  $('delBtn').onclick = toggleDelete;
+  $('delBox').addEventListener('click', function (e) {
+    if (e.target.id === 'delCsvBtn') { delCsv(); return; }
+    var a = e.target.closest('a[data-row]');
+    if (!a) return;
+    e.preventDefault();
+    selectRow(+a.dataset.row, true);
+  });
   $('undoBtn').onclick = undoEdits;
   $('saveBtn').onclick = saveCopy;
   $('labelSel').onchange = onColumns;
@@ -2586,7 +2743,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   // For tests: open a file handle without the picker.
   window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
     edits: function () { return edits; }, revealRow: revealRow, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
-    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName};
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; }};
 })();
 
 </script>

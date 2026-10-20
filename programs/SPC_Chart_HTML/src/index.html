@@ -44,6 +44,7 @@
       <li>엑셀을 고쳐 저장했으면 [새로고침]으로 다시 읽습니다 ([자동 새로고침]을 켜면 저장할 때마다 자동).</li>
       <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
         [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을 저장합니다.</li>
+      <li><b>[삭제 시뮬레이션]</b>: 노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 보여 주고, XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지려면 지울 행 목록을 알려 줍니다 (원본은 그대로).</li>
     </ol>
     <table class="sample">
       <tr><th>날짜</th><th>Lot</th><th>두께</th><th>USL</th><th>LSL</th><th>UCL</th><th>LCL</th><th>CL</th></tr>
@@ -60,15 +61,17 @@
   <section id="cards" class="cards"></section>
   <section id="dataBox" class="databox hidden">
     <div class="dhead"><h2>데이터 표</h2>
-      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸</span>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸 <i class="sw d"></i>삭제 시뮬레이션에서 지운 행</span>
       <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
       <span id="dataInfo" class="muted small"></span>
       <span class="spacer"></span>
+      <button id="delBtn" class="del-sim" title="노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 계산하고, XBAR · SIGMA 차트 모두 깨끗해지려면 지울 행을 알려 줍니다">삭제 시뮬레이션</button>
       <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>
       <button id="fixAllBtn" class="fix-all" disabled title="노란 행 전체를 한 번에 추천값으로 바꿉니다">전체 일괄 추천값 입력</button>
       <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
       <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
     </div>
+    <div id="delBox" class="delbox hidden"></div>
     <div class="dwrap"><table id="dataTable" class="data"></table></div>
   </section>
   <section id="eventsBox" class="events hidden">

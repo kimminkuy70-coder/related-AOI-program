@@ -647,6 +647,48 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(self.page.locator('#dataTable thead th.vcol').first.text_content(), 'EXT_MV')
         self.assertEqual(self.page.locator('#dataTable thead th.vcol').nth(1).text_content(), 'EXT_SIGMA')
 
+    # issue #27: deleting the yellow rows can join two short runs into a new 7 run; the plan goes round by round
+    def test_delete_plan_rounds(self):
+        vals = [-1, 1, 2, 1, 2, 1, 2, -5, 1, 2, 1, 2, 1, 2, -1, 1, -1]
+        r = self.js("""(vals) => { const c = v => vals.map(() => v);
+            const it = {name: 't', values: vals, labels: vals.map(String), cols: {UCL: c(3), CL: c(0), LCL: c(-3)}};
+            const rules = SPC.FIX_RULES, keys = vals.map((_, k) => k + 2);
+            return SPC.deletePlan([{item: it, opts: {}, rules, keys}]); }""", vals)
+        self.assertTrue(r['clean'])
+        self.assertEqual([[x['key'] for x in rd] for rd in r['rounds']], [[9], [10, 11, 12, 13, 14, 15]])  # -5 (row 9), then points 7..12 of the joined 12-point run
+        self.assertEqual(r['rounds'][0][0]['rules'], ['R1'])
+        self.assertEqual(r['rounds'][1][0]['rules'], ['R2'])
+
+    def test_delete_simulation_clears_xbar_and_sigma(self):
+        rows = spc_rows(sigma_out=True, sigma_run=True)
+        self.open_file('del.xlsx', workbook(rows))
+        yellow = self.js('() => window.__spc.yellow()')
+        self.assertTrue(yellow)
+        self.page.click('#delBtn')
+        plan = self.js('() => window.__spc.delPlan()')
+        self.assertTrue(plan['clean'])
+        self.assertEqual(sorted(str(x['key']) for x in plan['rounds'][0]), sorted(yellow))  # round 1 = the yellow rows
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
+        self.assertEqual(self.js('() => window.__spc.results()[0].sigmaFlags'), {})
+        self.assertEqual(self.js('() => window.__spc.results()[0].points.length'), len(rows) - 1 - plan['count'])
+        self.assertEqual(self.js('() => window.__spc.yellow()'), yellow)  # still the file's own yellow rows
+        first = plan['rounds'][0][0]['key']
+        self.assertIn('del', self.page.locator('#dataTable tr[data-row="%d"]' % first).get_attribute('class'))
+        self.assertIn('삭제 1차', self.page.locator('#dataTable tr[data-row="%d"] td.verdict' % first).text_content())
+        self.assertIn('OCAP · 7run이 나오지 않습니다', self.page.locator('#delBox').text_content())
+        self.assertTrue(self.page.locator('#fixAllBtn').is_disabled())
+        # every round is checked again from the file: no rule left once all of them are gone
+        with self.page.expect_download() as dl:
+            self.page.click('#delCsvBtn')
+        with open(dl.value.path(), encoding='utf-8-sig') as f:
+            csv = f.read().splitlines()
+        self.assertEqual(csv[0], '차수,엑셀 행,X축,LOT_ID,판정')
+        self.assertEqual(len(csv) - 1, plan['count'])
+        self.page.click('#delBtn')
+        self.assertIsNone(self.js('() => window.__spc.delPlan()'))
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), yellow)
+        self.assertEqual(self.js('() => window.__spc.results()[0].points.length'), len(rows) - 1)
+
     # issue #25: an exporter's .xlsx that Excel opens but whose zip spells the parts differently
     def test_xlsx_with_other_part_names(self):
         rows = spc_rows()
