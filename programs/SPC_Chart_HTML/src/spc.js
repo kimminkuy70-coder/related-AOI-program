@@ -12,7 +12,7 @@
     {id: 'OOS', name: '규격 이탈', desc: 'USL/LSL 밖의 값'},
     {id: 'R1', name: '관리한계 이탈', desc: '1점이 UCL/LCL 밖'},
     {id: 'R2', name: 'Run', desc: 'N점 연속 중심선 한쪽', n: 7},
-    {id: 'R3', name: 'Trend', desc: 'N점 연속 상승 또는 하강', n: 7},
+    {id: 'R3', name: 'Trend', desc: 'N점 연속 상승 또는 하강', n: 6},  // 6 since v11 (owner, #27)
     {id: 'R4', name: '2/3 > 2σ', desc: '연속 3점 중 2점이 같은 쪽 2σ 밖'},
     {id: 'R5', name: '4/5 > 1σ', desc: '연속 5점 중 4점이 같은 쪽 1σ 밖'},
     {id: 'R6', name: '교대 증감', desc: 'N점 연속 오르내림 반복', n: 14},
@@ -361,16 +361,19 @@
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  // Rows to delete so that no series breaks its rules any more (#27). Round 1 = the rows breaking them now
-  // (the yellow rows); deleting a row closes the gap, so the points around it can start a new run / trend
-  // (or, with computed limits, fall outside the new limits): round 2 = the rows breaking them once round 1
-  // is gone, and so on until nothing is left. A row is deleted from every series at once (an XBAR point and
-  // its SIGMA point are one Excel row).
+  // Rows to delete so that no series breaks its rules any more (#27). Deleting a row closes the gap, so the
+  // points around it can start a new run / trend (or, with computed limits, fall outside the new limits),
+  // and it can also end one: a 7-point run loses a point and is no rule any more. So rows go one at a time,
+  // oldest first, judging everything again after each one (#27 follow-up: 48 rows instead of 63 on the
+  // owner's file when a round's rows all went at once). Round 1 = the rows breaking a rule in the file as
+  // read (the yellow rows) that still break one when their turn comes; round 2 = the rows that only broke
+  // one after round 1 was done, and so on until nothing is left. A row is deleted from every series at once
+  // (an XBAR point and its SIGMA point are one Excel row).
   // series: [{item, opts, rules, keys: row key per item index, tag: prefix for the rule ids}]
   // Returns {rounds: [[{key, rules}]], clean: true when the last round leaves no point breaking the rules}.
   function deletePlan(series, maxRounds) {
     var gone = {}, rounds = [], limit = maxRounds > 0 ? maxRounds : 200;
-    for (var r = 0; r < limit; r++) {
+    function judge() {
       var hit = {}, order = [];
       series.forEach(function (s) {
         var vals = s.item.values.map(function (v, k) { return gone[s.keys[k]] ? null : v; });
@@ -385,9 +388,22 @@
           });
         });
       });
-      if (!order.length) return {rounds: rounds, clean: true};
       order.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
-      rounds.push(order.map(function (key) { gone[key] = 1; return {key: key, rules: hit[key]}; }));
+      return {hit: hit, order: order};
+    }
+    for (var r = 0; r < limit; r++) {
+      var now = judge();
+      if (!now.order.length) return {rounds: rounds, clean: true};
+      var mine = {}, list = [];
+      now.order.forEach(function (key) { mine[key] = 1; });
+      for (;;) {
+        var key = now.order.filter(function (k) { return mine[k]; })[0];
+        if (key === undefined) break;
+        gone[key] = 1;
+        list.push({key: key, rules: now.hit[key]});
+        now = judge();
+      }
+      rounds.push(list);
     }
     return {rounds: rounds, clean: false};
   }

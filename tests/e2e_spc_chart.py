@@ -270,12 +270,12 @@ class SpcChartTest(unittest.TestCase):
         five = self.js(ANALYZE, [base + [10.3] * 5, {'baseline': len(base), 'n': {'R2': 5}}])
         self.assertEqual(five['flags']['R2'], [len(base) + 4])
 
-    def test_trend_of_seven_is_one_event(self):
+    def test_trend_of_six_is_one_event(self):  # Trend 6 points by default since v11 (#27)
         vals = [10, 9, 11, 10, 9.5, 10.5, 10] * 3 + [9.1, 9.3, 9.5, 9.7, 9.9, 10.1, 10.3, 10.4]
         r = self.js(ANALYZE, [vals])
         n = len(vals)
-        self.assertEqual(r['flags']['R3'], [n - 2, n - 1])  # 7th and 8th rising point
-        self.assertIn(['R3', n - 2, n - 1], r['events'])
+        self.assertEqual(r['flags']['R3'], [n - 3, n - 2, n - 1])  # 6th, 7th and 8th rising point
+        self.assertIn(['R3', n - 3, n - 1], r['events'])
 
     def test_beyond_limits_and_spec(self):
         vals = [10, 10.1, 9.9, 10, 10.1, 9.9, 10, 10.05, 9.95, 10] * 2 + [11]
@@ -658,6 +658,34 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual([[x['key'] for x in rd] for rd in r['rounds']], [[9], [10, 11, 12, 13, 14, 15]])  # -5 (row 9), then points 7..12 of the joined 12-point run
         self.assertEqual(r['rounds'][0][0]['rules'], ['R1'])
         self.assertEqual(r['rounds'][1][0]['rules'], ['R2'])
+
+    # #27 follow-up: one row at a time; an XBAR row's deletion shortens the SIGMA run it sat in, so that run's
+    # 7th row stays (deleting a whole round at once took both)
+    def test_delete_plan_one_row_at_a_time(self):
+        mv = [(-1) ** i for i in range(20)]
+        mv[9] = 5
+        sg = [0.4 if i % 2 else 0.6 for i in range(20)]
+        for i in range(6, 13):
+            sg[i] = 0.7
+        sg[13] = 0.4
+        r = self.js("""([mv, sg]) => { const c = (a, v) => a.map(() => v), keys = mv.map((_, k) => k + 2);
+            const x = {name: 'x', values: mv, labels: keys.map(String), cols: {UCL: c(mv, 3), CL: c(mv, 0), LCL: c(mv, -3)}};
+            const s = {name: 's', values: sg, labels: keys.map(String), cols: {UCL: c(sg, 2), CL: c(sg, 0.5), LCL: c(sg, 0)}};
+            const before = SPC.analyze(s, {rules: {R1: true, R2: true, R3: true}}).flags;
+            return {before, plan: SPC.deletePlan([{item: x, opts: {}, rules: SPC.FIX_RULES, keys, tag: ''},
+              {item: s, opts: {rules: {R1: true, R2: true, R3: true}, min: 0}, rules: ['R1', 'R2', 'R3'], keys, tag: 'S'}])}; }""", [mv, sg])
+        self.assertEqual(r['before']['R2'], [12])  # the SIGMA run's 7th point (row 14) is yellow too
+        self.assertTrue(r['plan']['clean'])
+        self.assertEqual([[x['key'] for x in rd] for rd in r['plan']['rounds']], [[11]])  # only the XBAR OCAP row
+
+    # v11 (#27): Trend 6 by default; a 7 saved by an older version goes, a count picked on purpose stays
+    def test_trend_default_six_and_old_settings(self):
+        for saved, want in ((7, 6), (9, 9)):
+            self.js("""(n) => localStorage.setItem('spc.settings', JSON.stringify({v4: 1, v8: 1, n: {R2: 7, R3: n}}))""", saved)
+            self.page.reload()
+            self.open_file('t.xlsx', workbook(long_rows(10)))
+            n = self.js('() => window.__spc.settings.n')
+            self.assertEqual(n.get('R3', 6), want)
 
     def test_delete_simulation_clears_xbar_and_sigma(self):
         rows = spc_rows(sigma_out=True, sigma_run=True)

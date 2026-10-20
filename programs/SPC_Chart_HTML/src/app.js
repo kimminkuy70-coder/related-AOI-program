@@ -45,6 +45,9 @@
   // v8: 2/3 > 2σ and 4/5 > 1σ are off by default (owner, #25: not OCAP / 7 run, only orange dots); turned off once
   // for settings saved by older versions, and can be turned on again in [규칙 · OCAP 설정].
   if (!settings.v8) { settings.rules.R4 = false; settings.rules.R5 = false; settings.v8 = 1; }
+  // v11: Trend is 6 points by default (owner, #27). [규칙 · OCAP 설정] of older versions saved every point
+  // count, so a stored 7 (the old default) goes; a count changed on purpose stays.
+  if (!settings.v11) { if (settings.n.R3 === 7) delete settings.n.R3; settings.v11 = 1; }
   if (!(settings.window >= 0)) settings.window = 0;
   if (!(settings.pitch >= 0)) settings.pitch = 16;
   settings.auto = !!settings.auto;
@@ -436,8 +439,8 @@
   }
 
   // [삭제 시뮬레이션] (#27): which rows to delete so that neither the XBAR nor the SIGMA chart has OCAP / 7 run.
-  // Round 1 = the yellow rows; deleting them joins their neighbours, which can start a new run / trend, so
-  // round 2 = the rows breaking a rule once round 1 is gone, and so on (SPC.deletePlan). File values, no edits.
+  // One row at a time, oldest first, judged again after each (SPC.deletePlan): round 1 = yellow rows still
+  // breaking a rule when their turn comes, round 2 = rows that only break one after that, ... File values, no edits.
   function planDeletes() {
     var series = [], sub = settings.subgroup <= 1;
     items(false, true).forEach(function (it) {
@@ -676,13 +679,15 @@
     } else {
       h += '<ol class="rounds">';
       p.rounds.forEach(function (list, r) {
-        h += '<li><b>' + (r + 1) + '차</b> ' + (r ? '(앞 차수를 지우면 새로 생기는 OCAP · 7run)' : '(지금 노란 행)') + ' · ' + list.length + '행: ' +
+        h += '<li><b>' + (r + 1) + '차</b> ' + (r ? '(앞 차수를 지우면 새로 생기는 OCAP · 7run)' : '(노란 행 ' + Object.keys(yellow).length + '개 중 지워야 하는 행)') + ' · ' + list.length + '행: ' +
           list.map(function (x) { return '<a href="#" data-row="' + x.key + '" title="' + esc(rowText(x.key).label + ' · ' + x.rules.map(shortRule).join(', ')) + '">' + x.key + '</a>'; }).join(', ') + '</li>';
       });
       h += '</ol>';
+      var keep = Object.keys(yellow).filter(function (row) { return !p.round[row]; }).length;  // a 7-point run loses a point
       h += p.clean
         ? '<p class="ok"><b>모두 ' + p.count + '행</b>(' + p.rounds.length + '차까지)을 지우면 ' + both + ' OCAP · 7run이 나오지 않습니다.' +
-          (p.rounds.length > 1 ? ' 노란 행(1차)만 지우면 ' + p.rounds.slice(1).reduce(function (n, l) { return n + l.length; }, 0) + '행에서 다시 생깁니다.' : ' 노란 행만 지우면 다시 생기지 않습니다.') + '</p>'
+          (p.rounds.length > 1 ? ' 1차만 지우면 ' + p.rounds.slice(1).reduce(function (n, l) { return n + l.length; }, 0) + '행에서 다시 생깁니다.' : '') +
+          (keep ? ' 노란 행 중 ' + keep + '행은 앞 행을 지우면 풀려서 남깁니다.' : '') + '</p>'
         : '<p class="warn">' + p.rounds.length + '차까지 지워도 OCAP · 7run이 남습니다 (' + p.count + '행).</p>';
     }
     box.innerHTML = h;
@@ -1424,7 +1429,11 @@
         settings.pollSec = Math.max(1, +m.querySelector('#dPoll').value || 2);
         settings.sound = m.querySelector('#dSound').checked;
         m.querySelectorAll('[data-rule]').forEach(function (c) { settings.rules[c.dataset.rule] = c.checked; });
-        m.querySelectorAll('[data-n]').forEach(function (c) { var v = +c.value | 0; if (v >= 2) settings.n[c.dataset.n] = v; });
+        // only counts that differ from the default are kept, so a later default (Trend 7 -> 6 in v11) reaches them
+        m.querySelectorAll('[data-n]').forEach(function (c) {
+          var v = +c.value | 0, d = SPC.RULES.filter(function (r) { return r.id === c.dataset.n; })[0].n;
+          if (v >= 2 && v !== d) settings.n[c.dataset.n] = v; else delete settings.n[c.dataset.n];
+        });
         m.querySelectorAll('[data-ocap]').forEach(function (c) { settings.ocap[c.dataset.ocap] = c.value; });
         save();
         closeModal();

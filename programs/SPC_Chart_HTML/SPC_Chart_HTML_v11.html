@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v10"><title>SPC Chart HTML v10</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v11"><title>SPC Chart HTML v11</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -202,7 +202,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     </table>
     <p class="muted">USL · LSL · UCL · LCL · CL(Target) 열은 있으면 쓰고, 없으면 관리한계(UCL · CL · LCL)는 데이터로 계산합니다. 항목별로 [한계 설정]에서 직접 넣을 수도 있습니다.<br>
       여러 측정 항목이 한 열에 섞인 형식(항목 · 값)도 됩니다: [항목 열]에서 항목 이름 열을 고르세요.<br>
-      판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(7점 연속 상승·하강). 2/3 &gt; 2σ, 4/5 &gt; 1σ 등은 [규칙 · OCAP 설정]에서 켭니다 (기본 꺼짐). 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
+      판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(6점 연속 상승·하강). 2/3 &gt; 2σ, 4/5 &gt; 1σ 등은 [규칙 · OCAP 설정]에서 켭니다 (기본 꺼짐). 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
     <p class="muted">SPC 시스템에서 내려받은 양식(EXT_MV, EXT_MV_UCL / CENTER / LCL, USL, LSL, LOT_ID …)은 자동으로 알아보고 SPC 시스템처럼 XBAR 차트(EXT_MV, UCL/LCL 선)와 SIGMA 차트(EXT_SIGMA)를 그리고, 두 차트 모두 OCAP · 7run을 판정합니다. X축은 날짜 · 시간(TRAN_TIME)입니다.</p>
     <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 원본 엑셀 파일은 고치지 않고, 수정본은 새 파일로 저장합니다.</p>
   </section>
@@ -836,7 +836,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     {id: 'OOS', name: '규격 이탈', desc: 'USL/LSL 밖의 값'},
     {id: 'R1', name: '관리한계 이탈', desc: '1점이 UCL/LCL 밖'},
     {id: 'R2', name: 'Run', desc: 'N점 연속 중심선 한쪽', n: 7},
-    {id: 'R3', name: 'Trend', desc: 'N점 연속 상승 또는 하강', n: 7},
+    {id: 'R3', name: 'Trend', desc: 'N점 연속 상승 또는 하강', n: 6},  // 6 since v11 (owner, #27)
     {id: 'R4', name: '2/3 > 2σ', desc: '연속 3점 중 2점이 같은 쪽 2σ 밖'},
     {id: 'R5', name: '4/5 > 1σ', desc: '연속 5점 중 4점이 같은 쪽 1σ 밖'},
     {id: 'R6', name: '교대 증감', desc: 'N점 연속 오르내림 반복', n: 14},
@@ -1185,16 +1185,19 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return {changes: changes, failed: Object.keys(failed).length};
   }
 
-  // Rows to delete so that no series breaks its rules any more (#27). Round 1 = the rows breaking them now
-  // (the yellow rows); deleting a row closes the gap, so the points around it can start a new run / trend
-  // (or, with computed limits, fall outside the new limits): round 2 = the rows breaking them once round 1
-  // is gone, and so on until nothing is left. A row is deleted from every series at once (an XBAR point and
-  // its SIGMA point are one Excel row).
+  // Rows to delete so that no series breaks its rules any more (#27). Deleting a row closes the gap, so the
+  // points around it can start a new run / trend (or, with computed limits, fall outside the new limits),
+  // and it can also end one: a 7-point run loses a point and is no rule any more. So rows go one at a time,
+  // oldest first, judging everything again after each one (#27 follow-up: 48 rows instead of 63 on the
+  // owner's file when a round's rows all went at once). Round 1 = the rows breaking a rule in the file as
+  // read (the yellow rows) that still break one when their turn comes; round 2 = the rows that only broke
+  // one after round 1 was done, and so on until nothing is left. A row is deleted from every series at once
+  // (an XBAR point and its SIGMA point are one Excel row).
   // series: [{item, opts, rules, keys: row key per item index, tag: prefix for the rule ids}]
   // Returns {rounds: [[{key, rules}]], clean: true when the last round leaves no point breaking the rules}.
   function deletePlan(series, maxRounds) {
     var gone = {}, rounds = [], limit = maxRounds > 0 ? maxRounds : 200;
-    for (var r = 0; r < limit; r++) {
+    function judge() {
       var hit = {}, order = [];
       series.forEach(function (s) {
         var vals = s.item.values.map(function (v, k) { return gone[s.keys[k]] ? null : v; });
@@ -1209,9 +1212,22 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
           });
         });
       });
-      if (!order.length) return {rounds: rounds, clean: true};
       order.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
-      rounds.push(order.map(function (key) { gone[key] = 1; return {key: key, rules: hit[key]}; }));
+      return {hit: hit, order: order};
+    }
+    for (var r = 0; r < limit; r++) {
+      var now = judge();
+      if (!now.order.length) return {rounds: rounds, clean: true};
+      var mine = {}, list = [];
+      now.order.forEach(function (key) { mine[key] = 1; });
+      for (;;) {
+        var key = now.order.filter(function (k) { return mine[k]; })[0];
+        if (key === undefined) break;
+        gone[key] = 1;
+        list.push({key: key, rules: now.hit[key]});
+        now = judge();
+      }
+      rounds.push(list);
     }
     return {rounds: rounds, clean: false};
   }
@@ -1268,6 +1284,9 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   // v8: 2/3 > 2σ and 4/5 > 1σ are off by default (owner, #25: not OCAP / 7 run, only orange dots); turned off once
   // for settings saved by older versions, and can be turned on again in [규칙 · OCAP 설정].
   if (!settings.v8) { settings.rules.R4 = false; settings.rules.R5 = false; settings.v8 = 1; }
+  // v11: Trend is 6 points by default (owner, #27). [규칙 · OCAP 설정] of older versions saved every point
+  // count, so a stored 7 (the old default) goes; a count changed on purpose stays.
+  if (!settings.v11) { if (settings.n.R3 === 7) delete settings.n.R3; settings.v11 = 1; }
   if (!(settings.window >= 0)) settings.window = 0;
   if (!(settings.pitch >= 0)) settings.pitch = 16;
   settings.auto = !!settings.auto;
@@ -1659,8 +1678,8 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   }
 
   // [삭제 시뮬레이션] (#27): which rows to delete so that neither the XBAR nor the SIGMA chart has OCAP / 7 run.
-  // Round 1 = the yellow rows; deleting them joins their neighbours, which can start a new run / trend, so
-  // round 2 = the rows breaking a rule once round 1 is gone, and so on (SPC.deletePlan). File values, no edits.
+  // One row at a time, oldest first, judged again after each (SPC.deletePlan): round 1 = yellow rows still
+  // breaking a rule when their turn comes, round 2 = rows that only break one after that, ... File values, no edits.
   function planDeletes() {
     var series = [], sub = settings.subgroup <= 1;
     items(false, true).forEach(function (it) {
@@ -1899,13 +1918,15 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     } else {
       h += '<ol class="rounds">';
       p.rounds.forEach(function (list, r) {
-        h += '<li><b>' + (r + 1) + '차</b> ' + (r ? '(앞 차수를 지우면 새로 생기는 OCAP · 7run)' : '(지금 노란 행)') + ' · ' + list.length + '행: ' +
+        h += '<li><b>' + (r + 1) + '차</b> ' + (r ? '(앞 차수를 지우면 새로 생기는 OCAP · 7run)' : '(노란 행 ' + Object.keys(yellow).length + '개 중 지워야 하는 행)') + ' · ' + list.length + '행: ' +
           list.map(function (x) { return '<a href="#" data-row="' + x.key + '" title="' + esc(rowText(x.key).label + ' · ' + x.rules.map(shortRule).join(', ')) + '">' + x.key + '</a>'; }).join(', ') + '</li>';
       });
       h += '</ol>';
+      var keep = Object.keys(yellow).filter(function (row) { return !p.round[row]; }).length;  // a 7-point run loses a point
       h += p.clean
         ? '<p class="ok"><b>모두 ' + p.count + '행</b>(' + p.rounds.length + '차까지)을 지우면 ' + both + ' OCAP · 7run이 나오지 않습니다.' +
-          (p.rounds.length > 1 ? ' 노란 행(1차)만 지우면 ' + p.rounds.slice(1).reduce(function (n, l) { return n + l.length; }, 0) + '행에서 다시 생깁니다.' : ' 노란 행만 지우면 다시 생기지 않습니다.') + '</p>'
+          (p.rounds.length > 1 ? ' 1차만 지우면 ' + p.rounds.slice(1).reduce(function (n, l) { return n + l.length; }, 0) + '행에서 다시 생깁니다.' : '') +
+          (keep ? ' 노란 행 중 ' + keep + '행은 앞 행을 지우면 풀려서 남깁니다.' : '') + '</p>'
         : '<p class="warn">' + p.rounds.length + '차까지 지워도 OCAP · 7run이 남습니다 (' + p.count + '행).</p>';
     }
     box.innerHTML = h;
@@ -2647,7 +2668,11 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
         settings.pollSec = Math.max(1, +m.querySelector('#dPoll').value || 2);
         settings.sound = m.querySelector('#dSound').checked;
         m.querySelectorAll('[data-rule]').forEach(function (c) { settings.rules[c.dataset.rule] = c.checked; });
-        m.querySelectorAll('[data-n]').forEach(function (c) { var v = +c.value | 0; if (v >= 2) settings.n[c.dataset.n] = v; });
+        // only counts that differ from the default are kept, so a later default (Trend 7 -> 6 in v11) reaches them
+        m.querySelectorAll('[data-n]').forEach(function (c) {
+          var v = +c.value | 0, d = SPC.RULES.filter(function (r) { return r.id === c.dataset.n; })[0].n;
+          if (v >= 2 && v !== d) settings.n[c.dataset.n] = v; else delete settings.n[c.dataset.n];
+        });
         m.querySelectorAll('[data-ocap]').forEach(function (c) { settings.ocap[c.dataset.ocap] = c.value; });
         save();
         closeModal();
