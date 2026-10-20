@@ -11,7 +11,6 @@
   <button id="openBtn" class="primary">엑셀 열기</button>
   <button id="recentBtn" class="ghost hidden">최근 파일 다시 열기</button>
   <button id="reloadBtn" class="ghost" disabled title="파일을 지금 다시 읽기 (F5 대신)">새로고침</button>
-  <label class="chk" title="켜면 엑셀 파일이 저장될 때마다 자동으로 다시 읽습니다 (기본 꺼짐: 정해진 기간의 데이터를 보는 프로그램)"><input type="checkbox" id="liveChk"> 자동 새로고침</label>
   <span id="status" class="status muted">엑셀 파일을 열거나 이 창에 끌어 놓으세요</span>
   <span class="spacer"></span>
   <button id="demoBtn" class="ghost">예제 보기</button>
@@ -41,7 +40,7 @@
       <li><b>[엑셀 열기]</b>로 .xlsx 파일을 고릅니다 (.xlsm, .ods, .csv도 가능). Edge가 파일 보기를 물으면 [허용].</li>
       <li>첫 줄(제목 줄) 아래에 데이터가 있으면 숫자 열이 자동으로 차트가 됩니다.</li>
       <li>기간 전체를 그립니다. 점이 많아 화면을 넘으면 차트 아래 <b>가로 스크롤 막대</b>(또는 <kbd>Shift</kbd>+마우스 휠)로 넘겨 봅니다. [점 간격]으로 넓히거나 [화면에 맞춤]으로 한 화면에 모을 수 있습니다.</li>
-      <li>엑셀을 고쳐 저장했으면 [새로고침]으로 다시 읽습니다 ([자동 새로고침]을 켜면 저장할 때마다 자동).</li>
+      <li>엑셀을 고쳐 저장했으면 [새로고침]으로 다시 읽습니다.</li>
       <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
         [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을 저장합니다.</li>
       <li><b>[삭제 시뮬레이션]</b>: 노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 보여 주고, XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지려면 지울 행 목록을 알려 줍니다 (원본은 그대로).</li>
@@ -53,7 +52,7 @@
     </table>
     <p class="muted">USL · LSL · UCL · LCL · CL(Target) 열은 있으면 쓰고, 없으면 관리한계(UCL · CL · LCL)는 데이터로 계산합니다. 항목별로 [한계 설정]에서 직접 넣을 수도 있습니다.<br>
       여러 측정 항목이 한 열에 섞인 형식(항목 · 값)도 됩니다: [항목 열]에서 항목 이름 열을 고르세요.<br>
-      판정 규칙: 규격 이탈, 관리한계 이탈, Run(7점 연속 한쪽), Trend(6점 연속 상승·하강). 2/3 &gt; 2σ, 4/5 &gt; 1σ 등은 [규칙 · OCAP 설정]에서 켭니다 (기본 꺼짐). 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
+      판정 규칙 기본값: XBAR 차트 = OCAP(규격 이탈, 관리한계 이탈) · 7run(Run 7점 연속 한쪽), SIGMA 차트 = OCAP(관리한계 이탈) · 7run · Trend(6점 연속 상승·하강). [규칙 · OCAP 설정]에서 차트마다 따로 켜고 끕니다 (XBAR Trend, 2/3 &gt; 2σ, 4/5 &gt; 1σ 등은 기본 꺼짐). 이상이 생기면 위에 알림이 뜨고 OCAP 조치 내용을 보여 줍니다.</p>
     <p class="muted">SPC 시스템에서 내려받은 양식(EXT_MV, EXT_MV_UCL / CENTER / LCL, USL, LSL, LOT_ID …)은 자동으로 알아보고 SPC 시스템처럼 XBAR 차트(EXT_MV, UCL/LCL 선)와 SIGMA 차트(EXT_SIGMA)를 그리고, 두 차트 모두 OCAP · 7run을 판정합니다. X축은 날짜 · 시간(TRAN_TIME)입니다.</p>
     <p class="muted small">파일은 이 PC 안에서만 읽습니다 (네트워크 연결 차단). 원본 엑셀 파일은 고치지 않고, 수정본은 새 파일로 저장합니다.</p>
   </section>

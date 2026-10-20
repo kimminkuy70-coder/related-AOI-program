@@ -19,7 +19,10 @@
     {id: 'R7', name: '1σ 안 몰림', desc: 'N점 연속 ±1σ 안 (층별 의심)', n: 15},
     {id: 'R8', name: '1σ 밖 연속', desc: 'N점 연속 ±1σ 밖 (양쪽)', n: 8}
   ];
-  var DEFAULT_ON = {OOS: true, R1: true, R2: true, R3: true, R4: false, R5: false, R6: false, R7: false, R8: false};
+  // XBAR chart defaults: OCAP (spec / control limits) and 7 run (Run 7); Trend off since v13 (owner, #29)
+  var DEFAULT_ON = {OOS: true, R1: true, R2: true, R3: false, R4: false, R5: false, R6: false, R7: false, R8: false};
+  // SIGMA chart defaults (#29): OCAP (control limits), 7 run and Trend 6
+  var SIGMA_DEFAULT_ON = {R1: true, R2: true, R3: true};
 
   function isNum(v) { return typeof v === 'number' && isFinite(v); }
 
@@ -408,5 +411,5 @@
     return {rounds: rounds, clean: false};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, deletePlan: deletePlan, mean: mean, sd: sd};
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, SIGMA_DEFAULT_ON: SIGMA_DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, deletePlan: deletePlan, mean: mean, sd: sd};
 })();

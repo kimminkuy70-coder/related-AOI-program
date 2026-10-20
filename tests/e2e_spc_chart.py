@@ -270,9 +270,10 @@ class SpcChartTest(unittest.TestCase):
         five = self.js(ANALYZE, [base + [10.3] * 5, {'baseline': len(base), 'n': {'R2': 5}}])
         self.assertEqual(five['flags']['R2'], [len(base) + 4])
 
-    def test_trend_of_six_is_one_event(self):  # Trend 6 points by default since v11 (#27)
+    def test_trend_of_six_is_one_event(self):  # Trend 6 points by default since v11 (#27); off for XBAR since v13 (#29)
         vals = [10, 9, 11, 10, 9.5, 10.5, 10] * 3 + [9.1, 9.3, 9.5, 9.7, 9.9, 10.1, 10.3, 10.4]
-        r = self.js(ANALYZE, [vals])
+        self.assertNotIn('R3', self.js(ANALYZE, [vals])['flags'])
+        r = self.js(ANALYZE, [vals, {'rules': {'R3': True}}])
         n = len(vals)
         self.assertEqual(r['flags']['R3'], [n - 3, n - 2, n - 1])  # 6th, 7th and 8th rising point
         self.assertIn(['R3', n - 3, n - 1], r['events'])
@@ -314,12 +315,11 @@ class SpcChartTest(unittest.TestCase):
             for (let i = 0; i < d.length; i += 4) if (d[i + 2] > 200 && d[i] < 80) return true; return false; }"""))  # blue data line drawn
 
     def test_saving_the_workbook_updates_the_chart_and_raises_alarm(self):
-        self.js('() => { window.__spc.settings.pollSec = 1; }')
-        self.page.check('#liveChk')  # off by default since #24 (fixed-period viewer)
         self.open_file('live.xlsx', workbook(long_rows(30)))
         self.assertTrue(self.page.locator('#alarm').is_hidden())
         last = datetime.datetime(2026, 10, 3, 0, 0)
         self.put('live.xlsx', workbook(long_rows(30, [[last, '두께', 10.9, 10.5, 9.5]])))  # "Ctrl+S" in Excel
+        self.page.click('#reloadBtn')  # no auto refresh since v13 (#29)
         self.page.wait_for_function("() => window.__spc.results().find(r => r.name === '두께').points.length === 31", timeout=8000)
         res = {r['name']: r for r in self.results()}
         self.assertAlmostEqual(res['두께']['last'], 10.9)
@@ -336,13 +336,13 @@ class SpcChartTest(unittest.TestCase):
         self.assertIn('재측정 OK', self.page.inner_text('#events'))
 
     def test_broken_save_keeps_last_chart(self):
-        self.js('() => { window.__spc.settings.pollSec = 1; }')
-        self.page.check('#liveChk')  # off by default since #24 (fixed-period viewer)
         self.open_file('b.xlsx', workbook(long_rows(10)))
         self.put('b.xlsx', b'PK\x03\x04 half written')
+        self.page.click('#reloadBtn')
         self.page.wait_for_function("() => document.getElementById('status').className.includes('err')", timeout=8000)
         self.assertEqual(len(self.results()), 2)
         self.put('b.xlsx', workbook(long_rows(12)))
+        self.page.click('#reloadBtn')
         self.page.wait_for_function("() => window.__spc.results()[0].points.length === 12", timeout=8000)
 
     def test_wide_format_with_limit_columns(self):
@@ -508,14 +508,13 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(len(self.js('() => window.__spc.nowFlags()')), 3)
 
     def test_edits_follow_live_refresh(self):
-        self.js('() => { window.__spc.settings.pollSec = 1; }')
-        self.page.check('#liveChk')  # off by default since #24 (fixed-period viewer)
         rows = spc_rows()
         self.open_file('live2.xlsx', workbook(rows))
         self.page.click('#fixAllBtn')
         self.assertEqual(len(self.js('() => window.__spc.edits()')), 2)
         rows[SPC_OUT + 1][SPC_HEADERS.index('EXT_MV')] = 6.5  # fixed in Excel and saved
         self.put('live2.xlsx', workbook(rows))
+        self.page.click('#reloadBtn')
         self.page.wait_for_function('() => Object.keys(window.__spc.edits()).length === 1', timeout=8000)
 
     def test_html_table_saved_as_xls(self):
@@ -547,7 +546,7 @@ class SpcChartTest(unittest.TestCase):
         vals = [6.9, 6.2, 6.8, 6.3, 6.7, 6.25] * 3 + [6.49, 6.74, 7.56, 5.78, 6.58, 6.93, 6.91, 6.69, 6.62, 6.56, 6.91, 5.04, 6.94, 6.59, 6.82, 6.28, 6.85]
         r = self.js("""(vals) => { const n = vals.length, c = v => vals.map(() => v);
             const it = {name: 't', values: vals, labels: vals.map(String), cols: {UCL: c(8.234), CL: c(6.52), LCL: c(4.805)}};
-            const opts = {}, rules = SPC.FIX_RULES, row = 28;
+            const opts = {rules: Object.assign({}, SPC.DEFAULT_ON, {R3: true})}, rules = SPC.FIX_RULES, row = 28;  // Trend on (off for XBAR since v13)
             const out = SPC.fixAll(it, opts, rules), v = vals.slice(); out.changes.forEach(ch => { v[ch.row] = ch.value; });
             return {flags: SPC.analyze(it, opts).flags, own: SPC.suggest(it, opts, row, rules), change: SPC.suggestChange(it, opts, row, rules),
                     out, after: SPC.analyze(Object.assign({}, it, {values: v}), opts).flags}; }""", vals)
@@ -561,7 +560,7 @@ class SpcChartTest(unittest.TestCase):
 
     # v8 (#25): 2/3 > 2σ and 4/5 > 1σ are off by default, also for settings saved by an older version
     def test_extra_rules_off_by_default(self):
-        self.assertEqual([self.js('() => window.__spc.settings.rules')[k] for k in ('R1', 'R2', 'R3', 'R4', 'R5')], [True, True, True, False, False])
+        self.assertEqual([self.js('() => window.__spc.settings.rules')[k] for k in ('R1', 'R2', 'R3', 'R4', 'R5')], [True, True, False, False, False])
         self.js("() => localStorage.setItem('spc.settings', JSON.stringify({rules: {R4: true, R5: true}, v4: 1}))")
         self.page.reload()
         self.assertEqual([self.js('() => window.__spc.settings.rules')[k] for k in ('R4', 'R5')], [False, False])
@@ -572,7 +571,7 @@ class SpcChartTest(unittest.TestCase):
 
     # issue #24: a long period scrolls sideways instead of being cut; auto refresh is off by default
     def test_long_period_scrolls_sideways(self):
-        self.assertFalse(self.page.is_checked('#liveChk'))
+        self.assertEqual(self.page.locator('#liveChk').count(), 0)  # auto refresh removed in v13 (#29)
         self.open_file('long.xlsx', workbook(long_rows(400)))
         self.assertEqual(self.js('() => window.__spc.settings.window'), 0)
         self.assertEqual(self.page.input_value('#pitchSel'), '16')
@@ -686,6 +685,45 @@ class SpcChartTest(unittest.TestCase):
             self.open_file('t.xlsx', workbook(long_rows(10)))
             n = self.js('() => window.__spc.settings.n')
             self.assertEqual(n.get('R3', 6), want)
+
+    # v13 (#29): XBAR = OCAP, 7 run; SIGMA = OCAP, 7 run, Trend 6 by default, set apart in [규칙 · OCAP 설정]
+    def test_rules_per_chart(self):
+        rows = spc_rows()
+        mv, sg = SPC_HEADERS.index('EXT_MV'), SPC_HEADERS.index('EXT_SIGMA')
+        for k, i in enumerate(range(30, 36)):  # 6 rising points on both charts, no run of 7, inside the limits
+            rows[i + 1][mv] = round(6.0 + 0.2 * k, 2)
+            rows[i + 1][sg] = round(0.3 + 0.1 * k, 2)
+        self.open_file('trend.xlsx', workbook(rows))
+        flags = lambda: self.js('() => { const r = window.__spc.results()[0]; return [Object.keys(r.flags), Object.keys(r.sigmaFlags)]; }')
+        x, s = flags()
+        self.assertNotIn('R3', x)
+        self.assertIn('SR3', s)
+        self.assertIn('37', self.js('() => window.__spc.yellow()'))  # excel row of the 6th rising SIGMA point
+        self.page.click('#settingsBtn')
+        self.assertIn('SIGMA 차트', self.page.inner_text('#modal'))
+        self.assertEqual(self.page.locator('#dPoll').count(), 0)
+        self.page.check('[data-chart="x"][data-rule="R3"]')
+        self.page.uncheck('[data-chart="s"][data-rule="R3"]')
+        self.page.fill('[data-chart="s"][data-n="R2"]', '5')
+        self.page.click('#dOk')
+        x, s = flags()
+        self.assertIn('R3', x)
+        self.assertNotIn('SR3', s)
+        st = self.js('() => window.__spc.settings')
+        self.assertEqual((st['n'], st['sigma']['n']), ({}, {'R2': 5}))
+        self.page.click('#settingsBtn')
+        self.page.click('#dReset')
+        self.page.click('#dOk')
+        x, s = flags()
+        self.assertEqual(('R3' in x, 'SR3' in s), (False, True))
+        # settings of v12 (one shared set, Trend on, auto refresh) -> XBAR Trend off once, SIGMA defaults, no auto refresh
+        self.js("() => localStorage.setItem('spc.settings', JSON.stringify({v4: 1, v8: 1, v11: 1, rules: {R3: true}, auto: true, pollSec: 2}))")
+        self.page.reload()
+        st = self.js('() => window.__spc.settings')
+        self.assertFalse(st['rules']['R3'])
+        self.assertEqual(st['sigma']['rules'], {'R1': True, 'R2': True, 'R3': True})
+        self.assertNotIn('auto', st)
+        self.assertNotIn('pollSec', st)
 
     def test_delete_simulation_clears_xbar_and_sigma(self):
         rows = spc_rows(sigma_out=True, sigma_run=True)

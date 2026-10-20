@@ -38,7 +38,6 @@
   settings.n = settings.n || {};
   settings.ocap = Object.assign({}, DEFAULT_OCAP, settings.ocap);
   settings.manual = settings.manual || {};
-  if (!(settings.pollSec >= 1)) settings.pollSec = 2;
   if (settings.sound === undefined) settings.sound = true;
   // v1-v3 showed the last 100 points by default; from v4 the whole period is drawn and scrolled sideways (#24).
   if (!settings.v4) { settings.window = 0; settings.v4 = 1; }
@@ -48,9 +47,17 @@
   // v11: Trend is 6 points by default (owner, #27). [규칙 · OCAP 설정] of older versions saved every point
   // count, so a stored 7 (the old default) goes; a count changed on purpose stays.
   if (!settings.v11) { if (settings.n.R3 === 7) delete settings.n.R3; settings.v11 = 1; }
+  // v13 (owner, #29): XBAR and SIGMA have their own rules. XBAR = OCAP, 7 run; SIGMA = OCAP, 7 run, Trend 6.
+  // Older versions shared one set and had Trend on, so XBAR Trend goes off once (it can be turned on again).
+  if (!settings.v13) { settings.rules.R3 = false; settings.v13 = 1; }
+  settings.sigma = settings.sigma || {};
+  settings.sigma.rules = Object.assign({}, SPC.SIGMA_DEFAULT_ON, settings.sigma.rules);
+  settings.sigma.n = settings.sigma.n || {};
+  // v13 (owner, #29): no auto refresh any more; [새로고침] reads the file again
+  delete settings.auto;
+  delete settings.pollSec;
   if (!(settings.window >= 0)) settings.window = 0;
   if (!(settings.pitch >= 0)) settings.pitch = 16;
-  settings.auto = !!settings.auto;
   if (!(settings.subgroup >= 1)) settings.subgroup = 1;
   if (!(settings.baseline >= 0)) settings.baseline = 0;
   var ocapLog = load('spc.ocapLog', {});
@@ -73,7 +80,7 @@
   var results = [];        // SPC.analyze results, one per item
   var seen = null;         // event keys already shown (null until the first read of a source)
   var newKeys = {};
-  var busy = false, timer = null;
+  var busy = false;
   var lastBuf = null;      // bytes of the file last read (the saved copy is made from them)
   var edits = {};          // 'excelRow:col' -> {row, col, value, orig}: recommended values, only in the copy
   var yellow = {};         // excelRow -> rule ids breaking OCAP / 7 run in the file as read
@@ -133,13 +140,6 @@
     hideAlarm();
     $('reloadBtn').disabled = false;
     refresh(true);
-    schedule();
-  }
-
-  function schedule() {
-    clearInterval(timer);
-    timer = null;
-    if ($('liveChk').checked && source && source.kind !== 'file') timer = setInterval(function () { refresh(false); }, settings.pollSec * 1000);
   }
 
   async function refresh(force) {
@@ -176,7 +176,7 @@
       buildTable();
       analyzeAll();
       render();
-      var live = source.kind === 'file' ? ' · 자동 새로고침 없음 (다시 열기로 갱신)' : '';
+      var live = source.kind === 'file' ? ' · [새로고침]으로 다시 읽을 수 없는 방식으로 열림 (다시 열기로 갱신)' : '';
       setStatus(name + ' · 읽은 시각 ' + stamp() + live, source.kind === 'file' ? 'warn' : 'muted');
     } finally {
       busy = false;
@@ -350,11 +350,11 @@
   // SIGMA chart rules (#25): OCAP = outside EXT_SIGMA_UCL/LCL, 7 run = run / trend around EXT_SIGMA_CENTER.
   // No spec limits for a sigma. Their ids carry an S (SR1, SR2, SR3) next to the XBAR ones.
   var SIGMA_RULES = ['R1', 'R2', 'R3'];
-  function sigmaRules() { return SIGMA_RULES.filter(function (id) { return settings.rules[id]; }); }
+  function sigmaRules() { return SIGMA_RULES.filter(function (id) { return settings.sigma.rules[id]; }); }
   function sigmaOpts() {
     var on = {};
     sigmaRules().forEach(function (id) { on[id] = true; });
-    return {subgroup: 1, baseline: 0, rules: on, n: settings.n, manual: {}, min: 0};
+    return {subgroup: 1, baseline: 0, rules: on, n: settings.sigma.n, manual: {}, min: 0};
   }
   // The SIGMA series as an item of its own, row for row with its XBAR item (same indexes).
   function sigmaItem(it) {
@@ -493,17 +493,19 @@
     } catch (e) { /* no sound device */ }
   }
 
+  // point count of a rule; SIGMA rules (SR*) have their own counts (#29)
+  function ruleN(id) {
+    var base = baseRule(id), r = SPC.RULES.filter(function (x) { return x.id === base; })[0];
+    return r && r.n ? (isSigmaRule(id) ? settings.sigma.n : settings.n)[base] || r.n : 0;
+  }
   function ruleName(id) {
-    if (isSigmaRule(id)) return 'SIGMA ' + ruleName(baseRule(id));
-    var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
+    var r = SPC.RULES.filter(function (x) { return x.id === baseRule(id); })[0];
     if (!r) return id;
-    var n = settings.n[id] || r.n;
-    return r.name + (r.n ? ' (' + n + '점)' : '');
+    return (isSigmaRule(id) ? 'SIGMA ' : '') + r.name + (r.n ? ' (' + ruleN(id) + '점)' : '');
   }
   function ruleDesc(id) {
-    id = baseRule(id);
-    var r = SPC.RULES.filter(function (x) { return x.id === id; })[0];
-    return r ? r.desc.replace('N점', (settings.n[id] || r.n) + '점') : '';
+    var r = SPC.RULES.filter(function (x) { return x.id === baseRule(id); })[0];
+    return r ? r.desc.replace('N점', ruleN(id) + '점') : '';
   }
 
   // ---------- rendering ----------
@@ -1400,13 +1402,21 @@
   $('modalBack').addEventListener('mousedown', function (e) { if (e.target === $('modalBack')) closeModal(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
 
+  // XBAR and SIGMA charts have their own rules and point counts (#29); the OCAP texts are shared by rule.
   function settingsDialog() {
-    var h = '<h3>판정 규칙 · OCAP 설정</h3><div class="row"><label>자동 새로고침 간격 <input id="dPoll" type="number" min="1" max="600" value="' + settings.pollSec + '"> 초</label>' +
-      '<label class="chk"><input type="checkbox" id="dSound"' + (settings.sound ? ' checked' : '') + '> 새 이상이 생기면 소리</label></div>';
+    var h = '<h3>판정 규칙 · OCAP 설정</h3><div class="row"><label class="chk"><input type="checkbox" id="dSound"' + (settings.sound ? ' checked' : '') + '> 새 이상이 생기면 소리</label></div>';
+    var ruleRow = function (r, chart, set) {
+      return '<div class="row"><label class="chk"><input type="checkbox" data-chart="' + chart + '" data-rule="' + r.id + '"' + (set.rules[r.id] ? ' checked' : '') + '> <b>' + esc(r.name) + '</b></label>' +
+        (r.n ? '<label><input type="number" min="2" max="50" data-chart="' + chart + '" data-n="' + r.id + '" value="' + (set.n[r.id] || r.n) + '"> 점</label>' : '') +
+        '<span class="muted">' + esc(r.desc) + '</span></div>';
+    };
+    h += '<h4>XBAR 차트 (값 차트)</h4>';
     SPC.RULES.forEach(function (r) {
-      h += '<div class="ruleset"><div class="row"><label class="chk"><input type="checkbox" data-rule="' + r.id + '"' + (settings.rules[r.id] ? ' checked' : '') + '> <b>' + esc(r.name) + '</b></label>' +
-        (r.n ? '<label><input type="number" min="2" max="50" data-n="' + r.id + '" value="' + (settings.n[r.id] || r.n) + '"> 점</label>' : '') +
-        '<span class="muted">' + esc(r.desc) + '</span></div><textarea data-ocap="' + r.id + '" placeholder="이 규칙에 걸리면 할 조치 (OCAP)">' + esc(settings.ocap[r.id] || '') + '</textarea></div>';
+      h += '<div class="ruleset">' + ruleRow(r, 'x', settings) + '<textarea data-ocap="' + r.id + '" placeholder="이 규칙에 걸리면 할 조치 (OCAP, 두 차트 공통)">' + esc(settings.ocap[r.id] || '') + '</textarea></div>';
+    });
+    h += '<h4>SIGMA 차트 (SPC 시스템 양식의 EXT_SIGMA)</h4><p class="muted small">OCAP 조치 문구는 위 XBAR 차트의 같은 규칙 문구를 같이 씁니다.</p>';
+    SPC.RULES.forEach(function (r) {
+      if (SIGMA_RULES.indexOf(r.id) >= 0) h += '<div class="ruleset">' + ruleRow(r, 's', settings.sigma) + '</div>';
     });
     h += '<div class="buttons"><button class="ghost" id="dReset">기본값으로</button><span class="spacer"></span><button class="ghost" id="dCancel">취소</button><button class="primary" id="dOk">저장</button></div>';
     modal(h, function (m) {
@@ -1414,24 +1424,23 @@
       m.querySelector('#dReset').onclick = function () {
         settings.rules = Object.assign({}, SPC.DEFAULT_ON);
         settings.n = {};
+        settings.sigma = {rules: Object.assign({}, SPC.SIGMA_DEFAULT_ON), n: {}};
         settings.ocap = Object.assign({}, DEFAULT_OCAP);
-        settings.pollSec = 2;
         save();
         settingsDialog();
       };
       m.querySelector('#dOk').onclick = function () {
-        settings.pollSec = Math.max(1, +m.querySelector('#dPoll').value || 2);
         settings.sound = m.querySelector('#dSound').checked;
-        m.querySelectorAll('[data-rule]').forEach(function (c) { settings.rules[c.dataset.rule] = c.checked; });
+        var setOf = function (c) { return c.dataset.chart === 's' ? settings.sigma : settings; };
+        m.querySelectorAll('[data-rule]').forEach(function (c) { setOf(c).rules[c.dataset.rule] = c.checked; });
         // only counts that differ from the default are kept, so a later default (Trend 7 -> 6 in v11) reaches them
         m.querySelectorAll('[data-n]').forEach(function (c) {
-          var v = +c.value | 0, d = SPC.RULES.filter(function (r) { return r.id === c.dataset.n; })[0].n;
-          if (v >= 2 && v !== d) settings.n[c.dataset.n] = v; else delete settings.n[c.dataset.n];
+          var v = +c.value | 0, d = SPC.RULES.filter(function (r) { return r.id === c.dataset.n; })[0].n, n = setOf(c).n;
+          if (v >= 2 && v !== d) n[c.dataset.n] = v; else delete n[c.dataset.n];
         });
         m.querySelectorAll('[data-ocap]').forEach(function (c) { settings.ocap[c.dataset.ocap] = c.value; });
         save();
         closeModal();
-        schedule();
         recompute();
       };
     });
@@ -1550,8 +1559,6 @@
     $('fileIn').value = '';
   };
   $('reloadBtn').onclick = function () { refresh(true); };
-  $('liveChk').checked = settings.auto;
-  $('liveChk').onchange = function () { settings.auto = $('liveChk').checked; save(); schedule(); };
   $('demoBtn').onclick = function () {
     settings.sheet = '예제';
     settings.cols = {};
