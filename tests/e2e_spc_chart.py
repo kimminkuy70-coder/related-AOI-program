@@ -170,8 +170,10 @@ SAVE_PICKER = """window.showSaveFilePicker = async (o) => {
 };"""
 
 GET_FILE = """async (name) => {
-  const root = await navigator.storage.getDirectory();
-  const f = await (await root.getFileHandle(name)).getFile();
+  let root = await navigator.storage.getDirectory();
+  const parts = name.split('/');  // 'folder/file' for a file in a sub folder (#32)
+  while (parts.length > 1) root = await root.getDirectoryHandle(parts.shift());
+  const f = await (await root.getFileHandle(parts[0])).getFile();
   const u8 = new Uint8Array(await f.arrayBuffer());
   let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
   return btoa(s);
@@ -778,7 +780,7 @@ class SpcChartTest(unittest.TestCase):
         self.assertTrue(keys)
         self.page.click('#ocapFormBtn')
         self.page.wait_for_function("() => /OCAP 삭제 양식 저장: /.test(document.body.textContent) && window.__savedAs")
-        self.assertRegex(self.js('() => window.__savedAs'), r'^OCAP 삭제 양식_\d{8}_\d{4}\.xlsx$')
+        self.assertRegex(self.js('() => window.__savedAs'), r'^OCAP 삭제 양식_(129588|130121|129588\+130121)_\d{12}\.xlsx$')  # #32: 제목_SPEC_SEQ_yyyymmddhhmm
         wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))
         self.assertEqual(wb.sheetnames, ['Sheet1'])  # v14 (#30): one sheet like the owner's form file
         ws = wb['Sheet1']
@@ -816,7 +818,7 @@ class SpcChartTest(unittest.TestCase):
         self.assertTrue(any(e['col'] == mv for e in edits) and any(e['col'] == sg for e in edits))
         self.page.click('#rawFormBtn')
         self.page.wait_for_function("() => /수정 양식 저장: /.test(document.body.textContent) && window.__savedAs")
-        self.assertRegex(self.js('() => window.__savedAs'), r'^RAW_DATA 수정 양식_\d{8}_\d{4}\.xlsx$')
+        self.assertRegex(self.js('() => window.__savedAs'), r'^RAW_DATA 수정 양식_129588_\d{12}\.xlsx$')
         wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))
         ws = wb['Sheet1']
         self.assertEqual(ws['B2'].value, 'S/S 25>')
@@ -922,7 +924,7 @@ class SpcChartTest(unittest.TestCase):
         self.assertIn('OCAP · 7run이 나오지 않습니다', self.page.locator('#delBox').text_content())
         self.page.click('#fixFormBtn')
         self.page.wait_for_function("() => /수정 양식 저장: /.test(document.body.textContent) && window.__savedAs")
-        self.assertRegex(self.js('() => window.__savedAs'), r'^RAW_DATA 수정 양식_\d{8}_\d{4}\.xlsx$')
+        self.assertRegex(self.js('() => window.__savedAs'), r'^RAW_DATA 수정 양식_129588_\d{12}\.xlsx$')
         ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))['Sheet1']
         self.assertEqual(ws['B3'].value, 'DATA_SEQ#')
         self.assertEqual(ws.max_row, 3 + len({e['row'] for e in self.js('() => Object.values(window.__spc.edits())')}))
@@ -947,15 +949,26 @@ class SpcChartTest(unittest.TestCase):
         self.assertTrue(p['deletes'] and p['changes'], p)
         self.page.click('#bothFormBtn')
         self.page.wait_for_function("() => /양식 2개 저장: /.test(document.getElementById('status').textContent)")
-        names = self.js("""async () => { const out = []; for await (const k of (await navigator.storage.getDirectory()).keys()) out.push(k); return out; }""")
-        ocap = [n for n in names if re.match(r'^OCAP 삭제 양식_\d{8}_\d{4}\.xlsx$', n)]
-        raw = [n for n in names if re.match(r'^RAW_DATA 수정 양식_\d{8}_\d{4}\.xlsx$', n)]
+        # #32: both files in a new folder named SPEC_SEQ, each named 제목_SPEC_SEQ_yyyymmddhhmm
+        self.assertIn('\\129588 폴더에', self.page.locator('#status').text_content())
+        names = self.js("""async () => { const out = []; const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('129588');
+          for await (const k of d.keys()) out.push(k); return out; }""")
+        ocap = [n for n in names if re.match(r'^OCAP 삭제 양식_129588_\d{12}\.xlsx$', n)]
+        raw = [n for n in names if re.match(r'^RAW_DATA 수정 양식_129588_\d{12}\.xlsx$', n)]
         self.assertEqual((len(ocap), len(raw)), (1, 1), names)
-        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, ocap[0]))))['Sheet1']
+        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, '129588/' + ocap[0]))))['Sheet1']
         self.assertEqual(ws['B6'].value, 'EDC Plan')
         self.assertEqual(len([r for r in range(7, ws.max_row + 1) if ws.cell(r, 4).value is not None]), len(p['deletes']))
-        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, raw[0]))))['Sheet1']
+        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, '129588/' + raw[0]))))['Sheet1']
         self.assertEqual(ws.max_row, 3 + len({c['key'] for c in p['changes']}))
+
+    # issue #32: the file on screen at the top, no [최근 파일 다시 열기] button
+    def test_current_file_at_top(self):
+        self.assertEqual(self.page.locator('#recentBtn').count(), 0)
+        self.assertFalse(self.page.locator('#curFile').is_visible())
+        self.open_file('lot_week42.xlsx', workbook(spc_rows()))
+        self.assertEqual(self.page.locator('#curFile').text_content(), '보고 있는 파일: lot_week42.xlsx')
+        self.assertTrue(self.page.locator('#curFile').is_visible())
 
     # issue #31: drag over the data table, Ctrl+C: an HTML table with the screen's colours (Excel keeps them) + text
     def test_drag_copy_keeps_colours(self):

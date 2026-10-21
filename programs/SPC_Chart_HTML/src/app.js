@@ -133,7 +133,6 @@
 
   function useHandle(handle) {
     source = {name: handle.name, kind: 'handle', handle: handle};
-    rememberHandle(handle);
     startSource();
   }
 
@@ -165,7 +164,6 @@
         } catch (e) {
           // Excel replaces the file while saving; try again on the next tick.
           setStatus(name + ' · 파일을 읽을 수 없음 (저장 중이거나 권한 없음) · ' + stamp(), 'warn');
-          if (e && e.name === 'NotAllowedError') $('recentBtn').classList.remove('hidden');
           return;
         }
         key = file.lastModified + ':' + file.size;
@@ -637,8 +635,19 @@
     return res.events.filter(function (ev) { return !(ocapLog[ev.key] && ocapLog[ev.key].done); }).length;
   }
 
+  // Which file is on screen (#32): the file name (and the sheet when the file has several) at the top
+  function showCurrent() {
+    var el = $('curFile');
+    if (!source) { el.classList.add('hidden'); return; }
+    var sheet = table && table.sheets && table.sheets.length > 1 ? ' · 시트 ' + table.sheet : '';
+    el.textContent = '보고 있는 파일: ' + source.name + sheet;
+    el.title = el.textContent;
+    el.classList.remove('hidden');
+  }
+
   function render() {
     $('empty').classList.add('hidden');
+    showCurrent();
     renderControls();
     var view = $('viewSel').value, shown = results.filter(function (r) { return !view || r.name === view; });
 
@@ -981,10 +990,29 @@
     while (widths.length < 27) widths.push(0);
     return [{name: RAW_FORM.sheet, rows: rows, widths: widths.concat([16.1, 16.4, 17.8, 16.3]), height: 17.5}];
   }
-  function rawFormName() {
+  // Form file names (#32): (양식 제목)_(SPEC_SEQ)_yyyymmddhhmm.xlsx. SPEC_SEQ of the rows in the form; several
+  // values are joined with '+'; no SPEC_SEQ column: the sheet name.
+  var RAW_FORM_TITLE = 'RAW_DATA 수정 양식';
+  function minuteStamp() {
     var d = new Date();
-    return 'RAW_DATA 수정 양식_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.xlsx';
+    return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + pad(d.getHours()) + pad(d.getMinutes());
   }
+  function specSeqOf(rows) {
+    var si = table.headers.map(norm).indexOf('specseq'), byRow = {}, seen = {}, out = [];
+    if (si >= 0) {
+      table.data.forEach(function (d) { byRow[d.excelRow] = d; });
+      rows.forEach(function (r) {
+        var d = byRow[r], v = d ? cellText(d.cells[si]).trim() : '';
+        if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+      });
+    }
+    var name = out.length ? out.join('+') : String(table.sheet || 'SPC');
+    return name.replace(/[\\/:*?"<>|]/g, '_');
+  }
+  function editedRows() { var r = {}; Object.keys(edits).forEach(function (k) { r[edits[k].row] = 1; }); return Object.keys(r).map(Number); }
+  function delRows(plan) { return Object.keys(plan.round).map(Number); }
+  function formName(title, rows) { return title + '_' + specSeqOf(rows) + '_' + minuteStamp() + '.xlsx'; }
+  function rawFormName() { return formName(RAW_FORM_TITLE, editedRows()); }
   async function saveRawForm() {
     if (!table || !Object.keys(edits).length) return;
     var bytes;
@@ -997,10 +1025,7 @@
     await saveBytes(bytes, rawFormName(), '수정 양식');
   }
 
-  function ocapFormName() {
-    var d = new Date();
-    return OCAP_FORM.title + '_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.xlsx';
-  }
+  function ocapFormName() { return formName(OCAP_FORM.title, delRows(delPlan)); }
 
   async function saveOcapForm() {
     if (!delPlan || !delPlan.count) return;
@@ -1015,13 +1040,14 @@
   }
 
   // [양식 2개 엑셀 저장] (#31, 최소 행 변경): the OCAP 삭제 양식 and the RAW_DATA 수정 양식 as two files in one go.
-  // One folder picker for both (two save dialogs in a row would lose the click that allows the second one).
+  // One folder picker for both (two save dialogs in a row would lose the click that allows the second one); the two
+  // files go into a new folder named after SPEC_SEQ inside the picked folder (#32).
   async function saveBothForms() {
     if (!mixPlan || !delPlan) return;
     var files = [];
     try {
       if (delPlan.count) files.push({name: ocapFormName(), bytes: window.XLSXLite.book(ocapFormSheets(delPlan)), what: 'OCAP 삭제 양식'});
-      if (Object.keys(edits).length) files.push({name: rawFormName(), bytes: window.XLSXLite.book(rawFormSheets()), what: 'RAW_DATA 수정 양식'});
+      if (Object.keys(edits).length) files.push({name: rawFormName(), bytes: window.XLSXLite.book(rawFormSheets()), what: RAW_FORM_TITLE});
     } catch (e) {
       setStatus('양식을 만들지 못했습니다: ' + e.message, 'err');
       return;
@@ -1031,13 +1057,15 @@
     if (files.length === 1) { await saveBytes(files[0].bytes, files[0].name, what); return; }
     if (window.showDirectoryPicker) {
       try {
-        var dir = await window.showDirectoryPicker({id: 'spcForms', mode: 'readwrite'});
+        var top = await window.showDirectoryPicker({id: 'spcForms', mode: 'readwrite'});
+        var folder = specSeqOf(delRows(delPlan).concat(editedRows()));
+        var dir = await top.getDirectoryHandle(folder, {create: true});
         for (var i = 0; i < files.length; i++) {
           var w = await (await dir.getFileHandle(files[i].name, {create: true})).createWritable();
           await w.write(files[i].bytes);
           await w.close();
         }
-        setStatus('양식 2개 저장: ' + dir.name + ' 폴더에 ' + files.map(function (f) { return f.name; }).join(', '), 'muted');
+        setStatus('양식 2개 저장: ' + top.name + '\\' + folder + ' 폴더에 ' + files.map(function (f) { return f.name; }).join(', '), 'muted');
       } catch (e) {
         if (!e || e.name !== 'AbortError') setStatus('양식을 저장하지 못했습니다: ' + e.message, 'err');
       }
@@ -1905,7 +1933,7 @@
     render();
   }
 
-  // ---------- recent file (handle kept in IndexedDB; Edge asks again for permission) ----------
+  // ---------- IndexedDB (the settings file handle; the old 'recent' entry of v15 and earlier is no longer used) ----------
   function idb(mode, fn) {
     return new Promise(function (resolve) {
       try {
@@ -1920,7 +1948,6 @@
       } catch (e) { resolve(null); }
     });
   }
-  function rememberHandle(h) { idb('readwrite', function (st) { st.put(h, 'recent'); }); }
 
   // [설정 저장] (#30): the settings into this browser (read back to check) and into a settings file, for PCs whose
   // browser forgets site data when it closes. The first save asks where to put the file; later saves overwrite it
@@ -1990,21 +2017,6 @@
     if (table) { buildTable(); recompute(); }
     setStatus('설정 불러옴: ' + f.name + (got.saved ? ' (저장 ' + String(got.saved).slice(0, 16).replace('T', ' ') + ' UTC)' : '') + ' · 이 PC 브라우저에도 저장함', 'muted');
   }
-
-  idb('readonly', function (st) { return st.get('recent'); }).then(function (h) {
-    if (!h || source) return;
-    $('recentBtn').textContent = '최근 파일 다시 열기: ' + h.name;
-    $('recentBtn').classList.remove('hidden');
-    $('recentBtn').onclick = async function () {
-      try {
-        if ((await h.queryPermission({mode: 'read'})) !== 'granted' && (await h.requestPermission({mode: 'read'})) !== 'granted') return;
-        $('recentBtn').classList.add('hidden');
-        useHandle(h);
-      } catch (e) {
-        setStatus('최근 파일을 열 수 없습니다: ' + e.message + ' · [엑셀 열기]로 다시 고르세요', 'err');
-      }
-    };
-  });
 
   // ---------- demo: two items, a point added every few seconds ----------
   function demoSource() {
