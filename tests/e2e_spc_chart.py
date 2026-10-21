@@ -8,6 +8,7 @@ file stands in for saving the workbook in Excel. Each test runs in a fresh brows
     python -m unittest tests.e2e_spc_chart -v
 """
 import base64
+import re
 import datetime
 import functools
 import http.server
@@ -236,6 +237,12 @@ class SpcChartTest(unittest.TestCase):
         self.js('n => { window.__pick = n; }', name)
         self.page.click('#openBtn')
         self.page.wait_for_function('() => window.__spc.results().length > 0')
+
+    def sim(self, button):
+        """[시뮬레이션] → one of its three buttons (#31): 행 삭제만 #delBtn, 행 수정만 #fixAllBtn, 최소 행 변경 #mixBtn"""
+        if not self.page.locator(button).is_visible():
+            self.page.click('#simBtn')
+        self.page.click(button)
 
     def results(self):
         return self.js("""() => window.__spc.results().map(r => ({name: r.name, n: r.points.length, last: r.x[r.x.length - 1],
@@ -471,17 +478,16 @@ class SpcChartTest(unittest.TestCase):
         self.assertEqual(self.page.locator('#dataTable td.fixed').count(), 2)  # the value column after 판정 and the same cell in place
         self.assertEqual(self.page.locator('#dataTable tr.y').count(), 3)  # the row stays yellow
         # all: one value clears the 7 run
-        self.page.click('#fixAllBtn')
+        self.sim('#fixAllBtn')
         self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
         edits = self.js('() => Object.values(window.__spc.edits())')
         self.assertEqual(len(edits), 2)
         flags = self.js('() => window.__spc.results()[0].flags')
         for rule in ('OOS', 'R1', 'R2', 'R3'):
             self.assertNotIn(rule, flags)
-        self.assertTrue(self.page.locator('#fixAllBtn').is_disabled())
-        c1 = self.js("() => getComputedStyle(document.getElementById('fixOneBtn')).backgroundColor")
-        c2 = self.js("() => getComputedStyle(document.getElementById('fixAllBtn')).backgroundColor")
-        self.assertNotEqual(c1, c2)
+        self.assertEqual(self.js('() => window.__spc.simMode()'), 'fix')  # [시뮬레이션 · 행 수정만] (#31), from the file's own values
+        self.assertTrue(self.page.locator('#fixOneBtn').is_disabled())
+        self.assertIn('시뮬레이션 · 행 수정만', self.page.locator('#delBox').text_content())
         # save the copy
         self.page.click('#saveBtn')
         self.page.wait_for_function("() => document.getElementById('status').textContent.includes('수정본 저장')")
@@ -502,7 +508,9 @@ class SpcChartTest(unittest.TestCase):
         for row in map(int, self.js('() => window.__spc.yellow()')):
             self.assertEqual(ws.cell(row, 1).fill.fgColor.rgb, 'FFFFFF00')
         self.assertNotEqual(ws.cell(3, 1).fill.fgColor.rgb, 'FFFFFF00')
-        # undo
+        # 행 수정만 off: back to the one value from before; then undo
+        self.sim('#fixAllBtn')
+        self.assertEqual(len(self.js('() => window.__spc.edits()')), 1)
         self.page.click('#undoBtn')
         self.assertEqual(self.js('() => window.__spc.edits()'), {})
         self.assertEqual(len(self.js('() => window.__spc.nowFlags()')), 3)
@@ -510,7 +518,7 @@ class SpcChartTest(unittest.TestCase):
     def test_edits_follow_live_refresh(self):
         rows = spc_rows()
         self.open_file('live2.xlsx', workbook(rows))
-        self.page.click('#fixAllBtn')
+        self.sim('#fixAllBtn')
         self.assertEqual(len(self.js('() => window.__spc.edits()')), 2)
         rows[SPC_OUT + 1][SPC_HEADERS.index('EXT_MV')] = 6.5  # fixed in Excel and saved
         self.put('live2.xlsx', workbook(rows))
@@ -523,7 +531,7 @@ class SpcChartTest(unittest.TestCase):
         self.open_file('export.xls', html.encode('utf-8'))
         self.assertEqual(self.js('() => window.__spc.table().spcForm'), True)
         self.assertEqual(len(self.js('() => window.__spc.yellow()')), 3)
-        self.page.click('#fixAllBtn')
+        self.sim('#fixAllBtn')
         saved = bytes(self.js('() => Array.from(window.__spc.copyBytes())'))
         ws = openpyxl.load_workbook(io.BytesIO(saved)).active
         self.assertEqual(ws.cell(1, 1).value, '회사')
@@ -629,7 +637,7 @@ class SpcChartTest(unittest.TestCase):
         self.assertGreaterEqual(edits[(int(run_rows[0]), sg)], 0)
         self.assertNotIn(run_rows[0], self.js('() => window.__spc.nowFlags()'))
         # all: no XBAR or SIGMA rule left, no sigma below 0
-        self.page.click('#fixAllBtn')
+        self.sim('#fixAllBtn')
         self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
         self.assertEqual(self.js('() => window.__spc.results()[0].sigmaFlags'), {})
         edits = self.js('() => Object.values(window.__spc.edits())')
@@ -730,7 +738,7 @@ class SpcChartTest(unittest.TestCase):
         self.open_file('del.xlsx', workbook(rows))
         yellow = self.js('() => window.__spc.yellow()')
         self.assertTrue(yellow)
-        self.page.click('#delBtn')
+        self.sim('#delBtn')
         plan = self.js('() => window.__spc.delPlan()')
         self.assertTrue(plan['clean'])
         self.assertEqual(sorted(str(x['key']) for x in plan['rounds'][0]), sorted(yellow))  # round 1 = the yellow rows
@@ -742,7 +750,8 @@ class SpcChartTest(unittest.TestCase):
         self.assertIn('del', self.page.locator('#dataTable tr[data-row="%d"]' % first).get_attribute('class'))
         self.assertIn('삭제 1차', self.page.locator('#dataTable tr[data-row="%d"] td.verdict' % first).text_content())
         self.assertIn('OCAP · 7run이 나오지 않습니다', self.page.locator('#delBox').text_content())
-        self.assertTrue(self.page.locator('#fixAllBtn').is_disabled())
+        self.assertTrue(self.page.locator('#fixOneBtn').is_disabled())
+        self.assertIn('✓', self.page.locator('#delBtn').text_content())
         # every round is checked again from the file: no rule left once all of them are gone
         with self.page.expect_download() as dl:
             self.page.click('#delCsvBtn')
@@ -750,7 +759,7 @@ class SpcChartTest(unittest.TestCase):
             csv = f.read().splitlines()
         self.assertEqual(csv[0], '차수,엑셀 행,X축,LOT_ID,판정')
         self.assertEqual(len(csv) - 1, plan['count'])
-        self.page.click('#delBtn')
+        self.sim('#delBtn')
         self.assertIsNone(self.js('() => window.__spc.delPlan()'))
         self.assertEqual(self.js('() => window.__spc.nowFlags()'), yellow)
         self.assertEqual(self.js('() => window.__spc.results()[0].points.length'), len(rows) - 1)
@@ -763,7 +772,7 @@ class SpcChartTest(unittest.TestCase):
             r[hp] = 'ITEM-A(TARGET 13 UM)_0/13 : F01(LINE-1)'
             r[hs] = 129588 if k < 15 else 130121  # two specs in one file
         self.open_file('ocap.xlsx', workbook(rows))
-        self.page.click('#delBtn')
+        self.sim('#delBtn')
         plan = self.js('() => window.__spc.delPlan()')
         keys = sorted(x['key'] for rd in plan['rounds'] for x in rd)
         self.assertTrue(keys)
@@ -802,7 +811,7 @@ class SpcChartTest(unittest.TestCase):
                 r[v1 + j] = round(r[mv] + (pattern[j] - pm) / psd * r[sg], 6)
         self.open_file('raw.xlsx', workbook(rows))
         self.assertTrue(self.page.locator('#rawFormBtn').is_disabled())
-        self.page.click('#fixAllBtn')
+        self.sim('#fixAllBtn')
         edits = self.js('() => Object.values(window.__spc.edits())')
         self.assertTrue(any(e['col'] == mv for e in edits) and any(e['col'] == sg for e in edits))
         self.page.click('#rawFormBtn')
@@ -858,7 +867,7 @@ class SpcChartTest(unittest.TestCase):
         rows = spc_rows(sigma_out=True, sigma_run=True)
         self.open_file('mix.xlsx', workbook(rows))
         yellow = self.js('() => window.__spc.yellow()')
-        self.page.click('#mixBtn')
+        self.sim('#mixBtn')
         self.page.wait_for_function('() => window.__spc.mixPlan()')
         p = self.js('() => window.__spc.mixPlan()')
         self.assertTrue(p['clean'])
@@ -871,18 +880,110 @@ class SpcChartTest(unittest.TestCase):
         box = self.page.locator('#delBox').text_content()
         self.assertIn('최소 행 변경', box)
         self.assertIn('OCAP · 7run이 나오지 않습니다', box)
-        self.assertTrue(self.page.locator('#delBtn').is_disabled())
-        self.assertEqual(self.page.locator('#mixBtn').text_content(), '최소 행 변경 끄기')
+        self.assertEqual(self.js('() => window.__spc.simMode()'), 'mix')
+        self.assertEqual(self.page.locator('#mixBtn').text_content(), '✓ 최소 행 변경 (삭제+수정)')
         with self.page.expect_download() as dl:
             self.page.click('#delCsvBtn')
         with open(dl.value.path(), encoding='utf-8-sig') as f:
             csv = f.read().splitlines()
         self.assertEqual(csv[0], '구분,엑셀 행,X축,LOT_ID,열,원래 값,새 값,판정')
         self.assertEqual(len(csv) - 1, len(p['deletes']) + len(p['changes']))
-        self.page.click('#mixBtn')
+        self.sim('#mixBtn')
         self.assertIsNone(self.js('() => window.__spc.mixPlan()'))
         self.assertEqual(self.js('() => window.__spc.edits()'), {})
         self.assertEqual(self.js('() => window.__spc.nowFlags()'), yellow)
+
+    # issue #31: 측정값 열 folded by default; [선택 행 추천값 입력] | [시뮬레이션]; undo / save under the table
+    def test_layout_value_fold_and_buttons(self):
+        self.open_file('lay.xlsx', workbook(spc_rows()))
+        self.assertFalse(self.js("() => document.getElementById('valueFold').open"))
+        self.assertFalse(self.page.locator('#valueBox input').first.is_visible())
+        self.assertIn('EXT_MV', self.page.locator('#valueSum').text_content())
+        self.page.click('#valueFold summary')
+        self.assertTrue(self.page.locator('#valueBox input').first.is_visible())
+        self.assertIn('접기', self.page.locator('#valueSum').text_content())
+        order = self.js("""() => Array.from(document.querySelectorAll('#dataBox .dhead > button, #dataBox .dhead > .vsep, #dataBox .dhead > .simgroup')).map(e => e.id || e.className)""")
+        self.assertEqual(order, ['fixOneBtn', 'vsep', 'simgroup'])
+        self.assertFalse(self.page.locator('#delBtn').is_visible())  # the three modes sit under [시뮬레이션]
+        self.page.click('#simBtn')
+        self.assertEqual([self.page.locator(b).text_content() for b in ('#delBtn', '#fixAllBtn', '#mixBtn')], ['행 삭제만', '행 수정만', '최소 행 변경 (삭제+수정)'])
+        under = self.js("""() => { const w = document.querySelector('#dataBox .dwrap').getBoundingClientRect();
+            return ['undoBtn', 'saveBtn'].map(id => document.getElementById(id).getBoundingClientRect().top >= w.bottom); }""")
+        self.assertEqual(under, [True, True])
+
+    # issue #31: 행 수정만 → RAW_DATA 수정 양식 from its box; off again = the edits from before
+    def test_fix_mode_saves_raw_form(self):
+        self.open_file('fixm.xlsx', workbook(spc_rows(sigma_out=True, sigma_run=True)))
+        yellow = self.js('() => window.__spc.yellow()')
+        self.sim('#fixAllBtn')
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
+        n = len(self.js('() => window.__spc.edits()'))
+        self.assertGreater(n, 0)
+        self.assertIn('OCAP · 7run이 나오지 않습니다', self.page.locator('#delBox').text_content())
+        self.page.click('#fixFormBtn')
+        self.page.wait_for_function("() => /수정 양식 저장: /.test(document.body.textContent) && window.__savedAs")
+        self.assertRegex(self.js('() => window.__savedAs'), r'^RAW_DATA 수정 양식_\d{8}_\d{4}\.xlsx$')
+        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))['Sheet1']
+        self.assertEqual(ws['B3'].value, 'DATA_SEQ#')
+        self.assertEqual(ws.max_row, 3 + len({e['row'] for e in self.js('() => Object.values(window.__spc.edits())')}))
+        with self.page.expect_download() as dl:
+            self.page.click('#delCsvBtn')
+        with open(dl.value.path(), encoding='utf-8-sig') as f:
+            self.assertEqual(len(f.read().splitlines()) - 1, n)
+        self.sim('#fixAllBtn')
+        self.assertIsNone(self.js('() => window.__spc.simMode()'))
+        self.assertEqual(self.js('() => window.__spc.edits()'), {})
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), yellow)
+
+    # issue #31: 최소 행 변경 saves both forms at once, each in its own file (one folder picker)
+    def test_mix_mode_saves_both_forms(self):
+        self.js("""() => { window.showDirectoryPicker = async () => navigator.storage.getDirectory(); }""")
+        rows = spc_rows(sigma_out=True, sigma_run=True)
+        rows[-3][SPC_HEADERS.index('USL')] = 4.0  # out of spec, and no new value fits inside the spec and CL ± 2σ: deleted
+        self.open_file('both.xlsx', workbook(rows))
+        self.sim('#mixBtn')
+        self.page.wait_for_function('() => window.__spc.mixPlan()')
+        p = self.js('() => window.__spc.mixPlan()')
+        self.assertTrue(p['deletes'] and p['changes'], p)
+        self.page.click('#bothFormBtn')
+        self.page.wait_for_function("() => /양식 2개 저장: /.test(document.getElementById('status').textContent)")
+        names = self.js("""async () => { const out = []; for await (const k of (await navigator.storage.getDirectory()).keys()) out.push(k); return out; }""")
+        ocap = [n for n in names if re.match(r'^OCAP 삭제 양식_\d{8}_\d{4}\.xlsx$', n)]
+        raw = [n for n in names if re.match(r'^RAW_DATA 수정 양식_\d{8}_\d{4}\.xlsx$', n)]
+        self.assertEqual((len(ocap), len(raw)), (1, 1), names)
+        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, ocap[0]))))['Sheet1']
+        self.assertEqual(ws['B6'].value, 'EDC Plan')
+        self.assertEqual(len([r for r in range(7, ws.max_row + 1) if ws.cell(r, 4).value is not None]), len(p['deletes']))
+        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, raw[0]))))['Sheet1']
+        self.assertEqual(ws.max_row, 3 + len({c['key'] for c in p['changes']}))
+
+    # issue #31: drag over the data table, Ctrl+C: an HTML table with the screen's colours (Excel keeps them) + text
+    def test_drag_copy_keeps_colours(self):
+        self.open_file('copy.xlsx', workbook(spc_rows()))
+        self.page.click('#dataTable tr[data-row="%d"] td.rn' % (SPC_OUT + 2))
+        self.page.click('#fixOneBtn')
+        row = SPC_OUT + 2
+        a = self.page.locator('#dataTable tr[data-row="%d"] td.rn' % (row - 1))
+        b = self.page.locator('#dataTable tr[data-row="%d"] td' % row).nth(3)
+        a.scroll_into_view_if_needed()
+        ba, bb = a.bounding_box(), b.bounding_box()
+        self.page.mouse.move(ba['x'] + 5, ba['y'] + 5)
+        self.page.mouse.down()
+        self.page.mouse.move(bb['x'] + 5, bb['y'] + 5, steps=5)
+        self.page.mouse.up()
+        self.assertEqual(self.page.locator('#dataTable .pick').count(), 2 * 4)
+        self.assertFalse(self.page.locator('#copyBtn').is_disabled())
+        out = self.js("""() => { const dt = new DataTransfer(); document.dispatchEvent(new ClipboardEvent('copy', {clipboardData: dt, bubbles: true}));
+            return [dt.getData('text/html'), dt.getData('text/plain')]; }""")
+        html, text = out
+        lines = text.split('\r\n')
+        self.assertEqual(len(lines), 2)
+        self.assertEqual([len(l.split('\t')) for l in lines], [4, 4])
+        self.assertEqual(lines[1].split('\t')[0], str(row))
+        self.assertEqual(html.count('<tr>'), 2)
+        self.assertIn('background:#fff59d', html)  # the yellow row
+        self.assertIn('background:#ef4444', html)  # the red cell (EXT_MV after 판정)
+        self.assertIn('복사: 2행 × 4열', self.page.locator('#status').text_content())
 
     # issue #30: [설정 저장] keeps the settings in the browser and a settings file; [설정 불러오기] reads it back
     def test_save_and_load_settings(self):
@@ -927,7 +1028,7 @@ class SpcChartTest(unittest.TestCase):
             self.open_file('export%d.xlsx' % i, data)
             self.assertEqual(self.js('() => window.__spc.table().spcForm'), True)
             self.assertEqual(self.results()[0]['n'], len(rows) - 1)
-            self.page.click('#fixAllBtn')
+            self.sim('#fixAllBtn')
             saved = bytes(self.js('() => Array.from(window.__spc.copyBytes())'))
             names = zipfile.ZipFile(io.BytesIO(saved)).namelist()
             self.assertEqual(sorted(names), sorted(zipfile.ZipFile(io.BytesIO(data)).namelist()))

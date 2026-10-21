@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v14"><title>SPC Chart HTML v14</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v15"><title>SPC Chart HTML v15</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -38,8 +38,12 @@ input[type=number] { width: 72px; }
 
 .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .controls label { display: inline-flex; align-items: center; gap: 6px; }
-.values { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; flex-basis: 100%; }
-.values label { gap: 3px; }
+/* 측정값 열 folds away (closed by default, #31): a sheet of the SPC system has 100+ number columns */
+.values { flex-basis: 100%; }
+.values > summary { cursor: pointer; user-select: none; }
+.values > summary:hover { color: var(--blue); }
+#valueBox { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-top: 6px; max-height: 30vh; overflow: auto; }
+#valueBox label { gap: 3px; }
 
 main { padding: 12px 16px 40px; }
 .empty { max-width: 860px; margin: 40px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px 28px; }
@@ -98,8 +102,17 @@ button.fix-one { background: #f59e0b; border-color: #d97706; color: #1f1300; fon
 button.fix-all { background: #7c3aed; border-color: #6d28d9; color: #fff; font-weight: 600; }
 button.fix-one:hover:not(:disabled) { background: #fbbf24; }
 button.fix-all:hover:not(:disabled) { background: #8b5cf6; }
-button.del-sim { background: #e2e8f0; border-color: #94a3b8; color: #0f172a; font-weight: 600; }
-button.del-sim.on { background: #334155; border-color: #1e293b; color: #fff; }
+/* [선택 행 추천값 입력] | [시뮬레이션 ▾] → 행 삭제만 · 행 수정만 · 최소 행 변경 (#31) */
+.vsep { display: inline-block; width: 0; height: 22px; border-left: 2px solid #b8c2d3; margin: 0 2px; }
+.simgroup { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+button.sim { background: #334155; border-color: #1e293b; color: #fff; font-weight: 700; font-size: 15px; padding: 7px 18px; }
+button.sim:hover:not(:disabled) { background: #475569; }
+button.sim.on { background: #7c3aed; border-color: #6d28d9; }
+.simmenu { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px; border: 1px solid #94a3b8; border-radius: 7px; background: #f1f5f9; }
+button.sim-sub { background: #fff; border-color: #94a3b8; color: #0f172a; font-weight: 600; }
+button.sim-sub:hover:not(:disabled) { background: #e2e8f0; }
+button.sim-sub.on { background: #7c3aed; border-color: #6d28d9; color: #fff; }
+.dfoot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .sw.d { background: #cbd5e1; }
 .delbox { border: 1px solid #94a3b8; background: #f8fafc; border-radius: 6px; padding: 4px 10px 6px; margin-bottom: 8px; font-size: 13px; }
 .delbox .rounds { margin: 4px 0; padding-left: 20px; max-height: 22vh; overflow: auto; }
@@ -119,6 +132,7 @@ table.data th.rn { z-index: 3; }
 table.data td.l, table.data th.l { text-align: left; }
 table.data .verdict { color: #9a3412; font-weight: 600; }
 table.data .okfix { color: var(--ok); }
+table.data { user-select: none; }
 table.data tbody tr { cursor: pointer; }
 table.data tbody tr:hover td { background: #f3f6fb; }
 table.data tr.y td { background: #fff59d; }
@@ -131,6 +145,9 @@ table.data tr.del:hover td { background: #b8c4d4; }
 .deltag.r3 { background: #b91c1c; }
 table.data td.fixed { background: #ef4444 !important; color: #fff; font-weight: 700; }
 table.data tr.sel td { box-shadow: inset 0 2px 0 #111827, inset 0 -2px 0 #111827; }
+/* cells picked by dragging (copied with Ctrl+C, #31) */
+table.data tr td.pick, table.data tr th.pick { box-shadow: inset 0 0 0 9999px rgba(37, 99, 235, .22); }
+table.data tr.sel td.pick { box-shadow: inset 0 2px 0 #111827, inset 0 -2px 0 #111827, inset 0 0 0 9999px rgba(37, 99, 235, .22); }
 table.data tr.flash td { animation: flash 1.2s ease-out 2; }
 @keyframes flash { 30% { background: #fb923c; } }
 
@@ -182,7 +199,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     <option value="0">화면에 맞춤</option><option value="8">8 px</option><option value="12">12 px</option><option value="16">16 px</option>
     <option value="24">24 px</option><option value="32">32 px</option><option value="48">48 px</option></select></label>
   <label>보기 <select id="viewSel"></select></label>
-  <div class="values"><span class="muted">측정값 열</span><span id="valueBox"></span></div>
+  <details id="valueFold" class="values"><summary title="눌러서 펼치기 / 접기: 차트로 그릴 숫자 열을 고릅니다"><span class="muted">측정값 열</span> <span id="valueSum"></span></summary><span id="valueBox"></span></details>
 </section>
 
 <main id="main">
@@ -194,9 +211,12 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       <li>기간 전체를 그립니다. 점이 많아 화면을 넘으면 차트 아래 <b>가로 스크롤 막대</b>(또는 <kbd>Shift</kbd>+마우스 휠)로 넘겨 봅니다. [점 간격]으로 넓히거나 [화면에 맞춤]으로 한 화면에 모을 수 있습니다.</li>
       <li>엑셀을 고쳐 저장했으면 [새로고침]으로 다시 읽습니다.</li>
       <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
-        [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을, [수정 양식 저장]으로 회사 RAW_DATA 수정 양식을 저장합니다.</li>
-      <li><b>[삭제 시뮬레이션]</b>: 노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 보여 주고, XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지려면 지울 행 목록을 알려 줍니다 (원본은 그대로).</li>
-      <li><b>[최소 행 변경]</b>: 삭제와 값 수정을 섞어 바꾸는 행 수가 가장 적은 방법을 계산해 적용합니다. 삭제할 행은 [OCAP 삭제 양식 저장], 고친 행은 [수정 양식 저장]으로 회사 양식에 저장합니다.</li>
+        [선택 행 추천값 입력]으로 값을 고치고(빨간 칸) 표 아래 [수정본 엑셀 저장]으로 복사본을, [수정 양식 저장]으로 회사 RAW_DATA 수정 양식을 저장합니다.
+        표에서 마우스로 끌어 칸을 고르고 <kbd>Ctrl</kbd>+<kbd>C</kbd> 하면 엑셀에 화면 색 그대로 붙여 넣을 수 있습니다.</li>
+      <li><b>[시뮬레이션]</b>: 노란 행을 없애는 방법 3가지 (원본은 그대로).
+        <b>행 삭제만</b> = 지울 행을 차수별로 (지우면 새로 생기는 OCAP · 7run까지) → OCAP 삭제 양식 저장.
+        <b>행 수정만</b> = 노란 행을 모두 추천값으로 → RAW_DATA 수정 양식 저장.
+        <b>최소 행 변경 (삭제+수정)</b> = 삭제와 값 수정을 섞어 바꾸는 행 수가 가장 적은 방법 → 두 양식을 한 번에 각각의 엑셀 파일로 저장.</li>
       <li><b>[설정 저장]</b>: 규칙 · OCAP 문구 · 열 선택 등 지금 설정을 저장해 껐다 켜도 유지합니다 (브라우저 + 설정 파일). 브라우저 기록이 지워지는 PC라면 [설정 불러오기]로 그 파일을 엽니다.</li>
     </ol>
     <table class="sample">
@@ -214,20 +234,31 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   <section id="cards" class="cards"></section>
   <section id="dataBox" class="databox hidden">
     <div class="dhead"><h2>데이터 표</h2>
-      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸 <i class="sw d"></i>삭제 시뮬레이션에서 지운 행</span>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>값을 고친 칸 (추천값 · 시뮬레이션) <i class="sw d"></i>시뮬레이션에서 지운 행</span>
       <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
       <span id="dataInfo" class="muted small"></span>
       <span class="spacer"></span>
-      <button id="delBtn" class="del-sim" title="노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 계산하고, XBAR · SIGMA 차트 모두 깨끗해지려면 지울 행을 알려 줍니다">삭제 시뮬레이션</button>
-      <button id="mixBtn" class="del-sim" title="삭제와 값 수정을 섞어, 바꾸는 행 수가 가장 적게 XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지는 방법을 계산하고 적용합니다">최소 행 변경</button>
       <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>
-      <button id="fixAllBtn" class="fix-all" disabled title="노란 행 전체를 한 번에 추천값으로 바꿉니다">전체 일괄 추천값 입력</button>
-      <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
-      <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
-      <button id="rawFormBtn" disabled title="값을 고친 행(빨간 칸)을 회사 RAW_DATA 수정 양식(DATA_SEQ# · Raw Value 1~25 · MAX · MIN · AVG · STD) 엑셀로 저장">수정 양식 저장</button>
+      <i class="vsep" aria-hidden="true"></i>
+      <span class="simgroup">
+        <button id="simBtn" class="sim" title="노란 행(OCAP · 7run)을 없애는 방법 3가지: 행 삭제만 · 행 수정만 · 최소 행 변경(삭제+수정). 결과는 회사 양식 엑셀로 저장합니다">시뮬레이션 ▾</button>
+        <span id="simMenu" class="simmenu hidden">
+          <button id="delBtn" class="sim-sub" title="노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 계산하고, XBAR · SIGMA 차트 모두 깨끗해지려면 지울 행을 보여 줍니다. 결과 = OCAP 삭제 양식">행 삭제만</button>
+          <button id="fixAllBtn" class="sim-sub" title="노란 행 전체를 추천값으로 고칩니다 (파일 원래 값 기준). 결과 = RAW_DATA 수정 양식">행 수정만</button>
+          <button id="mixBtn" class="sim-sub" title="삭제와 값 수정을 섞어, 바꾸는 행 수가 가장 적게 XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지는 방법을 계산합니다. 결과 = OCAP 삭제 양식 + RAW_DATA 수정 양식">최소 행 변경 (삭제+수정)</button>
+        </span>
+      </span>
     </div>
     <div id="delBox" class="delbox hidden"></div>
     <div class="dwrap"><table id="dataTable" class="data"></table></div>
+    <div class="dfoot">
+      <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
+      <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
+      <button id="rawFormBtn" disabled title="값을 고친 행(빨간 칸)을 회사 RAW_DATA 수정 양식(DATA_SEQ# · Raw Value 1~25 · MAX · MIN · AVG · STD) 엑셀로 저장">수정 양식 저장</button>
+      <span class="spacer"></span>
+      <span class="muted small">표에서 마우스로 끌어 칸을 고르고 <kbd>Ctrl</kbd>+<kbd>C</kbd> → 엑셀에 붙여 넣으면 화면 색 그대로 들어갑니다 (<kbd>Shift</kbd>+클릭으로 넓히기)</span>
+      <button id="copyBtn" class="ghost small" disabled>고른 칸 복사</button>
+    </div>
   </section>
   <section id="eventsBox" class="events hidden">
     <div class="ehead"><h2>이상 목록 · OCAP</h2><label class="chk"><input type="checkbox" id="openOnly"> 미조치만</label><span class="spacer"></span><button id="csvBtn" class="ghost small">CSV로 저장</button></div>
@@ -1506,6 +1537,9 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   var delMode = false;     // [삭제 시뮬레이션] on: charts and table show the data with delPlan's rows deleted (#27)
   var delPlan = null;      // {rounds: [[{key: excelRow, rules}]], clean, round: excelRow -> round (1, 2, ...), count}
   var mixPlan = null;      // [최소 행 변경] on (#30): {plan: SPC.minChangePlan result, series, prevEdits}; delMode is on with it
+  var fixPlan = null;      // [시뮬레이션 · 행 수정만] on (#31): {prevEdits, made, failed}; the edits are its new values
+  var simOpen = false;     // the three [시뮬레이션] buttons are shown (#31)
+  var pick = null;         // cells picked in the data table by dragging (#31): {a: [row, col], b: [row, col]} in table.rows / cells
 
   $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
 
@@ -1617,7 +1651,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   }
 
   function buildTable() {
-    dropMix();
+    dropSim();
     var sheetName = settings.sheet;
     var sheet = book.filter(function (s) { return s.name === sheetName; })[0];
     if (!sheet) {
@@ -1887,14 +1921,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   // (SPC.minChangePlan, from the file's own values). The new values replace the edits (red cells, saved in the
   // copy), the deletions show like [삭제 시뮬레이션] and go to the OCAP 삭제 양식. Off again = the edits from before.
   function toggleMix() {
-    if (mixPlan) {
-      edits = mixPlan.prevEdits;
-      mixPlan = null;
-      delMode = false;
-      afterEdits('최소 행 변경을 껐습니다 (전 수정으로 되돌림)');
-      return;
-    }
-    if (!table || settings.subgroup > 1) return;
+    if (!table || settings.subgroup > 1) { analyzeAll(true); render(); return; }
     setStatus('최소 행 변경 계산 중… (행이 많으면 몇 초 걸립니다)', 'muted');
     $('mixBtn').disabled = true;
     setTimeout(function () {
@@ -1902,8 +1929,9 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       try {
         plan = SPC.minChangePlan(series);
       } catch (e) {
+        analyzeAll(true);
+        render();
         setStatus('최소 행 변경을 계산하지 못했습니다: ' + e.message, 'err');
-        dataInfo();
         return;
       }
       mixPlan = {plan: plan, series: series, prevEdits: edits};
@@ -1912,7 +1940,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       delMode = true;
       analyzeAll(true);
       render();
-      setStatus(plan.rows ? '최소 행 변경: ' + plan.rows + '행 (삭제 ' + plan.deletes.length + ' · 값 수정 ' + mixRows(plan) + ') · 끄면 원래대로' : '최소 행 변경: 바꿀 행 없음',
+      setStatus(plan.rows ? '시뮬레이션 · 최소 행 변경: ' + plan.rows + '행 (삭제 ' + plan.deletes.length + ' · 값 수정 ' + mixRows(plan) + ') · 다시 누르면 원래대로' : '시뮬레이션 · 최소 행 변경: 바꿀 행 없음',
         plan.clean ? 'muted' : 'warn');
       $('delBox').scrollIntoView({block: 'nearest'});
     }, 30);
@@ -1923,10 +1951,37 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return Object.keys(rows).length;
   }
   // A new file read, sheet, columns or rules make the plan stale: its edits stay as plain edits.
-  function dropMix() {
-    if (!mixPlan) return;
+  function dropSim() {
+    if (mixPlan) delMode = false;
     mixPlan = null;
+    fixPlan = null;
+  }
+
+  // [시뮬레이션] (#31): one of three modes at a time, each from the file's own values and each saved in the company's
+  // form: 'del' 행 삭제만 ([삭제 시뮬레이션], OCAP 삭제 양식), 'fix' 행 수정만 ([전체 일괄 추천값 입력], RAW_DATA
+  // 수정 양식), 'mix' 최소 행 변경 (both forms). Off again = the data and the edits from before.
+  function simMode() { return mixPlan ? 'mix' : fixPlan ? 'fix' : delMode ? 'del' : null; }
+  function simOff() {
+    var was = simMode();
+    if (mixPlan) edits = mixPlan.prevEdits;
+    if (fixPlan) edits = fixPlan.prevEdits;
+    mixPlan = null;
+    fixPlan = null;
     delMode = false;
+    return was;
+  }
+  var SIM_NAME = {del: '행 삭제만', fix: '행 수정만', mix: '최소 행 변경 (삭제+수정)'};
+  function setSim(mode) {
+    var was = simOff();
+    if (!table || was === mode) {
+      analyzeAll(true);
+      render();
+      if (was) setStatus('시뮬레이션(' + SIM_NAME[was] + ')을 껐습니다 (원래대로)', 'muted');
+      return;
+    }
+    if (mode === 'del') toggleDelete();
+    else if (mode === 'fix') toggleFix();
+    else toggleMix();
   }
 
   // point index -> SIGMA rule ids
@@ -2001,9 +2056,11 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     $('sheetSel').innerHTML = t.sheets.map(function (s) { return opt(s, s, s === t.sheet); }).join('');
     $('labelSel').innerHTML = opt('', '(행 번호)', !t.label) + t.headers.map(function (h) { return opt(h, h, h === t.label); }).join('');
     $('itemSel').innerHTML = opt('', '(없음)', !t.item) + t.headers.filter(function (h, i) { return t.kinds[i] === 'text'; }).map(function (h) { return opt(h, h, h === t.item); }).join('');
+    // folded by default (#31): the summary line says which columns are charted
     $('valueBox').innerHTML = t.numeric.map(function (h) {
       return '<label class="chk"><input type="checkbox" value="' + esc(h) + '"' + (t.values.indexOf(h) >= 0 ? ' checked' : '') + '> ' + esc(h) + '</label>';
-    }).join('') + (t.spcForm ? ' <span class="badge ok">SPC 시스템 양식</span>' : '') + (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
+    }).join('');
+    renderValueSum();
     $('sizeIn').value = settings.subgroup;
     $('baseIn').value = settings.baseline;
     $('winIn').value = settings.window;
@@ -2084,6 +2141,12 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return v === null || v === undefined ? '' : String(v);
   }
 
+  function renderValueSum() {
+    var t = table;
+    $('valueSum').innerHTML = '<b>' + esc(t.values.join(', ') || '(없음)') + '</b> <span class="muted small">(' + t.values.length + ' / ' + t.numeric.length + '개 · 눌러서 ' +
+      ($('valueFold').open ? '접기' : '펼치기') + ')</span>' + (t.spcForm ? ' <span class="badge ok">SPC 시스템 양식</span>' : '') +
+      (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
+  }
   function shortRule(id) {
     return {OOS: '규격 이탈', R1: '관리한계 이탈', SR1: 'SIGMA 관리한계 이탈'}[id] || ruleName(id);
   }
@@ -2117,7 +2180,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       var cls = (y || now ? 'y' : '') + (del ? ' del' : '') + (row === selectedRow ? ' sel' : '');
       var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
       if (now) verdict = esc(verdict);
-      if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">' + (mixPlan ? '삭제' : '삭제 ' + del + '차') + '</span> ' + esc(delRules(row).map(shortRule).join(', '));
+      if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">' + (mixPlan ? '삭제 (최소 행 변경)' : '삭제 ' + del + '차') + '</span> ' + esc(delRules(row).map(shortRule).join(', '));
       h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
         vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
       for (var c = 0; c < t.headers.length; c++) h += td(d, c);
@@ -2125,6 +2188,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     });
     if (!shown) h += '<tr><td colspan="' + (t.headers.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
     $('dataTable').innerHTML = h + '</tbody>';
+    pick = null;
     renderDelBox();
     dataInfo();
   }
@@ -2142,15 +2206,16 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return {label: d && li >= 0 ? fmtLabel(d.cells[li], row) : row + '행', lot: d && lot >= 0 && lot !== li ? cellText(d.cells[lot]) : ''};
   }
 
-  // The rounds of [삭제 시뮬레이션] above the data table: which rows, and what is left after them.
+  // The result of [시뮬레이션] above the data table. 행 삭제만: the rounds, which rows, and what is left after them.
   function renderDelBox() {
     var box = $('delBox');
-    box.classList.toggle('hidden', !delPlan);
+    box.classList.toggle('hidden', !delPlan && !fixPlan);
+    if (fixPlan) { renderFixBox(box); return; }
     if (!delPlan) return;
     if (mixPlan) { renderMixBox(box); return; }
     var p = delPlan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
-    var h = '<div class="dhead"><b>삭제 시뮬레이션</b><span class="muted small">파일 원래 값 기준 (추천값 수정은 빼고 계산) · 아래 차트 · 표는 이 행들을 지운 모습</span>' +
-      '<span class="spacer"></span><button id="ocapFormBtn" class="small"' + (p.count ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 저장</button>' +
+    var h = '<div class="dhead"><b>시뮬레이션 · 행 삭제만</b><span class="muted small">파일 원래 값 기준 (추천값 수정은 빼고 계산) · 아래 차트 · 표는 이 행들을 지운 모습(회색)</span>' +
+      '<span class="spacer"></span><button id="ocapFormBtn" class="primary small"' + (p.count ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 엑셀 저장</button>' +
       '<button id="delCsvBtn" class="ghost small"' + (p.count ? '' : ' disabled') + '>삭제 목록 CSV</button></div>';
     if (!p.count) {
       h += '<p class="ok">OCAP · 7run 행이 없어 지울 행이 없습니다.</p>';
@@ -2171,11 +2236,40 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     box.innerHTML = h;
   }
 
+  // 행 수정만 (#31): the rows given recommended values, and whether OCAP / 7 run is gone.
+  function renderFixBox(box) {
+    var both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
+    var byKey = editRows(), keys = Object.keys(byKey).map(Number).sort(function (a, b) { return a - b; }), left = Object.keys(nowFlags).length;
+    var h = '<div class="dhead"><b>시뮬레이션 · 행 수정만</b><span class="muted small">파일 원래 값 기준 · 노란 행을 모두 추천값으로 · 아래 차트 · 표는 값을 고친(빨간 칸) 모습</span>' +
+      '<span class="spacer"></span><button id="fixFormBtn" class="primary small"' + (keys.length ? '' : ' disabled') + ' title="값을 고친 행을 회사 RAW_DATA 수정 양식(DATA_SEQ# · Raw Value 1~25 · MAX · MIN · AVG · STD) 엑셀로 저장">RAW_DATA 수정 양식 엑셀 저장</button>' +
+      '<button id="delCsvBtn" class="ghost small"' + (keys.length ? '' : ' disabled') + '>수정 목록 CSV</button></div>';
+    if (!keys.length && !left) {
+      box.innerHTML = h + '<p class="ok">OCAP · 7run 행이 없어 고칠 행이 없습니다.</p>';
+      return;
+    }
+    h += '<ol class="rounds"><li><b>값 수정</b> ' + keys.length + '행: ' + keys.map(function (k) {
+      return '<a href="#" data-row="' + k + '" title="' + esc(rowText(k).label + ' · ' + byKey[k].join(', ')) + '">' + k + '</a>'; }).join(', ') + '</li></ol>';
+    h += !left
+      ? '<p class="ok"><b>' + keys.length + '행</b>(' + Object.keys(edits).length + '칸)을 추천값으로 고치면 ' + both + ' OCAP · 7run이 나오지 않습니다.</p>'
+      : '<p class="warn">추천값으로 고쳐도 ' + left + '행에 OCAP · 7run이 남습니다' + (fixPlan.failed ? ' (' + fixPlan.failed + '점은 다른 점을 새로 걸리게 하지 않는 값을 찾지 못함)' : '') + '.</p>';
+    h += '<p class="muted small">고친 값은 [RAW_DATA 수정 양식 엑셀 저장]과 표 아래 [수정본 엑셀 저장](빨간 칸)에 들어갑니다. 다시 [행 수정만]을 누르면 원래대로.</p>';
+    box.innerHTML = h;
+  }
+  // excelRow -> ['EXT_MV → 6.5', ...] of the edits
+  function editRows() {
+    var out = {};
+    Object.keys(edits).forEach(function (k) {
+      var e = edits[k];
+      (out[e.row] = out[e.row] || []).push(table.headers[e.col] + ' → ' + fmt(e.value));
+    });
+    return out;
+  }
+
   function renderMixBox(box) {
     var p = mixPlan.plan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
     var link = function (key, title) { return '<a href="#" data-row="' + key + '" title="' + esc(title) + '">' + key + '</a>'; };
-    var h = '<div class="dhead"><b>최소 행 변경</b><span class="muted small">삭제 + 값 수정 · 파일 원래 값 기준 · 아래 차트 · 표는 이 행들을 지우고(회색) 값을 고친(빨간 칸) 모습</span>' +
-      '<span class="spacer"></span><button id="ocapFormBtn" class="small"' + (p.deletes.length ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 저장</button>' +
+    var h = '<div class="dhead"><b>시뮬레이션 · 최소 행 변경 (삭제+수정)</b><span class="muted small">파일 원래 값 기준 · 아래 차트 · 표는 이 행들을 지우고(회색) 값을 고친(빨간 칸) 모습</span>' +
+      '<span class="spacer"></span><button id="bothFormBtn" class="primary small"' + (p.rows ? '' : ' disabled') + ' title="삭제할 행은 OCAP 삭제 양식, 값을 고친 행은 RAW_DATA 수정 양식으로, 엑셀 파일 2개를 한 번에 저장 (저장할 폴더를 고릅니다)">양식 2개 엑셀 저장 (삭제 + 수정)</button>' +
       '<button id="delCsvBtn" class="ghost small"' + (p.rows ? '' : ' disabled') + '>변경 목록 CSV</button></div>';
     if (!p.rows) {
       box.innerHTML = h + '<p class="ok">OCAP · 7run 행이 없어 바꿀 행이 없습니다.</p>';
@@ -2189,17 +2283,18 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     h += '<ol class="rounds"><li><b>삭제</b> ' + p.deletes.length + '행' + (p.deletes.length ? ': ' + p.deletes.map(function (x) { return link(x.key, rowText(x.key).label + ' · ' + x.rules.map(shortRule).join(', ')); }).join(', ') : '') + '</li>' +
       '<li><b>값 수정</b> ' + keys.length + '행' + (keys.length ? ': ' + keys.map(function (k) { return link(k, rowText(k).label + ' · ' + byKey[k].join(', ')); }).join(', ') : '') + '</li></ol>';
     var cmp = p.compare, part = function (n) { return n === null ? '안 풀림' : n + '행'; };
-    var how = {mix: '삭제 · 수정 섞기', 'delete': '삭제만', fix: '추천값 수정만'}[p.method];
+    var how = {mix: '삭제 · 수정 섞기', 'delete': '행 삭제만', fix: '행 수정만'}[p.method];
     h += p.clean
       ? '<p class="ok"><b>모두 ' + p.rows + '행</b>(삭제 ' + p.deletes.length + ' + 값 수정 ' + keys.length + ')을 바꾸면 ' + both + ' OCAP · 7run이 나오지 않습니다 (' + how + '가 가장 적음).</p>'
       : '<p class="warn">' + p.rows + '행을 바꿔도 OCAP · 7run이 남습니다.</p>';
-    h += '<p class="muted small">비교: 삭제 · 수정 섞기 ' + part(cmp.mix) + ' · 삭제만([삭제 시뮬레이션]) ' + part(cmp['delete']) + ' · 추천값 수정만([전체 일괄 추천값 입력]) ' + part(cmp.fix) +
-      '. 값 수정은 [수정본 엑셀 저장](빨간 칸)에, 삭제는 [OCAP 삭제 양식 저장]에 들어갑니다.</p>';
+    h += '<p class="muted small">비교: 삭제 · 수정 섞기 ' + part(cmp.mix) + ' · 행 삭제만 ' + part(cmp['delete']) + ' · 행 수정만 ' + part(cmp.fix) +
+      '. [양식 2개 엑셀 저장]: 삭제 행 → OCAP 삭제 양식, 값 수정 행 → RAW_DATA 수정 양식 (각각의 파일). 값 수정은 표 아래 [수정본 엑셀 저장](빨간 칸)에도 들어갑니다.</p>';
     box.innerHTML = h;
   }
 
   function delCsv() {
     if (mixPlan) { mixCsv(); return; }
+    if (fixPlan) { fixCsv(); return; }
     if (!delPlan || !delPlan.count) return;
     var lots = table.headers.map(norm).indexOf(SPC_FORMAT.lot) >= 0;
     var lines = [['차수', '엑셀 행', 'X축', lots ? 'LOT_ID' : '', '판정'].filter(function (v, i) { return i !== 3 || lots; })];
@@ -2230,6 +2325,18 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       lines.push(line('값 수정', c.key, table.headers[col], d ? cellText(d.cells[col]) : '', c.value, c.rules));
     });
     downloadCsv(lines, 'SPC_최소변경목록_');
+  }
+
+  // [행 수정만] list: one line per new value
+  function fixCsv() {
+    var lots = table.headers.map(norm).indexOf(SPC_FORMAT.lot) >= 0;
+    var lines = [['엑셀 행', 'X축'].concat(lots ? ['LOT_ID'] : [], ['열', '원래 값', '새 값', '판정'])];
+    Object.keys(edits).map(function (k) { return edits[k]; }).sort(function (a, b) { return a.row - b.row || a.col - b.col; }).forEach(function (e) {
+      var tx = rowText(e.row), l = [e.row, tx.label];
+      if (lots) l.push(tx.lot);
+      lines.push(l.concat([table.headers[e.col], cellText(e.orig), e.value, (yellow[e.row] || []).map(shortRule).join(', ')]));
+    });
+    downloadCsv(lines, 'SPC_수정목록_');
   }
 
   function downloadCsv(lines, prefix) {
@@ -2351,38 +2458,190 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     await saveBytes(bytes, ocapFormName(), 'OCAP 삭제 양식');
   }
 
+  // [양식 2개 엑셀 저장] (#31, 최소 행 변경): the OCAP 삭제 양식 and the RAW_DATA 수정 양식 as two files in one go.
+  // One folder picker for both (two save dialogs in a row would lose the click that allows the second one).
+  async function saveBothForms() {
+    if (!mixPlan || !delPlan) return;
+    var files = [];
+    try {
+      if (delPlan.count) files.push({name: ocapFormName(), bytes: window.XLSXLite.book(ocapFormSheets(delPlan)), what: 'OCAP 삭제 양식'});
+      if (Object.keys(edits).length) files.push({name: rawFormName(), bytes: window.XLSXLite.book(rawFormSheets()), what: 'RAW_DATA 수정 양식'});
+    } catch (e) {
+      setStatus('양식을 만들지 못했습니다: ' + e.message, 'err');
+      return;
+    }
+    if (!files.length) return;
+    var what = files.map(function (f) { return f.what; }).join(' + ');
+    if (files.length === 1) { await saveBytes(files[0].bytes, files[0].name, what); return; }
+    if (window.showDirectoryPicker) {
+      try {
+        var dir = await window.showDirectoryPicker({id: 'spcForms', mode: 'readwrite'});
+        for (var i = 0; i < files.length; i++) {
+          var w = await (await dir.getFileHandle(files[i].name, {create: true})).createWritable();
+          await w.write(files[i].bytes);
+          await w.close();
+        }
+        setStatus('양식 2개 저장: ' + dir.name + ' 폴더에 ' + files.map(function (f) { return f.name; }).join(', '), 'muted');
+      } catch (e) {
+        if (!e || e.name !== 'AbortError') setStatus('양식을 저장하지 못했습니다: ' + e.message, 'err');
+      }
+      return;
+    }
+    files.forEach(function (f) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([f.bytes], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+      a.download = f.name;
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+    });
+    setStatus('양식 2개 내려받기: ' + files.map(function (f) { return f.name; }).join(', '), 'muted');
+  }
+
   function toggleDelete() {
-    if (mixPlan) return;
-    delMode = !delMode;
+    delMode = true;
     analyzeAll(true);
     render();
-    if (delMode) {
-      setStatus(delPlan.count ? '삭제 시뮬레이션: ' + delPlan.count + '행(' + delPlan.rounds.length + '차)을 지운 차트입니다 · 끄면 원래대로' : '삭제 시뮬레이션: 지울 행 없음', delPlan.clean ? 'muted' : 'warn');
-      $('delBox').scrollIntoView({block: 'nearest'});
-    } else {
-      setStatus('삭제 시뮬레이션을 껐습니다', 'muted');
-    }
+    setStatus(delPlan.count ? '시뮬레이션 · 행 삭제만: ' + delPlan.count + '행(' + delPlan.rounds.length + '차)을 지운 차트입니다 · 다시 누르면 원래대로' : '시뮬레이션 · 행 삭제만: 지울 행 없음', delPlan.clean ? 'muted' : 'warn');
+    $('delBox').scrollIntoView({block: 'nearest'});
+  }
+
+  // [시뮬레이션 · 행 수정만] (#31): every yellow row gets its recommended value, from the file's own values (the
+  // edits from before wait in prevEdits). The new values are the red cells, saved in the RAW_DATA 수정 양식.
+  function toggleFix() {
+    if (!table || settings.subgroup > 1) { analyzeAll(true); render(); return; }
+    var prev = edits;
+    edits = {};
+    analyzeAll(true);
+    var out = applyFixAll();
+    fixPlan = {prevEdits: prev, made: out.made, failed: out.failed};
+    analyzeAll(true);
+    render();
+    setStatus('시뮬레이션 · 행 수정만: 추천값 ' + out.made + '칸' + (out.failed ? ' · ' + out.failed + '점은 추천값을 찾지 못함' : '') + ' · 다시 누르면 원래대로', out.failed ? 'warn' : 'muted');
+    $('delBox').scrollIntoView({block: 'nearest'});
   }
 
   function dataInfo() {
     var nEdits = Object.keys(edits).length, nYellow = Object.keys(yellow).length, nowCount = Object.keys(nowFlags).length;
+    var mode = simMode();
     $('dataInfo').textContent = '노란 행 ' + nYellow + '개 (남은 ' + nowCount + ') · 수정 ' + nEdits + '칸' + (delPlan ? ' · 삭제 ' + delPlan.count + '행' : '') +
+      (mode ? ' · 시뮬레이션: ' + SIM_NAME[mode] : '') +
       (selectedRow ? ' · 선택 ' + selectedRow + '행' : ' · 표의 행을 누르거나 차트의 점을 더블클릭해 선택');
     var sub = settings.subgroup > 1;
-    // Recommended values work on the file's rows; while rows are deleted in the simulation they wait.
-    $('fixOneBtn').disabled = sub || !selectedRow || delMode;
-    $('fixAllBtn').disabled = sub || !nowCount || delMode;
-    $('delBtn').textContent = delMode && !mixPlan ? '삭제 시뮬레이션 끄기' : '삭제 시뮬레이션';
-    $('delBtn').classList.toggle('on', delMode && !mixPlan);
-    $('delBtn').disabled = !!mixPlan;
-    $('mixBtn').textContent = mixPlan ? '최소 행 변경 끄기' : '최소 행 변경';
-    $('mixBtn').classList.toggle('on', !!mixPlan);
-    $('mixBtn').disabled = !mixPlan && (sub || delMode);
-    $('mixBtn').title = sub ? 'subgroup 1 (I-MR)에서만 계산합니다' : '삭제와 값 수정을 섞어, 바꾸는 행 수가 가장 적게 XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지는 방법을 계산하고 적용합니다';
-    $('undoBtn').disabled = !nEdits || !!mixPlan;
+    // Recommended values work on the file's rows; while a simulation is on they wait.
+    $('fixOneBtn').disabled = sub || !selectedRow || !!mode;
+    $('simBtn').textContent = mode ? '시뮬레이션: ' + SIM_NAME[mode] + ' ▾' : '시뮬레이션 ▾';
+    $('simBtn').classList.toggle('on', !!mode);
+    $('simMenu').classList.toggle('hidden', !simOpen && !mode);
+    [['delBtn', 'del'], ['fixAllBtn', 'fix'], ['mixBtn', 'mix']].forEach(function (b) {
+      var on = mode === b[1], el = $(b[0]);
+      el.classList.toggle('on', on);
+      el.textContent = (on ? '✓ ' : '') + SIM_NAME[b[1]];
+      el.disabled = !on && b[1] !== 'del' && sub;
+    });
+    $('undoBtn').disabled = !nEdits || mode === 'mix' || mode === 'fix';
     $('rawFormBtn').disabled = !nEdits;
     $('fixOneBtn').title = sub ? 'subgroup 1 (I-MR)에서만 추천값을 계산합니다' : '선택한 행(표에서 클릭 또는 차트 점 더블클릭)의 값을 추천값으로 바꿉니다';
   }
+
+  // ---------- drag over the data table, Ctrl+C, paste in Excel as it looks (#31) ----------
+  // Cells are picked as a rectangle of table.rows / cells (header line included). The copy is an HTML table with
+  // the colours of the screen written into each cell (Excel takes inline styles) plus tab-separated text.
+  function pickCell(el) {
+    var c = el && el.closest && el.closest('#dataTable td, #dataTable th');
+    if (!c || c.parentNode.cells.length < 3) return null;  // the "no data" line
+    return [c.parentNode.rowIndex, c.cellIndex];
+  }
+  function showPick() {
+    var t = $('dataTable');
+    Array.prototype.forEach.call(t.querySelectorAll('.pick'), function (x) { x.classList.remove('pick'); });
+    $('copyBtn').disabled = !pick;
+    if (!pick) return;
+    var r0 = Math.min(pick.a[0], pick.b[0]), r1 = Math.max(pick.a[0], pick.b[0]), c0 = Math.min(pick.a[1], pick.b[1]), c1 = Math.max(pick.a[1], pick.b[1]);
+    for (var r = r0; r <= r1; r++) {
+      var cells = t.rows[r].cells;
+      for (var c = c0; c <= c1 && c < cells.length; c++) cells[c].classList.add('pick');
+    }
+  }
+  var CELL_STYLE = {
+    head: 'background:#eef2f8;color:#334155;font-weight:bold;text-align:center;', vhead: 'background:#dbe6fb;color:#334155;font-weight:bold;text-align:center;',
+    gap: 'background:#d9dee6;', rn: 'background:#f6f8fb;color:#6b7486;', y: 'background:#fff59d;', del: 'background:#cbd5e1;color:#64748b;',
+    fixed: 'background:#ef4444;color:#ffffff;font-weight:bold;', verdict: 'color:#9a3412;font-weight:bold;'
+  };
+  function cellStyle(el) {
+    var tr = el.parentNode, cl = el.classList, st = 'border:0.5pt solid #d9dee6;white-space:nowrap;';
+    if (el.tagName === 'TH') return st + (cl.contains('gap') ? CELL_STYLE.gap : cl.contains('vcol') ? CELL_STYLE.vhead : CELL_STYLE.head);
+    if (cl.contains('gap')) return st + CELL_STYLE.gap;
+    st += cl.contains('l') ? 'text-align:left;' : 'text-align:right;';
+    var del = tr.classList.contains('del');
+    if (cl.contains('fixed')) st += CELL_STYLE.fixed;
+    else if (del) st += CELL_STYLE.del + (cl.contains('rn') || cl.contains('verdict') ? '' : 'text-decoration:line-through;');
+    else if (tr.classList.contains('y')) st += CELL_STYLE.y;
+    else if (cl.contains('rn')) st += CELL_STYLE.rn;
+    if (cl.contains('verdict') && !cl.contains('fixed')) st += CELL_STYLE.verdict;
+    return st;
+  }
+  function pickedCopy() {
+    if (!pick) return null;
+    var t = $('dataTable'), r0 = Math.min(pick.a[0], pick.b[0]), r1 = Math.max(pick.a[0], pick.b[0]), c0 = Math.min(pick.a[1], pick.b[1]), c1 = Math.max(pick.a[1], pick.b[1]);
+    var html = '<table style="border-collapse:collapse;font-family:\'Malgun Gothic\';font-size:9pt">', text = [];
+    for (var r = r0; r <= r1; r++) {
+      var cells = t.rows[r].cells, line = [];
+      html += '<tr>';
+      for (var c = c0; c <= c1 && c < cells.length; c++) {
+        var el = cells[c], v = el.textContent.replace(/\s+/g, ' ').trim();
+        // text that is not a plain number stays text in Excel (ids with leading zeros, '1/2', dates as shown)
+        var asText = v !== '' && !/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(v);
+        html += '<td style="' + cellStyle(el) + (asText ? 'mso-number-format:\'\\@\';' : '') + '">' + esc(v) + '</td>';
+        line.push(v);
+      }
+      html += '</tr>';
+      text.push(line.join('\t'));
+    }
+    return {html: html + '</table>', text: text.join('\r\n'), rows: r1 - r0 + 1, cols: c1 - c0 + 1};
+  }
+  (function () {
+    var t = $('dataTable'), dragging = false, moved = false;
+    t.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      var at = pickCell(e.target);
+      if (!at) return;
+      e.preventDefault();
+      if (e.shiftKey && pick) pick.b = at;
+      else pick = {a: at, b: at};
+      dragging = true;
+      moved = false;
+      showPick();
+    });
+    t.addEventListener('mouseover', function (e) {
+      if (!dragging) return;
+      var at = pickCell(e.target);
+      if (!at || (at[0] === pick.b[0] && at[1] === pick.b[1])) return;
+      pick.b = at;
+      moved = true;
+      showPick();
+    });
+    document.addEventListener('mouseup', function () { dragging = false; });
+    // dragging near the edge of the table box scrolls it
+    var wrap = t.parentNode;
+    wrap.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      var r = wrap.getBoundingClientRect(), m = 24;
+      if (e.clientY > r.bottom - m) wrap.scrollTop += 20; else if (e.clientY < r.top + m + 20) wrap.scrollTop -= 20;
+      if (e.clientX > r.right - m) wrap.scrollLeft += 30; else if (e.clientX < r.left + m) wrap.scrollLeft -= 30;
+    });
+    document.addEventListener('copy', function (e) {
+      var a = document.activeElement;
+      if (!pick || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || String(window.getSelection())) return;
+      var out = pickedCopy();
+      e.clipboardData.setData('text/html', '<html><body>' + out.html + '</body></html>');
+      e.clipboardData.setData('text/plain', out.text);
+      e.preventDefault();
+      setStatus('복사: ' + out.rows + '행 × ' + out.cols + '열 · 엑셀에서 Ctrl+V 하면 화면 색 그대로 들어갑니다', 'muted');
+    });
+    t.addEventListener('click', function (e) {
+      if (moved) e.stopImmediatePropagation();  // a drag over several cells does not pick the row
+    }, true);
+  })();
 
   function selectRow(row, scroll) {
     selectedRow = row;
@@ -2444,8 +2703,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     else afterEdits((moved.length ? row + '행 값만으로는 안 풀려 같은 런의 ' + moved.join(', ') : row + '행') + '에 추천값 입력 · 저장하려면 [수정본 엑셀 저장]');
   }
 
-  function fixAll() {
-    if (settings.subgroup > 1) return;
+  function applyFixAll() {
     var rules = fixRules(), made = 0, failed = 0;
     fixItems.forEach(function (it, j) {
       var out = SPC.fixAll(it, optsFor(it.name), rules);
@@ -2457,8 +2715,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
         failed += out.failed;
       }
     });
-    afterEdits('추천값 ' + made + '칸 입력' + (failed ? ' · ' + failed + '점은 추천값을 찾지 못함' : '') + ' · 저장하려면 [수정본 엑셀 저장]');
-    if (failed) setStatus($('status').textContent, 'warn');
+    return {made: made, failed: failed};
   }
 
   function undoEdits() {
@@ -3087,7 +3344,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
 
   function recompute() {
     if (!table) return;
-    dropMix();
+    dropSim();
     analyzeAll(true);
     render();
   }
@@ -3259,9 +3516,10 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     drawAll();
   });
   $('fixOneBtn').onclick = fixOne;
-  $('fixAllBtn').onclick = fixAll;
-  $('delBtn').onclick = toggleDelete;
-  $('mixBtn').onclick = toggleMix;
+  $('simBtn').onclick = function () { simOpen = !simOpen || !!simMode(); dataInfo(); };
+  $('delBtn').onclick = function () { setSim('del'); };
+  $('fixAllBtn').onclick = function () { setSim('fix'); };
+  $('mixBtn').onclick = function () { setSim('mix'); };
   $('rawFormBtn').onclick = saveRawForm;
   $('saveSetBtn').onclick = saveSettingsNow;
   $('loadSetBtn').onclick = function () { $('setIn').click(); };
@@ -3273,12 +3531,16 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   $('delBox').addEventListener('click', function (e) {
     if (e.target.id === 'delCsvBtn') { delCsv(); return; }
     if (e.target.id === 'ocapFormBtn') { saveOcapForm(); return; }
+    if (e.target.id === 'fixFormBtn') { saveRawForm(); return; }
+    if (e.target.id === 'bothFormBtn') { saveBothForms(); return; }
     var a = e.target.closest('a[data-row]');
     if (!a) return;
     e.preventDefault();
     selectRow(+a.dataset.row, true);
   });
   $('undoBtn').onclick = undoEdits;
+  $('copyBtn').onclick = function () { if (pick) document.execCommand('copy'); };
+  $('valueFold').addEventListener('toggle', function () { if (table) renderValueSum(); });
   $('saveBtn').onclick = saveCopy;
   $('labelSel').onchange = onColumns;
   $('itemSel').onchange = onColumns;
@@ -3321,7 +3583,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   // For tests: open a file handle without the picker.
   window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, get settings() { return settings; },
     edits: function () { return edits; }, revealRow: revealRow, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
-    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; }, mixPlan: function () { return mixPlan && mixPlan.plan; },
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; }, mixPlan: function () { return mixPlan && mixPlan.plan; }, fixPlan: function () { return fixPlan; }, simMode: simMode,
     ocapFormSheets: function () { return delPlan && ocapFormSheets(delPlan); }, ocapFormName: ocapFormName};
 })();
 

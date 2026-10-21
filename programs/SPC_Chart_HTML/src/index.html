@@ -32,7 +32,7 @@
     <option value="0">화면에 맞춤</option><option value="8">8 px</option><option value="12">12 px</option><option value="16">16 px</option>
     <option value="24">24 px</option><option value="32">32 px</option><option value="48">48 px</option></select></label>
   <label>보기 <select id="viewSel"></select></label>
-  <div class="values"><span class="muted">측정값 열</span><span id="valueBox"></span></div>
+  <details id="valueFold" class="values"><summary title="눌러서 펼치기 / 접기: 차트로 그릴 숫자 열을 고릅니다"><span class="muted">측정값 열</span> <span id="valueSum"></span></summary><span id="valueBox"></span></details>
 </section>
 
 <main id="main">
@@ -44,9 +44,12 @@
       <li>기간 전체를 그립니다. 점이 많아 화면을 넘으면 차트 아래 <b>가로 스크롤 막대</b>(또는 <kbd>Shift</kbd>+마우스 휠)로 넘겨 봅니다. [점 간격]으로 넓히거나 [화면에 맞춤]으로 한 화면에 모을 수 있습니다.</li>
       <li>엑셀을 고쳐 저장했으면 [새로고침]으로 다시 읽습니다.</li>
       <li>차트 아래 <b>데이터 표</b>에서 OCAP · 7run 행은 노란색입니다. 차트의 점을 더블클릭하면 그 행으로 갑니다.
-        [선택 행 추천값 입력] / [전체 일괄 추천값 입력]으로 값을 고치고(빨간 칸) [수정본 엑셀 저장]으로 복사본을, [수정 양식 저장]으로 회사 RAW_DATA 수정 양식을 저장합니다.</li>
-      <li><b>[삭제 시뮬레이션]</b>: 노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 보여 주고, XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지려면 지울 행 목록을 알려 줍니다 (원본은 그대로).</li>
-      <li><b>[최소 행 변경]</b>: 삭제와 값 수정을 섞어 바꾸는 행 수가 가장 적은 방법을 계산해 적용합니다. 삭제할 행은 [OCAP 삭제 양식 저장], 고친 행은 [수정 양식 저장]으로 회사 양식에 저장합니다.</li>
+        [선택 행 추천값 입력]으로 값을 고치고(빨간 칸) 표 아래 [수정본 엑셀 저장]으로 복사본을, [수정 양식 저장]으로 회사 RAW_DATA 수정 양식을 저장합니다.
+        표에서 마우스로 끌어 칸을 고르고 <kbd>Ctrl</kbd>+<kbd>C</kbd> 하면 엑셀에 화면 색 그대로 붙여 넣을 수 있습니다.</li>
+      <li><b>[시뮬레이션]</b>: 노란 행을 없애는 방법 3가지 (원본은 그대로).
+        <b>행 삭제만</b> = 지울 행을 차수별로 (지우면 새로 생기는 OCAP · 7run까지) → OCAP 삭제 양식 저장.
+        <b>행 수정만</b> = 노란 행을 모두 추천값으로 → RAW_DATA 수정 양식 저장.
+        <b>최소 행 변경 (삭제+수정)</b> = 삭제와 값 수정을 섞어 바꾸는 행 수가 가장 적은 방법 → 두 양식을 한 번에 각각의 엑셀 파일로 저장.</li>
       <li><b>[설정 저장]</b>: 규칙 · OCAP 문구 · 열 선택 등 지금 설정을 저장해 껐다 켜도 유지합니다 (브라우저 + 설정 파일). 브라우저 기록이 지워지는 PC라면 [설정 불러오기]로 그 파일을 엽니다.</li>
     </ol>
     <table class="sample">
@@ -64,20 +67,31 @@
   <section id="cards" class="cards"></section>
   <section id="dataBox" class="databox hidden">
     <div class="dhead"><h2>데이터 표</h2>
-      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>추천값으로 고친 칸 <i class="sw d"></i>삭제 시뮬레이션에서 지운 행</span>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>값을 고친 칸 (추천값 · 시뮬레이션) <i class="sw d"></i>시뮬레이션에서 지운 행</span>
       <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
       <span id="dataInfo" class="muted small"></span>
       <span class="spacer"></span>
-      <button id="delBtn" class="del-sim" title="노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 계산하고, XBAR · SIGMA 차트 모두 깨끗해지려면 지울 행을 알려 줍니다">삭제 시뮬레이션</button>
-      <button id="mixBtn" class="del-sim" title="삭제와 값 수정을 섞어, 바꾸는 행 수가 가장 적게 XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지는 방법을 계산하고 적용합니다">최소 행 변경</button>
       <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>
-      <button id="fixAllBtn" class="fix-all" disabled title="노란 행 전체를 한 번에 추천값으로 바꿉니다">전체 일괄 추천값 입력</button>
-      <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
-      <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
-      <button id="rawFormBtn" disabled title="값을 고친 행(빨간 칸)을 회사 RAW_DATA 수정 양식(DATA_SEQ# · Raw Value 1~25 · MAX · MIN · AVG · STD) 엑셀로 저장">수정 양식 저장</button>
+      <i class="vsep" aria-hidden="true"></i>
+      <span class="simgroup">
+        <button id="simBtn" class="sim" title="노란 행(OCAP · 7run)을 없애는 방법 3가지: 행 삭제만 · 행 수정만 · 최소 행 변경(삭제+수정). 결과는 회사 양식 엑셀로 저장합니다">시뮬레이션 ▾</button>
+        <span id="simMenu" class="simmenu hidden">
+          <button id="delBtn" class="sim-sub" title="노란 행을 지우면 어디서 OCAP · 7run이 새로 생기는지 차수별로 계산하고, XBAR · SIGMA 차트 모두 깨끗해지려면 지울 행을 보여 줍니다. 결과 = OCAP 삭제 양식">행 삭제만</button>
+          <button id="fixAllBtn" class="sim-sub" title="노란 행 전체를 추천값으로 고칩니다 (파일 원래 값 기준). 결과 = RAW_DATA 수정 양식">행 수정만</button>
+          <button id="mixBtn" class="sim-sub" title="삭제와 값 수정을 섞어, 바꾸는 행 수가 가장 적게 XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지는 방법을 계산합니다. 결과 = OCAP 삭제 양식 + RAW_DATA 수정 양식">최소 행 변경 (삭제+수정)</button>
+        </span>
+      </span>
     </div>
     <div id="delBox" class="delbox hidden"></div>
     <div class="dwrap"><table id="dataTable" class="data"></table></div>
+    <div class="dfoot">
+      <button id="undoBtn" class="ghost" disabled>수정 모두 취소</button>
+      <button id="saveBtn" class="primary" title="원본은 그대로 두고, 노란 행 · 빨간 칸을 넣은 복사본 엑셀을 저장합니다">수정본 엑셀 저장</button>
+      <button id="rawFormBtn" disabled title="값을 고친 행(빨간 칸)을 회사 RAW_DATA 수정 양식(DATA_SEQ# · Raw Value 1~25 · MAX · MIN · AVG · STD) 엑셀로 저장">수정 양식 저장</button>
+      <span class="spacer"></span>
+      <span class="muted small">표에서 마우스로 끌어 칸을 고르고 <kbd>Ctrl</kbd>+<kbd>C</kbd> → 엑셀에 붙여 넣으면 화면 색 그대로 들어갑니다 (<kbd>Shift</kbd>+클릭으로 넓히기)</span>
+      <button id="copyBtn" class="ghost small" disabled>고른 칸 복사</button>
+    </div>
   </section>
   <section id="eventsBox" class="events hidden">
     <div class="ehead"><h2>이상 목록 · OCAP</h2><label class="chk"><input type="checkbox" id="openOnly"> 미조치만</label><span class="spacer"></span><button id="csvBtn" class="ghost small">CSV로 저장</button></div>
