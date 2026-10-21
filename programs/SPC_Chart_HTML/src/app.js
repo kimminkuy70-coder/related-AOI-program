@@ -33,33 +33,36 @@
   };
 
   // ---------- settings ----------
-  var settings = load('spc.settings', {});
-  settings.rules = Object.assign({}, SPC.DEFAULT_ON, settings.rules);
-  settings.n = settings.n || {};
-  settings.ocap = Object.assign({}, DEFAULT_OCAP, settings.ocap);
-  settings.manual = settings.manual || {};
-  if (settings.sound === undefined) settings.sound = true;
-  // v1-v3 showed the last 100 points by default; from v4 the whole period is drawn and scrolled sideways (#24).
-  if (!settings.v4) { settings.window = 0; settings.v4 = 1; }
-  // v8: 2/3 > 2σ and 4/5 > 1σ are off by default (owner, #25: not OCAP / 7 run, only orange dots); turned off once
-  // for settings saved by older versions, and can be turned on again in [규칙 · OCAP 설정].
-  if (!settings.v8) { settings.rules.R4 = false; settings.rules.R5 = false; settings.v8 = 1; }
-  // v11: Trend is 6 points by default (owner, #27). [규칙 · OCAP 설정] of older versions saved every point
-  // count, so a stored 7 (the old default) goes; a count changed on purpose stays.
-  if (!settings.v11) { if (settings.n.R3 === 7) delete settings.n.R3; settings.v11 = 1; }
-  // v13 (owner, #29): XBAR and SIGMA have their own rules. XBAR = OCAP, 7 run; SIGMA = OCAP, 7 run, Trend 6.
-  // Older versions shared one set and had Trend on, so XBAR Trend goes off once (it can be turned on again).
-  if (!settings.v13) { settings.rules.R3 = false; settings.v13 = 1; }
-  settings.sigma = settings.sigma || {};
-  settings.sigma.rules = Object.assign({}, SPC.SIGMA_DEFAULT_ON, settings.sigma.rules);
-  settings.sigma.n = settings.sigma.n || {};
-  // v13 (owner, #29): no auto refresh any more; [새로고침] reads the file again
-  delete settings.auto;
-  delete settings.pollSec;
-  if (!(settings.window >= 0)) settings.window = 0;
-  if (!(settings.pitch >= 0)) settings.pitch = 16;
-  if (!(settings.subgroup >= 1)) settings.subgroup = 1;
-  if (!(settings.baseline >= 0)) settings.baseline = 0;
+  var settings = normalize(load('spc.settings', {}));
+  function normalize(settings) {
+    settings.rules = Object.assign({}, SPC.DEFAULT_ON, settings.rules);
+    settings.n = settings.n || {};
+    settings.ocap = Object.assign({}, DEFAULT_OCAP, settings.ocap);
+    settings.manual = settings.manual || {};
+    if (settings.sound === undefined) settings.sound = true;
+    // v1-v3 showed the last 100 points by default; from v4 the whole period is drawn and scrolled sideways (#24).
+    if (!settings.v4) { settings.window = 0; settings.v4 = 1; }
+    // v8: 2/3 > 2σ and 4/5 > 1σ are off by default (owner, #25: not OCAP / 7 run, only orange dots); turned off once
+    // for settings saved by older versions, and can be turned on again in [규칙 · OCAP 설정].
+    if (!settings.v8) { settings.rules.R4 = false; settings.rules.R5 = false; settings.v8 = 1; }
+    // v11: Trend is 6 points by default (owner, #27). [규칙 · OCAP 설정] of older versions saved every point
+    // count, so a stored 7 (the old default) goes; a count changed on purpose stays.
+    if (!settings.v11) { if (settings.n.R3 === 7) delete settings.n.R3; settings.v11 = 1; }
+    // v13 (owner, #29): XBAR and SIGMA have their own rules. XBAR = OCAP, 7 run; SIGMA = OCAP, 7 run, Trend 6.
+    // Older versions shared one set and had Trend on, so XBAR Trend goes off once (it can be turned on again).
+    if (!settings.v13) { settings.rules.R3 = false; settings.v13 = 1; }
+    settings.sigma = settings.sigma || {};
+    settings.sigma.rules = Object.assign({}, SPC.SIGMA_DEFAULT_ON, settings.sigma.rules);
+    settings.sigma.n = settings.sigma.n || {};
+    // v13 (owner, #29): no auto refresh any more; [새로고침] reads the file again
+    delete settings.auto;
+    delete settings.pollSec;
+    if (!(settings.window >= 0)) settings.window = 0;
+    if (!(settings.pitch >= 0)) settings.pitch = 16;
+    if (!(settings.subgroup >= 1)) settings.subgroup = 1;
+    if (!(settings.baseline >= 0)) settings.baseline = 0;
+    return settings;
+  }
   var ocapLog = load('spc.ocapLog', {});
 
   function load(key, def) {
@@ -89,6 +92,7 @@
   var fixItems = [];       // items (with edits) behind results, for the recommended values
   var delMode = false;     // [삭제 시뮬레이션] on: charts and table show the data with delPlan's rows deleted (#27)
   var delPlan = null;      // {rounds: [[{key: excelRow, rules}]], clean, round: excelRow -> round (1, 2, ...), count}
+  var mixPlan = null;      // [최소 행 변경] on (#30): {plan: SPC.minChangePlan result, series, prevEdits}; delMode is on with it
 
   $('ver').textContent = TITLE.replace(/^SPC Chart HTML\s*/, '');
 
@@ -200,6 +204,7 @@
   }
 
   function buildTable() {
+    dropMix();
     var sheetName = settings.sheet;
     var sheet = book.filter(function (s) { return s.name === sheetName; })[0];
     if (!sheet) {
@@ -395,9 +400,10 @@
         return res;
       });
     };
-    delPlan = delMode ? planDeletes() : null;
-    // The deletion is judged on the file's own values, so its charts leave the recommended values out.
-    fixItems = items(!delMode);
+    delPlan = delMode ? (mixPlan ? mixDelPlan() : planDeletes()) : null;
+    // The deletion is judged on the file's own values, so its charts leave the recommended values out
+    // ([최소 행 변경] keeps them: its new values are the edits).
+    fixItems = items(!delMode || !!mixPlan);
     results = run(fixItems);
     yellow = rowFlags(Object.keys(edits).length || delPlan ? run(items(false, true)) : results);
     nowFlags = rowFlags(results);
@@ -441,17 +447,73 @@
   // [삭제 시뮬레이션] (#27): which rows to delete so that neither the XBAR nor the SIGMA chart has OCAP / 7 run.
   // One row at a time, oldest first, judged again after each (SPC.deletePlan): round 1 = yellow rows still
   // breaking a rule when their turn comes, round 2 = rows that only break one after that, ... File values, no edits.
-  function planDeletes() {
+  function planSeries() {
     var series = [], sub = settings.subgroup <= 1;
     items(false, true).forEach(function (it) {
-      series.push({item: it, opts: optsFor(it.name), rules: fixRules(), keys: it.excelRows, tag: ''});
-      if (it.sigma && sub) series.push({item: sigmaItem(it), opts: sigmaOpts(), rules: sigmaRules(), keys: it.excelRows, tag: 'S'});
+      series.push({item: it, opts: optsFor(it.name), rules: fixRules(), keys: it.excelRows, tag: '', col: it.col});
+      if (it.sigma && sub) series.push({item: sigmaItem(it), opts: sigmaOpts(), rules: sigmaRules(), keys: it.excelRows, tag: 'S', col: it.sigma.col});
     });
-    var plan = SPC.deletePlan(series), round = {}, count = 0;
+    return series;
+  }
+  function planDeletes() {
+    var plan = SPC.deletePlan(planSeries()), round = {}, count = 0;
     plan.rounds.forEach(function (list, r) { list.forEach(function (x) { round[x.key] = r + 1; count++; }); });
     plan.round = round;
     plan.count = count;
     return plan;
+  }
+
+  // [최소 행 변경] (#30) in the shape of a delete plan: its deletions are one round, its new values are the edits.
+  function mixDelPlan() {
+    var p = mixPlan.plan, round = {};
+    p.deletes.forEach(function (x) { round[x.key] = 1; });
+    return {rounds: [p.deletes], clean: p.clean, round: round, count: p.deletes.length, mix: p};
+  }
+
+  // [최소 행 변경] (#30): fewest rows to delete or give a new value so that neither XBAR nor SIGMA has OCAP / 7 run
+  // (SPC.minChangePlan, from the file's own values). The new values replace the edits (red cells, saved in the
+  // copy), the deletions show like [삭제 시뮬레이션] and go to the OCAP 삭제 양식. Off again = the edits from before.
+  function toggleMix() {
+    if (mixPlan) {
+      edits = mixPlan.prevEdits;
+      mixPlan = null;
+      delMode = false;
+      afterEdits('최소 행 변경을 껐습니다 (전 수정으로 되돌림)');
+      return;
+    }
+    if (!table || settings.subgroup > 1) return;
+    setStatus('최소 행 변경 계산 중… (행이 많으면 몇 초 걸립니다)', 'muted');
+    $('mixBtn').disabled = true;
+    setTimeout(function () {
+      var series = planSeries(), plan;
+      try {
+        plan = SPC.minChangePlan(series);
+      } catch (e) {
+        setStatus('최소 행 변경을 계산하지 못했습니다: ' + e.message, 'err');
+        dataInfo();
+        return;
+      }
+      mixPlan = {plan: plan, series: series, prevEdits: edits};
+      edits = {};
+      plan.changes.forEach(function (c) { setEdit(c.key, series[c.series].col, c.value); });
+      delMode = true;
+      analyzeAll(true);
+      render();
+      setStatus(plan.rows ? '최소 행 변경: ' + plan.rows + '행 (삭제 ' + plan.deletes.length + ' · 값 수정 ' + mixRows(plan) + ') · 끄면 원래대로' : '최소 행 변경: 바꿀 행 없음',
+        plan.clean ? 'muted' : 'warn');
+      $('delBox').scrollIntoView({block: 'nearest'});
+    }, 30);
+  }
+  function mixRows(p) {
+    var rows = {};
+    p.changes.forEach(function (c) { rows[c.key] = 1; });
+    return Object.keys(rows).length;
+  }
+  // A new file read, sheet, columns or rules make the plan stale: its edits stay as plain edits.
+  function dropMix() {
+    if (!mixPlan) return;
+    mixPlan = null;
+    delMode = false;
   }
 
   // point index -> SIGMA rule ids
@@ -642,7 +704,7 @@
       var cls = (y || now ? 'y' : '') + (del ? ' del' : '') + (row === selectedRow ? ' sel' : '');
       var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
       if (now) verdict = esc(verdict);
-      if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">삭제 ' + del + '차</span> ' + esc(delRules(row).map(shortRule).join(', '));
+      if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">' + (mixPlan ? '삭제' : '삭제 ' + del + '차') + '</span> ' + esc(delRules(row).map(shortRule).join(', '));
       h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
         vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
       for (var c = 0; c < t.headers.length; c++) h += td(d, c);
@@ -672,6 +734,7 @@
     var box = $('delBox');
     box.classList.toggle('hidden', !delPlan);
     if (!delPlan) return;
+    if (mixPlan) { renderMixBox(box); return; }
     var p = delPlan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
     var h = '<div class="dhead"><b>삭제 시뮬레이션</b><span class="muted small">파일 원래 값 기준 (추천값 수정은 빼고 계산) · 아래 차트 · 표는 이 행들을 지운 모습</span>' +
       '<span class="spacer"></span><button id="ocapFormBtn" class="small"' + (p.count ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 저장</button>' +
@@ -695,7 +758,35 @@
     box.innerHTML = h;
   }
 
+  function renderMixBox(box) {
+    var p = mixPlan.plan, both = results.some(function (r) { return !!r.sigma; }) ? 'XBAR · SIGMA 차트 모두' : '차트에';
+    var link = function (key, title) { return '<a href="#" data-row="' + key + '" title="' + esc(title) + '">' + key + '</a>'; };
+    var h = '<div class="dhead"><b>최소 행 변경</b><span class="muted small">삭제 + 값 수정 · 파일 원래 값 기준 · 아래 차트 · 표는 이 행들을 지우고(회색) 값을 고친(빨간 칸) 모습</span>' +
+      '<span class="spacer"></span><button id="ocapFormBtn" class="small"' + (p.deletes.length ? '' : ' disabled') + ' title="삭제할 행을 회사 OCAP 삭제 양식(EDC Plan · Spec seq# · Data seq#) 엑셀로 저장">OCAP 삭제 양식 저장</button>' +
+      '<button id="delCsvBtn" class="ghost small"' + (p.rows ? '' : ' disabled') + '>변경 목록 CSV</button></div>';
+    if (!p.rows) {
+      box.innerHTML = h + '<p class="ok">OCAP · 7run 행이 없어 바꿀 행이 없습니다.</p>';
+      return;
+    }
+    var byKey = {}, keys = [];
+    p.changes.forEach(function (c) {
+      if (!byKey[c.key]) { byKey[c.key] = []; keys.push(c.key); }
+      byKey[c.key].push(table.headers[mixPlan.series[c.series].col] + ' → ' + fmt(c.value));
+    });
+    h += '<ol class="rounds"><li><b>삭제</b> ' + p.deletes.length + '행' + (p.deletes.length ? ': ' + p.deletes.map(function (x) { return link(x.key, rowText(x.key).label + ' · ' + x.rules.map(shortRule).join(', ')); }).join(', ') : '') + '</li>' +
+      '<li><b>값 수정</b> ' + keys.length + '행' + (keys.length ? ': ' + keys.map(function (k) { return link(k, rowText(k).label + ' · ' + byKey[k].join(', ')); }).join(', ') : '') + '</li></ol>';
+    var cmp = p.compare, part = function (n) { return n === null ? '안 풀림' : n + '행'; };
+    var how = {mix: '삭제 · 수정 섞기', 'delete': '삭제만', fix: '추천값 수정만'}[p.method];
+    h += p.clean
+      ? '<p class="ok"><b>모두 ' + p.rows + '행</b>(삭제 ' + p.deletes.length + ' + 값 수정 ' + keys.length + ')을 바꾸면 ' + both + ' OCAP · 7run이 나오지 않습니다 (' + how + '가 가장 적음).</p>'
+      : '<p class="warn">' + p.rows + '행을 바꿔도 OCAP · 7run이 남습니다.</p>';
+    h += '<p class="muted small">비교: 삭제 · 수정 섞기 ' + part(cmp.mix) + ' · 삭제만([삭제 시뮬레이션]) ' + part(cmp['delete']) + ' · 추천값 수정만([전체 일괄 추천값 입력]) ' + part(cmp.fix) +
+      '. 값 수정은 [수정본 엑셀 저장](빨간 칸)에, 삭제는 [OCAP 삭제 양식 저장]에 들어갑니다.</p>';
+    box.innerHTML = h;
+  }
+
   function delCsv() {
+    if (mixPlan) { mixCsv(); return; }
     if (!delPlan || !delPlan.count) return;
     var lots = table.headers.map(norm).indexOf(SPC_FORMAT.lot) >= 0;
     var lines = [['차수', '엑셀 행', 'X축', lots ? 'LOT_ID' : '', '판정'].filter(function (v, i) { return i !== 3 || lots; })];
@@ -707,46 +798,127 @@
         lines.push(line);
       });
     });
+    downloadCsv(lines, 'SPC_삭제목록_');
+  }
+
+  // [최소 행 변경] list: deletions, then new values (one line per cell)
+  function mixCsv() {
+    var p = mixPlan.plan, lots = table.headers.map(norm).indexOf(SPC_FORMAT.lot) >= 0, byRow = {};
+    table.data.forEach(function (d) { byRow[d.excelRow] = d; });
+    var line = function (kind, key, col, orig, value, rules) {
+      var tx = rowText(key), l = [kind, key, tx.label];
+      if (lots) l.push(tx.lot);
+      return l.concat([col, orig, value, rules.map(shortRule).join(', ')]);
+    };
+    var lines = [['구분', '엑셀 행', 'X축'].concat(lots ? ['LOT_ID'] : [], ['열', '원래 값', '새 값', '판정'])];
+    p.deletes.forEach(function (x) { lines.push(line('삭제', x.key, '', '', '', x.rules)); });
+    p.changes.forEach(function (c) {
+      var col = mixPlan.series[c.series].col, d = byRow[c.key];
+      lines.push(line('값 수정', c.key, table.headers[col], d ? cellText(d.cells[col]) : '', c.value, c.rules));
+    });
+    downloadCsv(lines, 'SPC_최소변경목록_');
+  }
+
+  function downloadCsv(lines, prefix) {
     var csv = '\ufeff' + lines.map(function (l) { return l.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\r\n');
     var a = document.createElement('a'), d = new Date();
     a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
-    a.download = 'SPC_삭제목록_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
+    a.download = prefix + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
   }
 
-  // [OCAP 삭제 양식 저장] (#28): the [삭제 시뮬레이션] rows in the company's OCAP 삭제 양식, apart from the copy above.
-  // Laid out like the owner's form (#27 follow-up, screenshot): sheet "전체" = title B2, [Option] box E1:E3,
-  // row 5 "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항", row 6 the grey header, one line per EDC Plan (PLAN_NAME)
-  // · Spec seq# (SPEC_SEQ) from row 7, empty bordered lines down to row 23; then one sheet per line named by its
-  // Spec seq#: the rows to delete picked out of the file's sheet as they are (its header row, every column).
-  var OCAP_FORM = {title: 'OCAP 삭제 양식', sheet: '전체', data: '각 개별 sheet에 기입', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제',
-    option: ['[Option]', '1. 플래그 & 히스토리 삭제 (Data 값 유지)', '2. Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제'], lastRow: 23};
+  // [OCAP 삭제 양식 저장] (#28): the rows to delete in the company's OCAP 삭제 양식, apart from the copy above.
+  // Since v14 laid out exactly like the owner's form file (#30): one sheet "Sheet1", title B2, row 5
+  // "OCAP 전체 삭제 시 / OCAP 일부 삭제 시 / 요청 사항", row 6 the grey header, from row 7 one line per row to delete
+  // (EDC Plan = PLAN_NAME, Spec seq# = SPEC_SEQ, Data seq# = DATA_SEQ: a partial delete), empty bordered lines
+  // down to row 26. No sheets per Spec seq# any more (v10-v13).
+  var OCAP_FORM = {title: 'OCAP 삭제 양식', sheet: 'Sheet1', request: 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제', lastRow: 26, grey: 'FFAEAAAA'};
   function ocapFormSheets(plan) {
     var hs = table.headers.map(norm), at = function (d, w) { var i = hs.indexOf(w); return i < 0 ? null : d.cells[i]; };
-    var ii = table.headers.indexOf(table.item), byRow = {}, groups = [], byKey = {};
+    var ii = table.headers.indexOf(table.item), byRow = {};
     table.data.forEach(function (d) { byRow[d.excelRow] = d; });
+    var title = {sz: 10, b: true, h: 'center'}, group = {sz: 10, h: 'center'}, head = {sz: 10, fill: OCAP_FORM.grey, border: true, h: 'center'};
+    var cell = {sz: 10, border: true, h: 'center'}, plan0 = {sz: 10, b: true, border: true}, small = {sz: 9, border: true};
+    var V = function (st) { return function (v) { return {v: v, s: st}; }; };
+    var rows = [[], [null, V(title)(OCAP_FORM.title)], [], [],
+      [null, null, V(group)('OCAP 전체 삭제 시'), V(group)('OCAP 일부 삭제 시'), V({sz: 10, h: 'center', wrap: true})('요청 사항')],
+      [null, V(head)('EDC Plan'), V(head)('Spec seq#'), V(head)('Data seq#'), V(head)('요청 내용')]];
     Object.keys(plan.round).map(Number).sort(function (a, b) { return a - b; }).forEach(function (row) {
       var d = byRow[row];
       if (!d) return;
-      var edc = cellText(at(d, 'planname')) || (ii >= 0 ? cellText(d.cells[ii]) : '') || (table.sheet || ''), spec = at(d, 'specseq');
-      var key = edc + '\u0000' + cellText(spec);
-      if (!byKey[key]) { byKey[key] = {edc: edc, spec: spec, rows: []}; groups.push(byKey[key]); }
-      byKey[key].rows.push(d);
+      var edc = cellText(at(d, 'planname')) || (ii >= 0 ? cellText(d.cells[ii]) : '') || (table.sheet || '');
+      rows.push([null, V(plan0)(edc), V(cell)(at(d, 'specseq')), V(cell)(at(d, 'dataseq')), V(small)(OCAP_FORM.request)]);
     });
-    var S = function (s) { return function (v) { return {v: v, s: s}; }; }, H = S('head'), C = S('cell'), O = S('option'), G = S('group');
-    var form = [[null, null, null, null, O(OCAP_FORM.option[0])], [null, {v: OCAP_FORM.title, s: 'title'}, null, null, O(OCAP_FORM.option[1])],
-      [null, null, null, null, O(OCAP_FORM.option[2])], [],
-      [null, null, G('OCAP 전체 삭제 시'), G('OCAP 일부 삭제 시'), G('요청 사항')],
-      [null, H('EDC Plan'), H('Spec seq#'), H('Data seq#'), H('요청 내용')]];
-    groups.forEach(function (g) { form.push([null, C(g.edc), C(g.spec), C(OCAP_FORM.data), S('small')(OCAP_FORM.request)]); });
-    while (form.length < OCAP_FORM.lastRow) form.push([null, C(null), C(null), C(null), C(null)]);
-    var sheets = [{name: OCAP_FORM.sheet, rows: form, widths: [12, 75, 22, 27, 58]}];
-    var head = (table.rows[table.head] || table.headers).map(function (v) { return v === null || v === undefined ? null : H(v); });
-    groups.forEach(function (g, n) {
-      sheets.push({name: cellText(g.spec) || ('Sheet' + (n + 2)), rows: [head].concat(g.rows.map(function (d) { return d.cells; }))});
+    while (rows.length < OCAP_FORM.lastRow) rows.push([null, V(cell)(null), V(cell)(null), V(cell)(null), V(cell)(null)]);
+    return [{name: OCAP_FORM.sheet, rows: rows, widths: [0, 64.9, 17.8, 21.8, 44.3]}];
+  }
+
+  // [수정 양식 저장] (#30): the rows with new values (red cells) in the owner's RAW_DATA form: "S/S 25>" in B2, row 3
+  // DATA_SEQ# · Raw Value 1..25 · MAX · MIN · AVG · STD, from row 4 one yellow line per changed row. The SPC system
+  // keeps the 25 raw values (VALUE_1..25) and works EXT_MV / EXT_SIGMA out of them, so the new raw values are the
+  // old ones moved by the change of EXT_MV and stretched by the change of EXT_SIGMA (same shape, new mean and
+  // spread); without raw values in the file only AVG / STD are written.
+  var RAW_FORM = {sheet: 'Sheet1', title: 'S/S 25>', n: 25, fmt: '###0.0000;\\-###0.0000'};
+  function rawFormRows() {
+    var hs = table.headers.map(norm), mvi = hs.indexOf(SPC_FORMAT.value), sgi = hs.indexOf(SPC_FORMAT.sigma.value), seq = hs.indexOf('dataseq');
+    var raw = [];
+    for (var i = 1; i <= RAW_FORM.n; i++) raw.push(hs.indexOf('value' + i));
+    var byRow = {}, rows = {};
+    table.data.forEach(function (d) { byRow[d.excelRow] = d; });
+    Object.keys(edits).forEach(function (k) { rows[edits[k].row] = 1; });
+    return Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).map(function (row) {
+      var d = byRow[row], mine = Object.keys(edits).filter(function (k) { return edits[k].row === row; }).map(function (k) { return edits[k]; });
+      var mv = mvi >= 0 ? mvi : mine[0].col, newOf = function (c) { var e = edits[row + ':' + c]; return e ? e.value : toNum(d.cells[c]); };
+      var mv0 = toNum(d.cells[mv]), mv1 = newOf(mv), sg0 = sgi >= 0 ? toNum(d.cells[sgi]) : null, sg1 = sgi >= 0 ? newOf(sgi) : null;
+      var vals = raw.map(function (c) { return c >= 0 ? toNum(d.cells[c]) : null; }), nums = vals.filter(function (v) { return v !== null; });
+      var out = {row: row, seq: seq >= 0 ? d.cells[seq] : row, raw: vals.map(function () { return null; }), avg: mv1, std: sg1, max: null, min: null};
+      if (!nums.length) return out;
+      var m0 = SPC.mean(nums), sdS = SPC.sd(nums), sdP = nums.length > 1 ? sdS * Math.sqrt((nums.length - 1) / nums.length) : 0;
+      // EXT_SIGMA is the sample or the population SD of the raw values: the one nearer the file's EXT_SIGMA
+      var pop = sg0 !== null && isFinite(sdS) && Math.abs(sdP - sg0) < Math.abs(sdS - sg0), sd0 = pop ? sdP : sdS;
+      var k = sg1 !== null && sg0 !== null && sg1 !== sg0 && sd0 > 0 ? sg1 / sd0 : 1;
+      var m1 = m0 + (mv0 !== null && mv1 !== null ? mv1 - mv0 : 0), digits = 4;
+      nums.forEach(function (v) { var x = String(+v.toPrecision(12)).match(/\.(\d+)$/); if (x) digits = Math.max(digits, x[1].length); });
+      var f = Math.pow(10, Math.min(digits, 10));
+      out.raw = vals.map(function (v) { return v === null ? null : Math.round((m1 + (v - m0) * k) * f) / f; });
+      var got = out.raw.filter(function (v) { return v !== null; }), s1 = SPC.sd(got);
+      out.max = Math.max.apply(null, got);
+      out.min = Math.min.apply(null, got);
+      out.avg = SPC.mean(got);
+      out.std = got.length > 1 ? (pop ? s1 * Math.sqrt((got.length - 1) / got.length) : s1) : 0;
+      return out;
     });
-    return sheets;
+  }
+  function rawFormSheets() {
+    var head = function (fill) { return {sz: 12, b: true, fill: fill, border: true, h: 'center'}; }, V = function (st) { return function (v) { return {v: v, s: st}; }; };
+    var yel = {sz: 12, b: true, fill: 'FFFFFF00', border: true, h: 'center'}, num = Object.assign({fmt: RAW_FORM.fmt}, yel), std = head('FFD0CECE');
+    var top = [null, V(head('FFC6E0B4'))('DATA_SEQ#')];
+    for (var i = 1; i <= RAW_FORM.n; i++) top.push(V(head('FFD9E1F2'))('Raw Value ' + i));
+    ['MAX', 'MIN', 'AVG'].forEach(function (t) { top.push(V(head('FFF8CBAD'))(t)); });
+    top.push(V(std)('STD'));
+    var rows = [[], [null, V({sz: 12, h: 'center'})(RAW_FORM.title)], top];
+    rawFormRows().forEach(function (r) {
+      rows.push([V({sz: 12, b: true, fill: 'FFFFFF00', h: 'center'})(null), V(yel)(r.seq)].concat(r.raw.map(V(yel)), [V(num)(r.max), V(num)(r.min), V(num)(r.avg), V(std)(r.std)]));
+    });
+    var widths = [5.6, 17.3, 14.7];
+    while (widths.length < 27) widths.push(0);
+    return [{name: RAW_FORM.sheet, rows: rows, widths: widths.concat([16.1, 16.4, 17.8, 16.3]), height: 17.5}];
+  }
+  function rawFormName() {
+    var d = new Date();
+    return 'RAW_DATA 수정 양식_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.xlsx';
+  }
+  async function saveRawForm() {
+    if (!table || !Object.keys(edits).length) return;
+    var bytes;
+    try {
+      bytes = window.XLSXLite.book(rawFormSheets());
+    } catch (e) {
+      setStatus('수정 양식을 만들지 못했습니다: ' + e.message, 'err');
+      return;
+    }
+    await saveBytes(bytes, rawFormName(), '수정 양식');
   }
 
   function ocapFormName() {
@@ -767,6 +939,7 @@
   }
 
   function toggleDelete() {
+    if (mixPlan) return;
     delMode = !delMode;
     analyzeAll(true);
     render();
@@ -786,9 +959,15 @@
     // Recommended values work on the file's rows; while rows are deleted in the simulation they wait.
     $('fixOneBtn').disabled = sub || !selectedRow || delMode;
     $('fixAllBtn').disabled = sub || !nowCount || delMode;
-    $('delBtn').textContent = delMode ? '삭제 시뮬레이션 끄기' : '삭제 시뮬레이션';
-    $('delBtn').classList.toggle('on', delMode);
-    $('undoBtn').disabled = !nEdits;
+    $('delBtn').textContent = delMode && !mixPlan ? '삭제 시뮬레이션 끄기' : '삭제 시뮬레이션';
+    $('delBtn').classList.toggle('on', delMode && !mixPlan);
+    $('delBtn').disabled = !!mixPlan;
+    $('mixBtn').textContent = mixPlan ? '최소 행 변경 끄기' : '최소 행 변경';
+    $('mixBtn').classList.toggle('on', !!mixPlan);
+    $('mixBtn').disabled = !mixPlan && (sub || delMode);
+    $('mixBtn').title = sub ? 'subgroup 1 (I-MR)에서만 계산합니다' : '삭제와 값 수정을 섞어, 바꾸는 행 수가 가장 적게 XBAR · SIGMA 차트 모두 OCAP · 7run이 없어지는 방법을 계산하고 적용합니다';
+    $('undoBtn').disabled = !nEdits || !!mixPlan;
+    $('rawFormBtn').disabled = !nEdits;
     $('fixOneBtn').title = sub ? 'subgroup 1 (I-MR)에서만 추천값을 계산합니다' : '선택한 행(표에서 클릭 또는 차트 점 더블클릭)의 값을 추천값으로 바꿉니다';
   }
 
@@ -1495,6 +1674,7 @@
 
   function recompute() {
     if (!table) return;
+    dropMix();
     analyzeAll(true);
     render();
   }
@@ -1515,6 +1695,75 @@
     });
   }
   function rememberHandle(h) { idb('readwrite', function (st) { st.put(h, 'recent'); }); }
+
+  // [설정 저장] (#30): the settings into this browser (read back to check) and into a settings file, for PCs whose
+  // browser forgets site data when it closes. The first save asks where to put the file; later saves overwrite it
+  // (its handle is kept in IndexedDB, Edge may ask once for permission). [설정 불러오기] reads such a file back.
+  var SETTINGS_FILE = 'SPC_Chart_설정.json';
+  async function saveSettingsNow() {
+    save();
+    var kept = false;
+    try { kept = localStorage.getItem('spc.settings') === JSON.stringify(settings); } catch (e) { kept = false; }
+    var text = JSON.stringify({app: 'SPC Chart HTML', version: TITLE, saved: new Date().toISOString(), settings: settings}, null, 1);
+    var file = null;
+    try {
+      file = await writeSettingsFile(text);
+    } catch (e) {
+      setStatus('설정 파일을 저장하지 못했습니다: ' + e.message + (kept ? ' · 브라우저에는 저장함' : ''), 'err');
+      return;
+    }
+    var parts = [];
+    if (kept) parts.push('이 PC 브라우저');
+    if (file) parts.push('파일 ' + file);
+    setStatus(parts.length ? '설정 저장: ' + parts.join(' + ') + ' · ' + stamp() + ' · 다음에 열면 이 설정으로 시작합니다' : '설정을 저장하지 못했습니다 (브라우저 저장 막힘, 파일 저장 취소)', parts.length ? 'muted' : 'err');
+  }
+  async function writeSettingsFile(text) {
+    if (!window.showSaveFilePicker) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+      a.download = SETTINGS_FILE;
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+      return SETTINGS_FILE + ' (내려받기)';
+    }
+    var h = await idb('readonly', function (st) { return st.get('settingsFile'); });
+    if (h) {
+      try {
+        if ((await h.queryPermission({mode: 'readwrite'})) !== 'granted' && (await h.requestPermission({mode: 'readwrite'})) !== 'granted') h = null;
+      } catch (e) { h = null; }
+    }
+    if (!h) {
+      try {
+        h = await window.showSaveFilePicker({suggestedName: SETTINGS_FILE, id: 'spc-settings', types: [{description: 'SPC Chart 설정', accept: {'application/json': ['.json']}}]});
+      } catch (e) {
+        if (e && e.name === 'AbortError') return null;
+        throw e;
+      }
+      idb('readwrite', function (st) { st.put(h, 'settingsFile'); });
+    }
+    var w = await h.createWritable();
+    await w.write(text);
+    await w.close();
+    return h.name;
+  }
+  async function loadSettingsFile(f) {
+    var got;
+    try {
+      got = JSON.parse(await f.text());
+    } catch (e) {
+      setStatus(f.name + ': 설정 파일(.json)이 아닙니다', 'err');
+      return;
+    }
+    var s = got && got.settings;
+    if (!s || typeof s !== 'object' || !s.rules) {
+      setStatus(f.name + ': [설정 저장]으로 만든 SPC Chart 설정 파일이 아닙니다', 'err');
+      return;
+    }
+    settings = normalize(s);
+    save();
+    if (table) { buildTable(); recompute(); }
+    setStatus('설정 불러옴: ' + f.name + (got.saved ? ' (저장 ' + String(got.saved).slice(0, 16).replace('T', ' ') + ' UTC)' : '') + ' · 이 PC 브라우저에도 저장함', 'muted');
+  }
 
   idb('readonly', function (st) { return st.get('recent'); }).then(function (h) {
     if (!h || source) return;
@@ -1599,6 +1848,15 @@
   $('fixOneBtn').onclick = fixOne;
   $('fixAllBtn').onclick = fixAll;
   $('delBtn').onclick = toggleDelete;
+  $('mixBtn').onclick = toggleMix;
+  $('rawFormBtn').onclick = saveRawForm;
+  $('saveSetBtn').onclick = saveSettingsNow;
+  $('loadSetBtn').onclick = function () { $('setIn').click(); };
+  $('setIn').onchange = function () {
+    var f = $('setIn').files[0];
+    $('setIn').value = '';
+    if (f) loadSettingsFile(f);
+  };
   $('delBox').addEventListener('click', function (e) {
     if (e.target.id === 'delCsvBtn') { delCsv(); return; }
     if (e.target.id === 'ocapFormBtn') { saveOcapForm(); return; }
@@ -1648,8 +1906,8 @@
   });
 
   // For tests: open a file handle without the picker.
-  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, settings: settings,
+  window.__spc = {useHandle: useHandle, results: function () { return results; }, table: function () { return table; }, refresh: refresh, get settings() { return settings; },
     edits: function () { return edits; }, revealRow: revealRow, yellow: function () { return yellow; }, nowFlags: function () { return nowFlags; },
-    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; },
+    selected: function () { return selectedRow; }, copyBytes: copyBytes, copyName: copyName, delPlan: function () { return delPlan; }, mixPlan: function () { return mixPlan && mixPlan.plan; },
     ocapFormSheets: function () { return delPlan && ocapFormSheets(delPlan); }, ocapFormName: ocapFormName};
 })();

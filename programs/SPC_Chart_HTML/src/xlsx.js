@@ -516,11 +516,24 @@
 
   function sheetName(name) { return String(name || 'Sheet').replace(/[\\\/?*\[\]:]/g, '_').slice(0, 31) || 'Sheet'; }
 
-  // New .xlsx with several sheets and a few cell styles (OCAP 삭제 양식, issue #28).
-  // sheets: [{name, rows: [[cell]], widths: [column width]}], cell = value or {v: value, s: style name}.
-  var BOOK_STYLE = {title: 1, head: 2, cell: 3, text: 4, group: 5, small: 6, option: 7};
+  // New .xlsx with several sheets and cell styles (OCAP 삭제 양식 #28, RAW_DATA 수정 양식 #30).
+  // sheets: [{name, rows: [[cell]], widths: [column width], height: row height}], cell = value or {v: value, s: style},
+  // style = {sz: font size (10), b: bold, fill: 'FFRRGGBB', border: thin all round, h: 'center' | 'left', wrap, fmt: number format}.
   function book(sheets) {
-    var used = {};
+    var used = {}, xfs = [], xfOf = {}, fonts = [], fontOf = {}, fills = [], fillOf = {}, fmts = [], fmtOf = {};
+    function idx(list, map, key) {
+      if (map[key] === undefined) { map[key] = list.length; list.push(key); }
+      return map[key];
+    }
+    function styleId(st) {
+      if (!st) return 0;
+      var f = idx(fonts, fontOf, (st.b ? 'b' : '') + '|' + (st.sz || 10));
+      var fl = st.fill ? 2 + idx(fills, fillOf, st.fill) : 0;
+      var nf = st.fmt ? 164 + idx(fmts, fmtOf, st.fmt) : 0;
+      var key = [f, fl, st.border ? 1 : 0, st.h || '', st.wrap ? 1 : 0, nf].join(',');
+      if (xfOf[key] === undefined) { xfOf[key] = xfs.length + 1; xfs.push(key); }
+      return xfOf[key];
+    }
     sheets.forEach(function (sh) {
       var n = sheetName(sh.name), k = 2;
       while (used[n.toLowerCase()]) n = sheetName(sh.name).slice(0, 27) + ' (' + k++ + ')';
@@ -530,14 +543,15 @@
     var files = {}, ct = '', wbRels = '', wbSheets = '';
     sheets.forEach(function (sh, i) {
       var x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="' + NS + '">';
-      if (sh.widths) x += '<cols>' + sh.widths.map(function (w, c) { return '<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('') + '</cols>';
+      if (sh.height) x += '<sheetFormatPr defaultRowHeight="' + sh.height + '" customHeight="1"/>';
+      if (sh.widths) x += '<cols>' + sh.widths.map(function (w, c) { return w ? '<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="' + w + '" customWidth="1"/>' : ''; }).join('') + '</cols>';
       x += '<sheetData>';
       sh.rows.forEach(function (row, ri) {
         var r = ri + 1;
-        x += '<row r="' + r + '">';
+        x += '<row r="' + r + '"' + (sh.height ? ' ht="' + sh.height + '" customHeight="1"' : '') + '>';
         (row || []).forEach(function (cell, c) {
           var v = cell && typeof cell === 'object' && !(cell instanceof Date) ? cell.v : cell;
-          var s = cell && typeof cell === 'object' && cell.s ? BOOK_STYLE[cell.s] : 0, ref = colRef(c) + r, sa = s ? ' s="' + s + '"' : '';
+          var s = cell && typeof cell === 'object' && cell.s ? styleId(cell.s) : 0, ref = colRef(c) + r, sa = s ? ' s="' + s + '"' : '';
           if (v instanceof Date) v = v.getFullYear() + '-' + ('0' + (v.getMonth() + 1)).slice(-2) + '-' + ('0' + v.getDate()).slice(-2) + ' ' + ('0' + v.getHours()).slice(-2) + ':' + ('0' + v.getMinutes()).slice(-2) + ':' + ('0' + v.getSeconds()).slice(-2);
           if (v === null || v === undefined || v === '') { if (s) x += '<c r="' + ref + '"' + sa + '/>'; }
           else if (typeof v === 'number' && isFinite(v)) x += '<c r="' + ref + '"' + sa + '><v>' + v + '</v></c>';
@@ -556,21 +570,22 @@
     files['_rels/.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
     files['xl/workbook.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="' + NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + wbSheets + '</sheets></workbook>';
     files['xl/_rels/workbook.xml.rels'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + wbRels + '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
-    // xf 1 title (bold, centre), 2 head (grey fill, border, centre), 3 cell (border, centre), 4 text (border, left, wrap),
-    // 5 group (centre, no border), 6 small (border, left, 9 pt), 7 option (light blue fill, left, 9 pt)
-    files['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '"><fonts count="4"><font><sz val="11"/><name val="맑은 고딕"/></font><font><b/><sz val="11"/><name val="맑은 고딕"/></font><font><sz val="10"/><name val="맑은 고딕"/></font><font><sz val="9"/><name val="맑은 고딕"/></font></fonts>' +
-      '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAEAAAA"/><bgColor indexed="64"/></patternFill></fill>' +
-      '<fill><patternFill patternType="solid"><fgColor rgb="FFDDEBF7"/><bgColor indexed="64"/></patternFill></fill></fills>' +
-      '<borders count="2"><border/><border>' + thin + '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8">' +
-      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
-      '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
-      '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
-      '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
-      '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
-      '<xf numFmtId="0" fontId="3" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
-      '<xf numFmtId="0" fontId="3" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
-      '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    var fontXml = ['<font><sz val="10"/><name val="맑은 고딕"/></font>'].concat(fonts.map(function (k) {
+      var p = k.split('|');
+      return '<font>' + (p[0] ? '<b/>' : '') + '<sz val="' + p[1] + '"/><name val="맑은 고딕"/></font>';
+    }));
+    var fillXml = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'].concat(fills.map(function (c) {
+      return '<fill><patternFill patternType="solid"><fgColor rgb="' + c + '"/><bgColor indexed="64"/></patternFill></fill>';
+    }));
+    var xfXml = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'].concat(xfs.map(function (k) {
+      var p = k.split(','), h = p[3], al = h || p[4] === '1' ? '<alignment' + (h ? ' horizontal="' + h + '"' : '') + ' vertical="center"' + (p[4] === '1' ? ' wrapText="1"' : '') + '/>' : '<alignment vertical="center"/>';
+      return '<xf numFmtId="' + p[5] + '" fontId="' + (+p[0] + 1) + '" fillId="' + p[1] + '" borderId="' + p[2] + '" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"' + (p[5] !== '0' ? ' applyNumberFormat="1"' : '') + '>' + al + '</xf>';
+    }));
+    files['xl/styles.xml'] = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="' + NS + '">' +
+      (fmts.length ? '<numFmts count="' + fmts.length + '">' + fmts.map(function (f, i) { return '<numFmt numFmtId="' + (164 + i) + '" formatCode="' + xmlEsc(f) + '"/>'; }).join('') + '</numFmts>' : '') +
+      '<fonts count="' + fontXml.length + '">' + fontXml.join('') + '</fonts><fills count="' + fillXml.length + '">' + fillXml.join('') + '</fills>' +
+      '<borders count="2"><border/><border>' + thin + '</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="' + xfXml.length + '">' + xfXml.join('') + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
     var enc = new TextEncoder();
     return zip(Object.keys(files).map(function (name) { return {name: name, data: enc.encode(files[name])}; }));
   }

@@ -411,5 +411,149 @@
     return {rounds: rounds, clean: false};
   }
 
-  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, SIGMA_DEFAULT_ON: SIGMA_DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, deletePlan: deletePlan, mean: mean, sd: sd};
+  // Fewest Excel rows to touch — deleted or given a new value — so that no series breaks its rules (#30).
+  // Greedy, oldest problem first: for the oldest row still breaking a rule the candidates are deleting it,
+  // a new value on it (every series it breaks: EXT_MV and EXT_SIGMA of one row are one row change), and
+  // for a run / trend the same for each of the N-1 points before it. The candidate leaving the fewest rows
+  // breaking a rule wins (a new value before a deletion on a tie, then the row itself). Afterwards each
+  // change is undone again if everything stays clean without it. The result is compared with deleting only
+  // (deletePlan) and with recommended values only (fixAll) and the plan with the fewest rows is returned,
+  // so it is never worse than either button alone. New values only for subgroup 1 series (I-MR).
+  // series: as deletePlan. Returns {deletes: [{key, rules}], changes: [{key, series, index, value, rules}],
+  // rows: rows touched, clean, method: 'mix' | 'delete' | 'fix', compare: {mix, delete, fix} (null = not clean)}.
+  function minChangePlan(series) {
+    var where = {};  // key -> [{s, k}]
+    series.forEach(function (s, si) {
+      s.keys.forEach(function (key, k) { if (isNum(s.item.values[k])) (where[key] = where[key] || []).push({s: si, k: k}); });
+    });
+    function itemOf(si, st) {
+      var s = series[si];
+      return Object.assign({}, s.item, {values: st.vals[si].map(function (v, k) { return st.gone[s.keys[k]] ? null : v; })});
+    }
+    function judge(st) {
+      var hit = {}, order = [], res = [], bad = [];
+      series.forEach(function (s, si) {
+        var r = analyze(itemOf(si, st), s.opts), f = flagged(r, s.rules);
+        res.push(r);
+        bad.push(f);
+        s.rules.forEach(function (id) {
+          (r.flags[id] || []).forEach(function (pi) {
+            r.points[pi].rows.forEach(function (k) {
+              var key = s.keys[k], tag = (s.tag || '') + id;
+              if (!hit[key]) { hit[key] = []; order.push(key); }
+              if (hit[key].indexOf(tag) < 0) hit[key].push(tag);
+            });
+          });
+        });
+      });
+      order.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
+      return {hit: hit, order: order, res: res, bad: bad};
+    }
+    function apply(st, a) {
+      var out = {gone: Object.assign({}, st.gone), vals: st.vals};
+      if (a.del) out.gone[a.key] = 1;
+      else {
+        out.vals = st.vals.slice();
+        a.sets.forEach(function (x) { out.vals[x.s] = out.vals[x.s].slice(); out.vals[x.s][x.k] = x.v; });
+      }
+      return out;
+    }
+    function pointOf(r, k) {
+      for (var i = 0; i < r.points.length; i++) if (r.points[i].row === k) return i;
+      return -1;
+    }
+    var start = {gone: {}, vals: series.map(function (s) { return s.item.values.slice(); })};
+
+    // the greedy plan
+    var st = start, acts = [], now = judge(st), guard = 0, limit = 3 * Object.keys(where).length + 10;
+    while (now.order.length && guard++ < limit) {
+      var key0 = now.order[0], cands = [{del: true, key: key0}], own = [], ownOk = true, partners = [];
+      (where[key0] || []).forEach(function (w) {
+        var s = series[w.s], r = now.res[w.s], pi = pointOf(r, w.k);
+        if (pi < 0 || !now.bad[w.s][pi]) return;
+        var free = (s.opts.subgroup | 0) <= 1, it = itemOf(w.s, st);
+        if (!free) { ownOk = false; return; }
+        var v = valueFor(it, s.opts, r, now.bad[w.s], pi, pi, s.rules);
+        if (v) own.push({s: w.s, k: w.k, v: v.value}); else ownOk = false;
+        var span = 0;
+        ['R2', 'R3'].forEach(function (id) {
+          if (s.rules.indexOf(id) >= 0 && (r.flags[id] || []).indexOf(pi) >= 0) span = Math.max(span, ruleN(id, s.opts) - 1);
+        });
+        for (var j = pi - 1; j >= Math.max(0, pi - span); j--) {
+          var kj = r.points[j].row, kk = s.keys[kj];
+          partners.push({del: true, key: kk});
+          var vj = valueFor(it, s.opts, r, now.bad[w.s], pi, j, s.rules);
+          if (vj) partners.push({key: kk, sets: [{s: w.s, k: kj, v: vj.value}]});
+        }
+      });
+      if (ownOk && own.length) cands.unshift({key: key0, sets: own});
+      cands = cands.concat(partners);
+      var best = null;
+      cands.forEach(function (a, n) {
+        var next = apply(st, a), j = judge(next);
+        var score = [j.order.length, a.del ? 1 : 0, a.key === key0 ? 0 : 1, n];
+        if (!best || less(score, best.score)) best = {a: a, st: next, j: j, score: score};
+      });
+      best.a.rules = (now.hit[best.a.key] || []).slice();
+      acts.push(best.a);
+      st = best.st;
+      now = best.j;
+    }
+    // undo what is not needed once the rest is done (newest first)
+    if (!now.order.length) {
+      for (var u = acts.length - 1; u >= 0; u--) {
+        var trial = {gone: {}, vals: start.vals};
+        acts.forEach(function (a, n) { if (n !== u && !a.dropped) trial = apply(trial, a); });
+        if (!judge(trial).order.length) acts[u].dropped = true;
+      }
+      acts = acts.filter(function (a) { return !a.dropped; });
+    }
+    function outOf(list, clean) {
+      var deletes = [], changes = [], gone = {}, rows = {};
+      list.forEach(function (a) { if (a.del) { gone[a.key] = 1; deletes.push({key: a.key, rules: a.rules || []}); rows[a.key] = 1; } });
+      list.forEach(function (a) {
+        if (a.del || gone[a.key]) return;
+        rows[a.key] = 1;
+        a.sets.forEach(function (x) {
+          changes = changes.filter(function (c) { return !(c.series === x.s && c.index === x.k); });
+          changes.push({key: a.key, series: x.s, index: x.k, value: x.v, rules: a.rules || []});
+        });
+      });
+      return {deletes: deletes, changes: changes, rows: Object.keys(rows).length, clean: clean};
+    }
+    var mix = outOf(acts, !now.order.length);
+    mix.method = 'mix';
+
+    // deleting only
+    var dp = deletePlan(series), dl = [];
+    dp.rounds.forEach(function (list) { list.forEach(function (x) { dl.push({del: true, key: x.key, rules: x.rules}); }); });
+    var del = outOf(dl, dp.clean);
+    del.method = 'delete';
+    // recommended values only
+    var fl = [], failed = 0, fst = start, hit0 = judge(start).hit;
+    series.forEach(function (s, si) {
+      if ((s.opts.subgroup | 0) > 1) { failed++; return; }
+      var out = fixAll(s.item, s.opts, s.rules);
+      failed += out.failed;
+      out.changes.forEach(function (c) {
+        var a = {key: s.keys[c.row], sets: [{s: si, k: c.row, v: c.value}], rules: (hit0[s.keys[c.row]] || []).slice()};
+        fl.push(a);
+        fst = apply(fst, a);
+      });
+    });
+    var fix = outOf(fl, !failed && !judge(fst).order.length);
+    fix.method = 'fix';
+
+    var pick = mix;
+    [del, fix].forEach(function (p) { if (p.clean && (!pick.clean || p.rows < pick.rows)) pick = p; });
+    pick.compare = {mix: mix.clean ? mix.rows : null, delete: del.clean ? del.rows : null, fix: fix.clean ? fix.rows : null};
+    return pick;
+  }
+
+  function less(a, b) {
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
+    return false;
+  }
+
+  window.SPC = {RULES: RULES, DEFAULT_ON: DEFAULT_ON, SIGMA_DEFAULT_ON: SIGMA_DEFAULT_ON, FIX_RULES: FIX_RULES, analyze: analyze, fillColumn: fillColumn, flagged: flagged, events: events, suggest: suggest, suggestChange: suggestChange, fixAll: fixAll, deletePlan: deletePlan, minChangePlan: minChangePlan, mean: mean, sd: sd};
 })();

@@ -771,35 +771,148 @@ class SpcChartTest(unittest.TestCase):
         self.page.wait_for_function("() => /OCAP 삭제 양식 저장: /.test(document.body.textContent) && window.__savedAs")
         self.assertRegex(self.js('() => window.__savedAs'), r'^OCAP 삭제 양식_\d{8}_\d{4}\.xlsx$')
         wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))
-        specs = sorted({rows[k - 1][hs] for k in keys})
-        self.assertEqual(wb.sheetnames, ['전체'] + [str(s) for s in specs])
-        ws = wb['전체']  # laid out like the owner's form (screenshot, #27 follow-up)
+        self.assertEqual(wb.sheetnames, ['Sheet1'])  # v14 (#30): one sheet like the owner's form file
+        ws = wb['Sheet1']
         self.assertEqual(ws['B2'].value, 'OCAP 삭제 양식')
         self.assertTrue(ws['B2'].font.b)
-        self.assertEqual([ws.cell(r, 5).value for r in (1, 2, 3)][0], '[Option]')
-        self.assertEqual(ws['E3'].fill.fgColor.rgb, 'FFDDEBF7')
+        self.assertIsNone(ws['E1'].value)  # no [Option] box any more
         self.assertEqual([ws.cell(5, c).value for c in range(3, 6)], ['OCAP 전체 삭제 시', 'OCAP 일부 삭제 시', '요청 사항'])
         self.assertEqual([ws.cell(6, c).value for c in range(2, 6)], ['EDC Plan', 'Spec seq#', 'Data seq#', '요청 내용'])
         self.assertEqual(ws['B6'].fill.fgColor.rgb, 'FFAEAAAA')
         self.assertEqual(ws['B6'].border.left.style, 'thin')
-        for i, spec in enumerate(specs):
-            self.assertEqual([ws.cell(7 + i, c).value for c in range(2, 5)], ['ITEM-A(TARGET 13 UM)_0/13 : F01(LINE-1)', spec, '각 개별 sheet에 기입'])
+        self.assertEqual(round(ws.column_dimensions['B'].width, 1), 64.9)
+        for i, k in enumerate(keys):  # one line per row to delete: Data seq# = DATA_SEQ
+            r = rows[k - 1]
+            self.assertEqual([ws.cell(7 + i, c).value for c in range(2, 5)], [r[hp], r[hs], r[hd]])
             self.assertEqual(ws.cell(7 + i, 5).value, 'Data 자체를 완전 삭제 & 히스토리 삭제 (Data 자체 완전 삭제')
-        self.assertIsNone(ws.cell(7 + len(specs), 2).value)
-        self.assertEqual(ws.cell(23, 5).border.bottom.style, 'thin')  # empty bordered lines down to row 23
-        self.assertEqual(ws.max_row, 23)
-        # each spec sheet = the file's header row + its delete rows, every column as in the file
-        seen = []
-        for spec in specs:
-            sh = wb[str(spec)]
-            self.assertEqual([c.value for c in sh[1]], SPC_HEADERS)
-            data = [[c.value for c in r] for r in sh.iter_rows(min_row=2)]
-            for d in data:
-                self.assertEqual(d[hs], spec)
-                k = [n for n, r in enumerate(rows) if r[hd] == d[hd]][0]
-                self.assertEqual(d[SPC_HEADERS.index('EXT_MV')], rows[k][SPC_HEADERS.index('EXT_MV')])
-                seen.append(k + 1)
-        self.assertEqual(sorted(seen), keys)
+        self.assertIsNone(ws.cell(7 + len(keys), 2).value)
+        self.assertEqual(ws.cell(26, 5).border.bottom.style, 'thin')  # empty bordered lines down to row 26
+        self.assertEqual(ws.max_row, max(26, 6 + len(keys)))
+
+    # issue #30: the rows with new values in the owner's RAW_DATA form; raw values moved / stretched to the new EXT_MV / EXT_SIGMA
+    def test_raw_data_form(self):
+        rows = spc_rows(sigma_out=True, sigma_run=True)
+        mv, sg, hd = (SPC_HEADERS.index(h) for h in ('EXT_MV', 'EXT_SIGMA', 'DATA_SEQ'))
+        v1 = SPC_HEADERS.index('VALUE_1')
+        pattern = [(-1) ** j * (1 + j % 4) for j in range(25)]
+        pm = sum(pattern) / 25
+        psd = (sum((x - pm) ** 2 for x in pattern) / 24) ** 0.5
+        for r in rows[1:]:  # 25 raw values whose mean = EXT_MV, sample SD = EXT_SIGMA
+            for j in range(25):
+                r[v1 + j] = round(r[mv] + (pattern[j] - pm) / psd * r[sg], 6)
+        self.open_file('raw.xlsx', workbook(rows))
+        self.assertTrue(self.page.locator('#rawFormBtn').is_disabled())
+        self.page.click('#fixAllBtn')
+        edits = self.js('() => Object.values(window.__spc.edits())')
+        self.assertTrue(any(e['col'] == mv for e in edits) and any(e['col'] == sg for e in edits))
+        self.page.click('#rawFormBtn')
+        self.page.wait_for_function("() => /수정 양식 저장: /.test(document.body.textContent) && window.__savedAs")
+        self.assertRegex(self.js('() => window.__savedAs'), r'^RAW_DATA 수정 양식_\d{8}_\d{4}\.xlsx$')
+        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(self.js(GET_FILE, 'saved_copy.xlsx'))))
+        ws = wb['Sheet1']
+        self.assertEqual(ws['B2'].value, 'S/S 25>')
+        self.assertEqual([c.value for c in ws[3]][1:], ['DATA_SEQ#'] + ['Raw Value %d' % j for j in range(1, 26)] + ['MAX', 'MIN', 'AVG', 'STD'])
+        self.assertEqual(ws['B3'].fill.fgColor.rgb, 'FFC6E0B4')
+        self.assertEqual(ws['C3'].fill.fgColor.rgb, 'FFD9E1F2')
+        self.assertTrue(ws['C3'].font.b)
+        self.assertEqual(ws['AD4'].number_format, '###0.0000;\\-###0.0000')
+        changed = sorted({e['row'] for e in edits})
+        self.assertEqual(ws.max_row, 3 + len(changed))
+        new = {(e['row'], e['col']): e['value'] for e in edits}
+        for i, row in enumerate(changed):
+            orig = rows[row - 1]
+            line = [c.value for c in ws[4 + i]]
+            self.assertEqual(ws.cell(4 + i, 3).fill.fgColor.rgb, 'FFFFFF00')
+            self.assertEqual(line[1], orig[hd])
+            raw = line[2:27]
+            want_mv, want_sg = new.get((row, mv), orig[mv]), new.get((row, sg), orig[sg])
+            m = sum(raw) / 25
+            sd = (sum((x - m) ** 2 for x in raw) / 24) ** 0.5
+            self.assertAlmostEqual(m, want_mv, places=3)
+            self.assertAlmostEqual(sd, want_sg, places=3)
+            self.assertAlmostEqual(line[29], m, places=6)  # AVG
+            self.assertAlmostEqual(line[30], sd, places=6)  # STD
+            self.assertEqual((line[27], line[28]), (max(raw), min(raw)))
+
+    # issue #30: deleting and changing values mixed, fewest rows; never more than deleting only or values only
+    def test_min_change_plan_engine(self):
+        vals = [-1, 1, 2, 1, 2, 1, 2, -5, 1, 2, 1, 2, 1, 2, -1, 1, -1]
+        r = self.js("""(vals) => { const c = v => vals.map(() => v);
+            const it = {name: 't', values: vals, labels: vals.map(String), cols: {UCL: c(3), CL: c(0), LCL: c(-3)}};
+            const keys = vals.map((_, k) => k + 2), series = [{item: it, opts: {}, rules: SPC.FIX_RULES, keys}];
+            const p = SPC.minChangePlan(series), v = vals.slice(), gone = {};
+            p.deletes.forEach(x => { gone[x.key] = 1; });
+            p.changes.forEach(x => { v[x.index] = x.value; });
+            const left = SPC.analyze(Object.assign({}, it, {values: v.map((x, k) => gone[keys[k]] ? null : x)}), {}).flags;
+            return {p, left: SPC.FIX_RULES.filter(id => (left[id] || []).length)}; }""", vals)
+        p = r['p']
+        self.assertTrue(p['clean'])
+        self.assertEqual(r['left'], [])
+        # deleting only needs 7 rows (#27 test above); a new value on row 9 (-5) alone is enough
+        self.assertEqual(p['compare']['delete'], 7)
+        self.assertEqual(p['rows'], 1)
+        self.assertEqual([c['key'] for c in p['changes']], [9])
+        self.assertLessEqual(p['rows'], min(n for n in p['compare'].values() if n is not None))
+
+    def test_min_change_button(self):
+        rows = spc_rows(sigma_out=True, sigma_run=True)
+        self.open_file('mix.xlsx', workbook(rows))
+        yellow = self.js('() => window.__spc.yellow()')
+        self.page.click('#mixBtn')
+        self.page.wait_for_function('() => window.__spc.mixPlan()')
+        p = self.js('() => window.__spc.mixPlan()')
+        self.assertTrue(p['clean'])
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), {})
+        self.assertEqual(self.js('() => window.__spc.results()[0].sigmaFlags'), {})
+        self.assertEqual(self.js('() => window.__spc.yellow()'), yellow)
+        cmp = [n for n in p['compare'].values() if n is not None]
+        self.assertLessEqual(p['rows'], min(cmp))
+        self.assertEqual(len(self.js('() => window.__spc.edits()')), len(p['changes']))
+        box = self.page.locator('#delBox').text_content()
+        self.assertIn('최소 행 변경', box)
+        self.assertIn('OCAP · 7run이 나오지 않습니다', box)
+        self.assertTrue(self.page.locator('#delBtn').is_disabled())
+        self.assertEqual(self.page.locator('#mixBtn').text_content(), '최소 행 변경 끄기')
+        with self.page.expect_download() as dl:
+            self.page.click('#delCsvBtn')
+        with open(dl.value.path(), encoding='utf-8-sig') as f:
+            csv = f.read().splitlines()
+        self.assertEqual(csv[0], '구분,엑셀 행,X축,LOT_ID,열,원래 값,새 값,판정')
+        self.assertEqual(len(csv) - 1, len(p['deletes']) + len(p['changes']))
+        self.page.click('#mixBtn')
+        self.assertIsNone(self.js('() => window.__spc.mixPlan()'))
+        self.assertEqual(self.js('() => window.__spc.edits()'), {})
+        self.assertEqual(self.js('() => window.__spc.nowFlags()'), yellow)
+
+    # issue #30: [설정 저장] keeps the settings in the browser and a settings file; [설정 불러오기] reads it back
+    def test_save_and_load_settings(self):
+        self.js("""() => { window.showSaveFilePicker = async (o) => { window.__savedAs = o.suggestedName;
+            const root = await navigator.storage.getDirectory(); return await root.getFileHandle('settings.json', {create: true}); }; }""")
+        self.open_file('t.xlsx', workbook(long_rows(10)))
+        self.page.select_option('#pitchSel', '32')
+        self.page.click('#settingsBtn')
+        self.page.fill('[data-chart="s"][data-n="R2"]', '5')
+        self.page.click('#dOk')
+        self.page.click('#saveSetBtn')
+        self.page.wait_for_function("() => /설정 저장: /.test(document.getElementById('status').textContent)")
+        self.assertIn('이 PC 브라우저', self.page.inner_text('#status'))
+        self.assertEqual(self.js('() => window.__savedAs'), 'SPC_Chart_설정.json')
+        saved = json.loads(base64.b64decode(self.js(GET_FILE, 'settings.json')).decode('utf-8'))
+        self.assertEqual((saved['settings']['pitch'], saved['settings']['sigma']['n']), (32, {'R2': 5}))
+        self.page.reload()  # closed and opened again: the saved settings are back
+        st = self.js('() => window.__spc.settings')
+        self.assertEqual((st['pitch'], st['sigma']['n']), (32, {'R2': 5}))
+        # a browser that forgot everything: the settings file brings it back
+        self.js('() => localStorage.clear()')
+        self.page.reload()
+        self.assertEqual(self.js('() => window.__spc.settings.pitch'), 16)
+        self.page.set_input_files('#setIn', files=[{'name': 'SPC_Chart_설정.json', 'mimeType': 'application/json', 'buffer': json.dumps(saved).encode('utf-8')}])
+        self.page.wait_for_function("() => /설정 불러옴: /.test(document.getElementById('status').textContent)")
+        st = self.js('() => window.__spc.settings')
+        self.assertEqual((st['pitch'], st['sigma']['n']), (32, {'R2': 5}))
+        self.assertEqual(json.loads(self.js("() => localStorage.getItem('spc.settings')"))['pitch'], 32)
+        self.page.set_input_files('#setIn', files=[{'name': 'x.json', 'mimeType': 'application/json', 'buffer': b'{"a": 1}'}])
+        self.page.wait_for_function("() => /설정 파일이 아닙니다/.test(document.getElementById('status').textContent)")
 
     # issue #25: an exporter's .xlsx that Excel opens but whose zip spells the parts differently
     def test_xlsx_with_other_part_names(self):
