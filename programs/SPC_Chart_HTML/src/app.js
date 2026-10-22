@@ -251,7 +251,7 @@
     });
     var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
     table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
-      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h};
+      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h, fmts: sheet && sheet.fmts || [], hidden: sheet && sheet.hidden || {}};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
@@ -705,9 +705,40 @@
   // ---------- data table: yellow = OCAP / 7 run rows, red = recommended values ----------
   function cellText(v) {
     if (v instanceof Date) {
+      v = new Date(Math.round(v.getTime() / 1000) * 1000);  // Excel shows 33.640 s as 34 s
       return v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate()) + ' ' + pad(v.getHours()) + ':' + pad(v.getMinutes()) + ':' + pad(v.getSeconds());
     }
     return v === null || v === undefined ? '' : String(v);
+  }
+
+  // A cell as Excel shows it with its number format (#34: "엑셀 데이터랑 표가 일치하지 않음"): fixed decimals
+  // (###0.0000 -> 64.9600), %, thousands, dates; the value itself (and every calculation) is unchanged.
+  function excelText(v, code) {
+    if (!code || typeof v !== 'number' || !isFinite(v)) {
+      if (v instanceof Date && code && !/s/i.test(code.replace(/"[^"]*"/g, ''))) {
+        var t = cellText(new Date(Math.floor(v.getTime() / 60000) * 60000));  // h:mm drops the seconds like Excel
+        return /h/i.test(code) ? t.slice(0, 16) : t.slice(0, 10);
+      }
+      return cellText(v);
+    }
+    var secs = code.split(';'), sec = v < 0 && secs[1] ? secs[1] : (v === 0 && secs[2] ? secs[2] : secs[0]);
+    var plain = sec.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '').replace(/\\./g, '').replace(/_./g, '');
+    if (/general/i.test(plain) || plain.indexOf('@') >= 0 || !/[0#?]/.test(plain)) return cellText(v);
+    var x = Math.abs(v), pct = plain.indexOf('%') >= 0, out;
+    if (pct) x *= 100;
+    var dec = (plain.match(/\.([0#?]*)/) || ['', ''])[1], min = (dec.match(/0/g) || []).length;
+    if (/E[+-]/i.test(plain)) out = x.toExponential(dec.length).replace('e', 'E').replace(/E(\d)/, 'E+$1');
+    else {
+      out = (+(Math.round(+(x + 'e' + dec.length)) + 'e-' + dec.length)).toFixed(dec.length);  // 3.7125 -> 3.713 like Excel, not 3.712
+      if (dec.length > min) out = out.replace(new RegExp('0{0,' + (dec.length - min) + '}$'), '').replace(/\.$/, '');
+      if (/[0#?],[0#?]/.test(plain)) out = out.replace(/^(\d+)/, function (m) { return m.replace(/\B(?=(\d{3})+(?!\d))/g, ','); });
+    }
+    var neg = v < 0 && (!secs[1] || /-/.test(plain)) && +out.replace(/[^\d.E+-]/g, '') !== 0;
+    return (neg ? '-' : '') + out + (pct ? '%' : '');
+  }
+  function fmtCode(d, c) {
+    var f = table.fmts[d.excelRow - 1];
+    return f && f[c] || null;
   }
 
   function renderValueSum() {
@@ -732,30 +763,32 @@
       if (si >= 0 && vcols.indexOf(si) < 0 && t.values.some(function (n) { return norm(n) === SPC_FORMAT.value; })) vcols.push(si);
     }
     var td = function (d, c) {
-      var e = edits[d.excelRow + ':' + c];
-      return e ? '<td class="fixed" title="원래 값 ' + esc(cellText(e.orig)) + '">' + esc(cellText(e.value)) + '</td>' : '<td>' + esc(cellText(d.cells[c])) + '</td>';
+      var e = edits[d.excelRow + ':' + c], f = fmtCode(d, c);
+      return e ? '<td class="fixed" title="원래 값 ' + esc(excelText(e.orig, f)) + '">' + esc(excelText(e.value, f)) + '</td>' : '<td>' + esc(excelText(d.cells[c], f)) + '</td>';
     };
+    // columns hidden in Excel stay hidden here too (#34)
+    var shown = t.headers.map(function (_, c) { return c; }).filter(function (c) { return !t.hidden[c]; });
     var h = '<thead><tr><th class="rn">행</th><th class="l">판정</th>' + vcols.map(function (c) { return '<th class="vcol">' + esc(t.headers[c]) + '</th>'; }).join('') +
-      '<th class="gap"></th>' + t.headers.map(function (n) {
-      var c = t.values.indexOf(n) >= 0 ? ' class="vcol"' : '';
+      '<th class="gap"></th>' + shown.map(function (c0) {
+      var n = t.headers[c0], c = t.values.indexOf(n) >= 0 ? ' class="vcol"' : '';
       return '<th' + c + '>' + esc(n) + '</th>';
     }).join('') + '</tr></thead><tbody>';
-    var shown = 0;
+    var count = 0;
     var gone = delPlan ? delPlan.round : {};
     t.data.forEach(function (d) {
       var row = d.excelRow, y = yellow[row], now = nowFlags[row], del = gone[row];
       if (only && !y && !now && !del) return;
-      shown++;
+      count++;
       var cls = (y || now ? 'y' : '') + (del ? ' del' : '') + (row === selectedRow ? ' sel' : '');
       var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
       if (now) verdict = esc(verdict);
       if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">' + (mixPlan ? '삭제 (최소 행 변경)' : '삭제 ' + del + '차') + '</span> ' + esc(delRules(row).map(shortRule).join(', '));
       h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
         vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
-      for (var c = 0; c < t.headers.length; c++) h += td(d, c);
+      shown.forEach(function (c) { h += td(d, c); });
       h += '</tr>';
     });
-    if (!shown) h += '<tr><td colspan="' + (t.headers.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
+    if (!count) h += '<tr><td colspan="' + (shown.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
     $('dataTable').innerHTML = h + '</tbody>';
     pick = null;
     renderDelBox();

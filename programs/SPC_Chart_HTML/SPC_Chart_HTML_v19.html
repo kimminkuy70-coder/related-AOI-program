@@ -2,7 +2,7 @@
 <!-- Nothing leaves this PC: the browser refuses every network connection from this page (connect-src 'none');
      the Excel file is only read from the file picked in Edge's file dialog. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v18"><title>SPC Chart HTML v18</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="author" content="김민규"><meta name="spc-title" content="SPC Chart HTML v19"><title>SPC Chart HTML v19</title><style>
 :root {
   --bg: #f4f6f9; --panel: #fff; --line: #d9dee6; --text: #1d2330; --muted: #6b7486;
   --blue: #2563eb; --ok: #15803d; --warn: #d97706; --bad: #dc2626;
@@ -363,6 +363,11 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return parts.join('/');
   }
 
+  // Built-in number formats (ECMA-376 18.8.30) for showing a value as Excel shows it (#34).
+  var BUILTIN_FMT = {0: 'General', 1: '0', 2: '0.00', 3: '#,##0', 4: '#,##0.00', 9: '0%', 10: '0.00%', 11: '0.00E+00', 12: '# ?/?', 13: '# ??/??',
+    14: 'yyyy-mm-dd', 15: 'd-mmm-yy', 16: 'd-mmm', 17: 'mmm-yy', 18: 'h:mm AM/PM', 19: 'h:mm:ss AM/PM', 20: 'h:mm', 21: 'h:mm:ss', 22: 'yyyy-mm-dd h:mm',
+    37: '#,##0 ;(#,##0)', 38: '#,##0 ;[Red](#,##0)', 39: '#,##0.00;(#,##0.00)', 40: '#,##0.00;[Red](#,##0.00)', 45: 'mm:ss', 46: '[h]:mm:ss', 47: 'mm:ss.0',
+    48: '##0.0E+0', 49: '@'};
   var DATE_IDS = {14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 19: 1, 20: 1, 21: 1, 22: 1, 45: 1, 46: 1, 47: 1};
 
   function isDateFormat(code) {
@@ -441,7 +446,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       var sis = tags(xml(sst), 'si');
       for (i = 0; i < sis.length; i++) shared.push(stringText(sis[i]));
     }
-    var dateStyle = [], styles = pt.styles && zip.text(pt.styles);
+    var dateStyle = [], fmtOf = [], styles = pt.styles && zip.text(pt.styles);
     if (styles) {
       var sd = xml(styles), custom = {}, nf = tags(sd, 'numFmt');
       for (i = 0; i < nf.length; i++) custom[nf[i].getAttribute('numFmtId')] = nf[i].getAttribute('formatCode') || '';
@@ -450,6 +455,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
         for (var x = xfsNode.firstElementChild; x; x = x.nextElementSibling) {
           var id = +x.getAttribute('numFmtId');
           dateStyle.push(!!DATE_IDS[id] || (custom[id] !== undefined && isDateFormat(custom[id])));
+          fmtOf.push(custom[id] !== undefined ? custom[id] : BUILTIN_FMT[id] || 'General');
         }
       }
     }
@@ -459,7 +465,8 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       var path = rels[rid] || resolve(wbPath, 'worksheets/sheet' + (i + 1) + '.xml');
       var text = zip.text(path);
       if (text === null) continue;
-      sheets.push({name: s.getAttribute('name'), path: path, rows: readSheet(xml(text), shared, dateStyle, date1904)});
+      var sh = readSheet(xml(text), shared, dateStyle, date1904, fmtOf);
+      sheets.push({name: s.getAttribute('name'), path: path, rows: sh.rows, fmts: sh.fmts, hidden: sh.hidden});
     }
     return sheets;
   }
@@ -505,10 +512,15 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     return sheets;
   }
 
-  function readSheet(doc, shared, dateStyle, date1904) {
-    var rows = [], rowNodes = tags(doc, 'row');
+  // rows of values; fmts = the number format code of each cell (null for General), hidden = {column index: true} (#34)
+  function readSheet(doc, shared, dateStyle, date1904, fmtOf) {
+    var rows = [], fmts = [], hidden = {}, rowNodes = tags(doc, 'row'), cols = tags(doc, 'col');
+    for (var h = 0; h < cols.length; h++) {
+      if (!/^(1|true)$/.test(cols[h].getAttribute('hidden') || '')) continue;
+      for (var hc = +cols[h].getAttribute('min'); hc <= +cols[h].getAttribute('max') && hc <= 16384; hc++) hidden[hc - 1] = true;
+    }
     for (var r = 0; r < rowNodes.length; r++) {
-      var rn = rowNodes[r], ri = rn.getAttribute('r') ? +rn.getAttribute('r') - 1 : rows.length, row = [], col = 0;
+      var rn = rowNodes[r], ri = rn.getAttribute('r') ? +rn.getAttribute('r') - 1 : rows.length, row = [], frow = [], col = 0;
       for (var c = rn.firstElementChild; c; c = c.nextElementSibling) {
         if (c.localName !== 'c') continue;
         var ref = c.getAttribute('r');
@@ -524,21 +536,25 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
           if (dateStyle[+(c.getAttribute('s') || 0)] && isFinite(val)) val = serialToDate(val, date1904);
         }
         if (typeof val === 'string' && val === '') val = null;
+        var fc = fmtOf && fmtOf[+(c.getAttribute('s') || 0)];
+        if (fc && fc !== 'General') frow[col] = fc;
         row[col] = val;
         col++;
       }
       for (var k = 0; k < row.length; k++) if (row[k] === undefined) row[k] = null;
       rows[ri] = row;
+      fmts[ri] = frow;
     }
     for (var q = 0; q < rows.length; q++) if (!rows[q]) rows[q] = [];
-    return rows;
+    return {rows: rows, fmts: fmts, hidden: hidden};
   }
 
   // Excel serial day -> Date shown in local time with the same wall-clock digits Excel shows.
   function serialToDate(v, date1904) {
     var ms = Math.round((v + (date1904 ? 1462 : 0) - 25569) * 86400000);
     var d = new Date(ms);
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+    // milliseconds kept: Excel rounds 05:47:33.640 to 05:47:34 on screen (#34)
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
   }
 
   function decodeText(buf) {
@@ -1704,7 +1720,7 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
     });
     var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
     table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
-      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h};
+      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h, fmts: sheet && sheet.fmts || [], hidden: sheet && sheet.hidden || {}};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
@@ -2158,9 +2174,40 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
   // ---------- data table: yellow = OCAP / 7 run rows, red = recommended values ----------
   function cellText(v) {
     if (v instanceof Date) {
+      v = new Date(Math.round(v.getTime() / 1000) * 1000);  // Excel shows 33.640 s as 34 s
       return v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate()) + ' ' + pad(v.getHours()) + ':' + pad(v.getMinutes()) + ':' + pad(v.getSeconds());
     }
     return v === null || v === undefined ? '' : String(v);
+  }
+
+  // A cell as Excel shows it with its number format (#34: "엑셀 데이터랑 표가 일치하지 않음"): fixed decimals
+  // (###0.0000 -> 64.9600), %, thousands, dates; the value itself (and every calculation) is unchanged.
+  function excelText(v, code) {
+    if (!code || typeof v !== 'number' || !isFinite(v)) {
+      if (v instanceof Date && code && !/s/i.test(code.replace(/"[^"]*"/g, ''))) {
+        var t = cellText(new Date(Math.floor(v.getTime() / 60000) * 60000));  // h:mm drops the seconds like Excel
+        return /h/i.test(code) ? t.slice(0, 16) : t.slice(0, 10);
+      }
+      return cellText(v);
+    }
+    var secs = code.split(';'), sec = v < 0 && secs[1] ? secs[1] : (v === 0 && secs[2] ? secs[2] : secs[0]);
+    var plain = sec.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '').replace(/\\./g, '').replace(/_./g, '');
+    if (/general/i.test(plain) || plain.indexOf('@') >= 0 || !/[0#?]/.test(plain)) return cellText(v);
+    var x = Math.abs(v), pct = plain.indexOf('%') >= 0, out;
+    if (pct) x *= 100;
+    var dec = (plain.match(/\.([0#?]*)/) || ['', ''])[1], min = (dec.match(/0/g) || []).length;
+    if (/E[+-]/i.test(plain)) out = x.toExponential(dec.length).replace('e', 'E').replace(/E(\d)/, 'E+$1');
+    else {
+      out = (+(Math.round(+(x + 'e' + dec.length)) + 'e-' + dec.length)).toFixed(dec.length);  // 3.7125 -> 3.713 like Excel, not 3.712
+      if (dec.length > min) out = out.replace(new RegExp('0{0,' + (dec.length - min) + '}$'), '').replace(/\.$/, '');
+      if (/[0#?],[0#?]/.test(plain)) out = out.replace(/^(\d+)/, function (m) { return m.replace(/\B(?=(\d{3})+(?!\d))/g, ','); });
+    }
+    var neg = v < 0 && (!secs[1] || /-/.test(plain)) && +out.replace(/[^\d.E+-]/g, '') !== 0;
+    return (neg ? '-' : '') + out + (pct ? '%' : '');
+  }
+  function fmtCode(d, c) {
+    var f = table.fmts[d.excelRow - 1];
+    return f && f[c] || null;
   }
 
   function renderValueSum() {
@@ -2185,30 +2232,32 @@ table.data tr.flash td { animation: flash 1.2s ease-out 2; }
       if (si >= 0 && vcols.indexOf(si) < 0 && t.values.some(function (n) { return norm(n) === SPC_FORMAT.value; })) vcols.push(si);
     }
     var td = function (d, c) {
-      var e = edits[d.excelRow + ':' + c];
-      return e ? '<td class="fixed" title="원래 값 ' + esc(cellText(e.orig)) + '">' + esc(cellText(e.value)) + '</td>' : '<td>' + esc(cellText(d.cells[c])) + '</td>';
+      var e = edits[d.excelRow + ':' + c], f = fmtCode(d, c);
+      return e ? '<td class="fixed" title="원래 값 ' + esc(excelText(e.orig, f)) + '">' + esc(excelText(e.value, f)) + '</td>' : '<td>' + esc(excelText(d.cells[c], f)) + '</td>';
     };
+    // columns hidden in Excel stay hidden here too (#34)
+    var shown = t.headers.map(function (_, c) { return c; }).filter(function (c) { return !t.hidden[c]; });
     var h = '<thead><tr><th class="rn">행</th><th class="l">판정</th>' + vcols.map(function (c) { return '<th class="vcol">' + esc(t.headers[c]) + '</th>'; }).join('') +
-      '<th class="gap"></th>' + t.headers.map(function (n) {
-      var c = t.values.indexOf(n) >= 0 ? ' class="vcol"' : '';
+      '<th class="gap"></th>' + shown.map(function (c0) {
+      var n = t.headers[c0], c = t.values.indexOf(n) >= 0 ? ' class="vcol"' : '';
       return '<th' + c + '>' + esc(n) + '</th>';
     }).join('') + '</tr></thead><tbody>';
-    var shown = 0;
+    var count = 0;
     var gone = delPlan ? delPlan.round : {};
     t.data.forEach(function (d) {
       var row = d.excelRow, y = yellow[row], now = nowFlags[row], del = gone[row];
       if (only && !y && !now && !del) return;
-      shown++;
+      count++;
       var cls = (y || now ? 'y' : '') + (del ? ' del' : '') + (row === selectedRow ? ' sel' : '');
       var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
       if (now) verdict = esc(verdict);
       if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">' + (mixPlan ? '삭제 (최소 행 변경)' : '삭제 ' + del + '차') + '</span> ' + esc(delRules(row).map(shortRule).join(', '));
       h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
         vcols.map(function (c) { return td(d, c); }).join('') + '<td class="gap"></td>';
-      for (var c = 0; c < t.headers.length; c++) h += td(d, c);
+      shown.forEach(function (c) { h += td(d, c); });
       h += '</tr>';
     });
-    if (!shown) h += '<tr><td colspan="' + (t.headers.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
+    if (!count) h += '<tr><td colspan="' + (shown.length + vcols.length + 3) + '" class="l muted">' + (only ? 'OCAP · 7run 행 없음' : '데이터 없음') + '</td></tr>';
     $('dataTable').innerHTML = h + '</tbody>';
     pick = null;
     renderDelBox();

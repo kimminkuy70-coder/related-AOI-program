@@ -83,6 +83,11 @@
     return parts.join('/');
   }
 
+  // Built-in number formats (ECMA-376 18.8.30) for showing a value as Excel shows it (#34).
+  var BUILTIN_FMT = {0: 'General', 1: '0', 2: '0.00', 3: '#,##0', 4: '#,##0.00', 9: '0%', 10: '0.00%', 11: '0.00E+00', 12: '# ?/?', 13: '# ??/??',
+    14: 'yyyy-mm-dd', 15: 'd-mmm-yy', 16: 'd-mmm', 17: 'mmm-yy', 18: 'h:mm AM/PM', 19: 'h:mm:ss AM/PM', 20: 'h:mm', 21: 'h:mm:ss', 22: 'yyyy-mm-dd h:mm',
+    37: '#,##0 ;(#,##0)', 38: '#,##0 ;[Red](#,##0)', 39: '#,##0.00;(#,##0.00)', 40: '#,##0.00;[Red](#,##0.00)', 45: 'mm:ss', 46: '[h]:mm:ss', 47: 'mm:ss.0',
+    48: '##0.0E+0', 49: '@'};
   var DATE_IDS = {14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 19: 1, 20: 1, 21: 1, 22: 1, 45: 1, 46: 1, 47: 1};
 
   function isDateFormat(code) {
@@ -161,7 +166,7 @@
       var sis = tags(xml(sst), 'si');
       for (i = 0; i < sis.length; i++) shared.push(stringText(sis[i]));
     }
-    var dateStyle = [], styles = pt.styles && zip.text(pt.styles);
+    var dateStyle = [], fmtOf = [], styles = pt.styles && zip.text(pt.styles);
     if (styles) {
       var sd = xml(styles), custom = {}, nf = tags(sd, 'numFmt');
       for (i = 0; i < nf.length; i++) custom[nf[i].getAttribute('numFmtId')] = nf[i].getAttribute('formatCode') || '';
@@ -170,6 +175,7 @@
         for (var x = xfsNode.firstElementChild; x; x = x.nextElementSibling) {
           var id = +x.getAttribute('numFmtId');
           dateStyle.push(!!DATE_IDS[id] || (custom[id] !== undefined && isDateFormat(custom[id])));
+          fmtOf.push(custom[id] !== undefined ? custom[id] : BUILTIN_FMT[id] || 'General');
         }
       }
     }
@@ -179,7 +185,8 @@
       var path = rels[rid] || resolve(wbPath, 'worksheets/sheet' + (i + 1) + '.xml');
       var text = zip.text(path);
       if (text === null) continue;
-      sheets.push({name: s.getAttribute('name'), path: path, rows: readSheet(xml(text), shared, dateStyle, date1904)});
+      var sh = readSheet(xml(text), shared, dateStyle, date1904, fmtOf);
+      sheets.push({name: s.getAttribute('name'), path: path, rows: sh.rows, fmts: sh.fmts, hidden: sh.hidden});
     }
     return sheets;
   }
@@ -225,10 +232,15 @@
     return sheets;
   }
 
-  function readSheet(doc, shared, dateStyle, date1904) {
-    var rows = [], rowNodes = tags(doc, 'row');
+  // rows of values; fmts = the number format code of each cell (null for General), hidden = {column index: true} (#34)
+  function readSheet(doc, shared, dateStyle, date1904, fmtOf) {
+    var rows = [], fmts = [], hidden = {}, rowNodes = tags(doc, 'row'), cols = tags(doc, 'col');
+    for (var h = 0; h < cols.length; h++) {
+      if (!/^(1|true)$/.test(cols[h].getAttribute('hidden') || '')) continue;
+      for (var hc = +cols[h].getAttribute('min'); hc <= +cols[h].getAttribute('max') && hc <= 16384; hc++) hidden[hc - 1] = true;
+    }
     for (var r = 0; r < rowNodes.length; r++) {
-      var rn = rowNodes[r], ri = rn.getAttribute('r') ? +rn.getAttribute('r') - 1 : rows.length, row = [], col = 0;
+      var rn = rowNodes[r], ri = rn.getAttribute('r') ? +rn.getAttribute('r') - 1 : rows.length, row = [], frow = [], col = 0;
       for (var c = rn.firstElementChild; c; c = c.nextElementSibling) {
         if (c.localName !== 'c') continue;
         var ref = c.getAttribute('r');
@@ -244,21 +256,25 @@
           if (dateStyle[+(c.getAttribute('s') || 0)] && isFinite(val)) val = serialToDate(val, date1904);
         }
         if (typeof val === 'string' && val === '') val = null;
+        var fc = fmtOf && fmtOf[+(c.getAttribute('s') || 0)];
+        if (fc && fc !== 'General') frow[col] = fc;
         row[col] = val;
         col++;
       }
       for (var k = 0; k < row.length; k++) if (row[k] === undefined) row[k] = null;
       rows[ri] = row;
+      fmts[ri] = frow;
     }
     for (var q = 0; q < rows.length; q++) if (!rows[q]) rows[q] = [];
-    return rows;
+    return {rows: rows, fmts: fmts, hidden: hidden};
   }
 
   // Excel serial day -> Date shown in local time with the same wall-clock digits Excel shows.
   function serialToDate(v, date1904) {
     var ms = Math.round((v + (date1904 ? 1462 : 0) - 25569) * 86400000);
     var d = new Date(ms);
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+    // milliseconds kept: Excel rounds 05:47:33.640 to 05:47:34 on screen (#34)
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
   }
 
   function decodeText(buf) {

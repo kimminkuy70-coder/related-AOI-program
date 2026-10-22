@@ -757,6 +757,40 @@ class SpcChartTest(unittest.TestCase):
         self.page.wait_for_function('() => !!window.__spc.results()[0].sigma.cl')
         self.assertIn('SR3', self.js('() => window.__spc.results()[0].sigmaFlags'))
 
+    def test_table_shows_cells_like_excel(self):  # issue #34: the data table must match the sheet as Excel shows it
+        rows = spc_rows()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append([None] + list(rows[0]))  # column A empty and hidden like the SPC system export
+        t0 = datetime.datetime(2026, 7, 1, 5, 47, 33, 640000)
+        for i, r in enumerate(rows[1:]):
+            r = list(r)
+            r[SPC_HEADERS.index('TRAN_TIME')] = t0 + datetime.timedelta(hours=i)
+            r[SPC_HEADERS.index('EXT_MV_UCL')] = 67.4204358656
+            ws.append([None] + r)
+        ws.column_dimensions['A'].hidden = True
+        col = lambda name: SPC_HEADERS.index(name) + 2
+        for row in ws.iter_rows(min_row=2):
+            row[col('EXT_MV') - 1].number_format = '###0.0000;-###0.0000'
+            row[col('EXT_MV_UCL') - 1].number_format = '###0.000;-###0.000'
+            row[col('TRAN_TIME') - 1].number_format = 'yyyy-MM-dd HH:mm:ss'
+            row[col('CPK') - 1].number_format = '0.0%'
+        buf = io.BytesIO()
+        wb.save(buf)
+        self.open_file('fmt.xlsx', buf.getvalue())
+        heads = self.js("() => Array.from(document.querySelectorAll('#dataTable thead th')).map(th => th.textContent)")
+        self.assertNotIn('열 A', heads)
+        cell = lambda name: self.js("""([name]) => { const th = Array.from(document.querySelectorAll('#dataTable thead th'));
+            const i = th.map(x => x.textContent).lastIndexOf(name);
+            return document.querySelector('#dataTable tbody tr').cells[i].textContent; }""", [name])
+        v0 = rows[1][SPC_HEADERS.index('EXT_MV')]
+        self.assertEqual(cell('EXT_MV'), '%.4f' % v0)
+        self.assertEqual(cell('EXT_MV_UCL'), '67.420')
+        self.assertEqual(cell('TRAN_TIME'), '2026-07-01 05:47:34')  # Excel rounds 33.64 s
+        self.assertEqual(cell('CPK'), '320.0%')
+        # values themselves unchanged: the chart and the rules use the full number
+        self.assertAlmostEqual(self.js('() => window.__spc.results()[0].limits.UCL.values[0]'), 67.4204358656)
+
     def test_xbar_without_center_has_no_run(self):  # issue #34: the XBAR chart like the SIGMA one (#33)
         rows = spc_rows()
         mc = SPC_HEADERS.index('EXT_MV_CENTER')
