@@ -735,6 +735,28 @@ class SpcChartTest(unittest.TestCase):
         self.assertNotIn('auto', st)
         self.assertNotIn('pollSec', st)
 
+    # issue #33: EXT_SIGMA_CENTER empty -> no SIGMA run / trend (the SPC system has none); OCAP still judged
+    def test_sigma_without_center_has_no_run_or_trend(self):
+        rows = spc_rows(sigma_out=True)
+        sg, sc = SPC_HEADERS.index('EXT_SIGMA'), SPC_HEADERS.index('EXT_SIGMA_CENTER')
+        for k, i in enumerate(range(30, 36)):  # 6 rising SIGMA points inside the limits
+            rows[i + 1][sg] = round(0.3 + 0.1 * k, 2)
+        for r in rows[1:]:
+            r[sc] = None
+        self.open_file('nocl.xlsx', workbook(rows))
+        res = self.js('() => { const r = window.__spc.results()[0]; return {s: r.sigmaFlags, cl: r.sigma.cl}; }')
+        self.assertIsNone(res['cl'])
+        self.assertEqual(sorted(res['s']), ['SR1'])  # all values below the UCL/LCL middle: a run before v17
+        self.assertEqual(res['s']['SR1'], [SPC_SIGMA_OUT])
+        self.assertIn(str(SPC_SIGMA_OUT + 2), self.js('() => window.__spc.yellow()'))
+        self.assertNotIn('37', self.js('() => window.__spc.yellow()'))
+        # with the center the same rows give a trend again
+        for r in rows[1:]:
+            r[sc] = 0.564
+        self.open_file('withcl.xlsx', workbook(rows))
+        self.page.wait_for_function('() => !!window.__spc.results()[0].sigma.cl')
+        self.assertIn('SR3', self.js('() => window.__spc.results()[0].sigmaFlags'))
+
     def test_delete_simulation_clears_xbar_and_sigma(self):
         rows = spc_rows(sigma_out=True, sigma_run=True)
         self.open_file('del.xlsx', workbook(rows))

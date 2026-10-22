@@ -354,13 +354,14 @@
   function fixRules() { return SPC.FIX_RULES.filter(function (id) { return settings.rules[id]; }); }
 
   // SIGMA chart rules (#25): OCAP = outside EXT_SIGMA_UCL/LCL, 7 run = run / trend around EXT_SIGMA_CENTER.
+  // Without EXT_SIGMA_CENTER numbers no run / trend at all, like the SPC system (#33, fileCl).
   // No spec limits for a sigma. Their ids carry an S (SR1, SR2, SR3) next to the XBAR ones.
   var SIGMA_RULES = ['R1', 'R2', 'R3'];
   function sigmaRules() { return SIGMA_RULES.filter(function (id) { return settings.sigma.rules[id]; }); }
   function sigmaOpts() {
     var on = {};
     sigmaRules().forEach(function (id) { on[id] = true; });
-    return {subgroup: 1, baseline: 0, rules: on, n: settings.sigma.n, manual: {}, min: 0};
+    return {subgroup: 1, baseline: 0, rules: on, n: settings.sigma.n, manual: {}, min: 0, fileCl: true};
   }
   // The SIGMA series as an item of its own, row for row with its XBAR item (same indexes).
   function sigmaItem(it) {
@@ -1602,7 +1603,7 @@
     if (S.lcl) vis = vis.concat(S.lcl.slice(from));
     var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom);
     var step = sp.step, X = sp.X, a = sp.a, b = sp.b;
-    chartTitle(g, 'SIGMA 차트', left);
+    chartTitle(g, S.cl ? 'SIGMA 차트' : 'SIGMA 차트 (CL 없음: Run · Trend 판정 안 함)', left);
     canvas._hit = {from: a, to: b, X: X, Y: Y, res: r, kind: 's'};
     if (!n) return;
     limitLine(g, X, Y, S.ucl, from, n, '#ea580c', [6, 4], 'UCL');
@@ -1847,7 +1848,7 @@
     SPC.RULES.forEach(function (r) {
       h += '<div class="ruleset">' + ruleRow(r, 'x', settings) + '<textarea data-ocap="' + r.id + '" placeholder="이 규칙에 걸리면 할 조치 (OCAP, 두 차트 공통)">' + esc(settings.ocap[r.id] || '') + '</textarea></div>';
     });
-    h += '<h4>SIGMA 차트 (SPC 시스템 양식의 EXT_SIGMA)</h4><p class="muted small">OCAP 조치 문구는 위 XBAR 차트의 같은 규칙 문구를 같이 씁니다.</p>';
+    h += '<h4>SIGMA 차트 (SPC 시스템 양식의 EXT_SIGMA)</h4><p class="muted small">OCAP 조치 문구는 위 XBAR 차트의 같은 규칙 문구를 같이 씁니다. EXT_SIGMA_CENTER(CL)가 비어 있으면 SPC 시스템처럼 Run · Trend는 판정하지 않습니다 (관리한계 이탈만).</p>';
     SPC.RULES.forEach(function (r) {
       if (SIGMA_RULES.indexOf(r.id) >= 0) h += '<div class="ruleset">' + ruleRow(r, 's', settings.sigma) + '</div>';
     });

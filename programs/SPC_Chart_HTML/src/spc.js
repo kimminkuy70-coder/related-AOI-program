@@ -106,7 +106,15 @@
     var usl = limit('USL', null), lsl = limit('LSL', null);
     var ucl0 = limit('UCL', null), lcl0 = limit('LCL', null);
     var cl = limit('CL', null);
-    if (!cl.values && ucl0.values && lcl0.values) {
+    // opts.fileCl (SIGMA chart, #33): a CL only from the file. The SPC system judges no run / trend on a chart
+    // without a center line, and the middle of UCL/LCL (LCL often 0) is not the center of a sigma.
+    if (opts.fileCl && !cl.values) {
+      var c0 = ucl0.values && lcl0.values ? null : (isFinite(xbar) ? constant(xbar, n) : null);  // only for computed UCL/LCL
+      var ucl1 = ucl0.values ? ucl0 : {values: c0 && isFinite(spread) ? c0.map(function (c) { return c + spread; }) : null, source: '계산'};
+      var lcl1 = lcl0.values ? lcl0 : {values: c0 && isFinite(spread) ? c0.map(function (c) { return c - spread; }) : null, source: '계산'};
+      ucl0 = ucl1;
+      lcl0 = lcl1;
+    } else if (!cl.values && ucl0.values && lcl0.values) {
       cl = {values: ucl0.values.map(function (u, k) { return (u + lcl0.values[k]) / 2; }), source: '계산 (UCL/LCL 가운데)'};
     } else if (!cl.values && isFinite(xbar)) {
       cl = {values: constant(xbar, n), source: '계산'};
