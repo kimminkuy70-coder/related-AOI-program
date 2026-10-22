@@ -106,7 +106,7 @@
     var usl = limit('USL', null), lsl = limit('LSL', null);
     var ucl0 = limit('UCL', null), lcl0 = limit('LCL', null);
     var cl = limit('CL', null);
-    // opts.fileCl (SIGMA chart, #33): a CL only from the file. The SPC system judges no run / trend on a chart
+    // opts.fileCl (SPC system format: SIGMA #33, XBAR #34): a CL only from the file. The SPC system judges no run / trend on a chart
     // without a center line, and the middle of UCL/LCL (LCL often 0) is not the center of a sigma.
     if (opts.fileCl && !cl.values) {
       var c0 = ucl0.values && lcl0.values ? null : (isFinite(xbar) ? constant(xbar, n) : null);  // only for computed UCL/LCL

@@ -757,6 +757,25 @@ class SpcChartTest(unittest.TestCase):
         self.page.wait_for_function('() => !!window.__spc.results()[0].sigma.cl')
         self.assertIn('SR3', self.js('() => window.__spc.results()[0].sigmaFlags'))
 
+    def test_xbar_without_center_has_no_run(self):  # issue #34: the XBAR chart like the SIGMA one (#33)
+        rows = spc_rows()
+        mc = SPC_HEADERS.index('EXT_MV_CENTER')
+        for r in rows[1:]:
+            r[mc] = None
+        self.open_file('nomvcl.xlsx', workbook(rows))
+        res = self.js('() => { const r = window.__spc.results()[0]; return {flags: r.flags, cl: r.limits.CL.values}; }')
+        self.assertIsNone(res['cl'])  # not the middle of EXT_MV_UCL/LCL any more
+        self.assertNotIn('R2', res['flags'])
+        self.assertEqual(res['flags']['R1'], [SPC_OUT])
+        yellow = self.js('() => window.__spc.yellow()')
+        self.assertEqual(list(yellow), [str(SPC_OUT + 2)])
+        # with the center the run is back
+        for r in rows[1:]:
+            r[mc] = 6.52
+        self.open_file('withmvcl.xlsx', workbook(rows))
+        self.page.wait_for_function('() => !!window.__spc.results()[0].limits.CL.values')
+        self.assertIn('R2', self.js('() => window.__spc.results()[0].flags'))
+
     def test_delete_simulation_clears_xbar_and_sigma(self):
         rows = spc_rows(sigma_out=True, sigma_run=True)
         self.open_file('del.xlsx', workbook(rows))

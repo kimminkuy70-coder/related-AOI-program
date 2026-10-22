@@ -1,7 +1,7 @@
-SPC Chart HTML v17 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge에서 바로 실행)
+SPC Chart HTML v18 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge에서 바로 실행)
 
 무엇인가
-- SPC_Chart_HTML_v17.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
+- SPC_Chart_HTML_v18.html 을 Microsoft Edge로 열면 바로 실행됩니다 (Chrome도 가능). 설치할 것이 없습니다.
 - 실시간 감시가 아니라, 정해진 기간 동안의 데이터(엑셀 시트 .xlsx / .xlsm / .csv)를 SPC 차트로 보는 프로그램입니다.
 - 기간 전체를 그립니다. 점이 많아 화면을 넘으면 차트 아래 가로 스크롤 막대(또는 Shift + 마우스 휠)로 넘겨 봅니다.
   XBAR와 SIGMA(또는 MR) 차트는 같이 움직이고, 왼쪽 Y축 눈금과 오른쪽 UCL/LCL 글자는 제자리에 있습니다.
@@ -20,7 +20,7 @@ SPC Chart HTML v17 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge
 - xlsx 압축 풀기용 pako(MIT) 코드를 파일 안에 넣었습니다 (외부에서 불러오지 않음).
 
 사용 순서
-1. SPC_Chart_HTML_v17.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터(300시간 기간)로 화면을 미리 볼 수 있습니다.
+1. SPC_Chart_HTML_v18.html 을 Edge로 엽니다. [예제 보기]를 누르면 예제 데이터(300시간 기간)로 화면을 미리 볼 수 있습니다.
 2. [엑셀 열기] → 엑셀 파일 선택. Edge가 파일 보기를 물으면 [허용]. 파일을 창에 끌어 놓아도 됩니다.
 3. 엑셀에서 데이터를 고쳐 저장했으면 [새로고침]을 누르면 다시 읽습니다.
    [자동 새로고침]은 v13에서 없앴습니다 (#29, 정해진 기간의 데이터를 보는 프로그램).
@@ -42,6 +42,8 @@ SPC Chart HTML v17 (정해진 기간의 엑셀 데이터 → SPC 관리도, Edge
 - SPC 시스템에서 내려받은 양식(한 줄 = 한 Lot, EXT_MV · EXT_MV_UCL · EXT_MV_CENTER · EXT_MV_LCL · USL · LSL · LOT_ID …)은
   자동으로 알아봅니다 (위쪽에 "SPC 시스템 양식" 표시). 항목은 Item 열.
   · XBAR 차트: EXT_MV. 선은 UCL/LCL(EXT_MV_UCL/LCL 열)만 그립니다 (USL/LSL/CL 선 없음, 판정에는 USL/LSL/EXT_MV_CENTER를 씀).
+    EXT_MV_CENTER(CL) 칸이 비어 있으면 SIGMA 차트와 똑같이 Run(7run) · Trend는 판정하지 않고 규격 · 관리한계 이탈만 봅니다
+    (v18, #34. 전에는 UCL/LCL 가운데를 CL로 계산해 판정했음). 차트 제목에 "CL 없음"이 나옵니다. SPC 시스템 양식이 아닌 엑셀은 그대로 계산 CL을 씁니다.
   · SIGMA 차트: XBAR 바로 아래에 EXT_SIGMA, 선은 EXT_SIGMA_UCL/LCL. v6부터 XBAR처럼 판정합니다:
     OCAP = EXT_SIGMA_UCL/LCL 밖, 7run = EXT_SIGMA_CENTER 기준 7점 연속 한쪽, Trend = 6점 연속 상승/하강 (규칙 이름 앞에 "SIGMA").
     걸린 점은 주황, 그 행은 노란색, 이상 목록(OCAP)에도 나옵니다. v13부터 규칙 켜기 · 점 수는 [규칙 · OCAP 설정]의
@@ -72,6 +74,7 @@ XBAR 차트 (SPC 시스템 양식이 아니면 값 차트)
 - 연속 3점 중 2점이 같은 쪽 2σ 밖                                   기본 꺼짐 (v8부터)
 - 연속 5점 중 4점이 같은 쪽 1σ 밖                                   기본 꺼짐 (v8부터)
 - 14점 연속 오르내림 반복 / 15점 연속 ±1σ 안 / 8점 연속 ±1σ 밖       기본 꺼짐
+- SPC 시스템 양식에서 EXT_MV_CENTER(CL)가 비어 있으면 Run · Trend는 판정하지 않음 (켜 있어도, v18 #34)
 SIGMA 차트 (SPC 시스템 양식의 EXT_SIGMA)
 - 관리한계 이탈 (EXT_SIGMA_UCL/LCL 밖)                              기본 켜짐 (OCAP)
 - Run: 7점 연속 중심선 한쪽                                         기본 켜짐 (7run)

@@ -348,8 +348,11 @@
     return list;
   }
 
+  // SPC system format: the XBAR chart too takes its CL only from the file (EXT_MV_CENTER) or a typed one,
+  // without it no run / trend (owner, #34: "XBAR 차트도 똑같이"). Other sheets keep the computed CL of I-MR / Xbar-R.
   function optsFor(name) {
-    return {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n, manual: settings.manual[name] || {}};
+    return {subgroup: settings.subgroup, baseline: settings.baseline, rules: settings.rules, n: settings.n, manual: settings.manual[name] || {},
+      fileCl: !!(table && table.spcForm)};
   }
   function fixRules() { return SPC.FIX_RULES.filter(function (id) { return settings.rules[id]; }); }
 
@@ -1530,7 +1533,7 @@
     var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom), ctx = g.ctx;
     var step = sp.step, X = sp.X, a = sp.a, b = sp.b;
     canvas._hit = {from: a, to: b, X: X, Y: Y, res: r, kind: 'x'};
-    if (r.spcForm) chartTitle(g, r.size > 1 ? 'XBAR 차트 (n=' + r.size + ')' : 'XBAR 차트', left);
+    if (r.spcForm) chartTitle(g, (r.size > 1 ? 'XBAR 차트 (n=' + r.size + ')' : 'XBAR 차트') + (r.limits.CL.values ? '' : ' (CL 없음: Run · Trend 판정 안 함)'), left);
     if (!n) return;
 
     if (r.spcForm) {
@@ -1844,7 +1847,7 @@
         (r.n ? '<label><input type="number" min="2" max="50" data-chart="' + chart + '" data-n="' + r.id + '" value="' + (set.n[r.id] || r.n) + '"> 점</label>' : '') +
         '<span class="muted">' + esc(r.desc) + '</span></div>';
     };
-    h += '<h4>XBAR 차트 (값 차트)</h4>';
+    h += '<h4>XBAR 차트 (값 차트)</h4><p class="muted small">SPC 시스템 양식에서 EXT_MV_CENTER(CL)가 비어 있으면 SPC 시스템처럼 Run · Trend는 판정하지 않습니다 (규격 · 관리한계 이탈만).</p>';
     SPC.RULES.forEach(function (r) {
       h += '<div class="ruleset">' + ruleRow(r, 'x', settings) + '<textarea data-ocap="' + r.id + '" placeholder="이 규칙에 걸리면 할 조치 (OCAP, 두 차트 공통)">' + esc(settings.ocap[r.id] || '') + '</textarea></div>';
     });
