@@ -17,7 +17,7 @@
   // USL/LSL, LOT_ID, TRAN_TIME, VALUE_1..25): drawn like the SPC system, an XBAR chart (EXT_MV, UCL/LCL lines only)
   // over a SIGMA chart (EXT_SIGMA), X axis date and time.
   var SPC_FORMAT = {value: 'extmv', needs: 'extmvucl', label: ['trantime', '수정일시', 'lotid'], lot: 'lotid',
-    sigma: {value: 'extsigma', UCL: 'extsigmaucl', LCL: 'extsigmalcl', CL: 'extsigmacenter'}};
+    sigma: {value: 'extsigma', UCL: 'extsigmaucl', LCL: 'extsigmalcl', CL: 'extsigmacenter'}, result: 'result'};
   var ITEM_WORDS = ['item', '항목', '측정항목', 'parameter', 'param', '파라미터', 'para'];
   var LABEL_WORDS = ['date', 'time', 'datetime', '날짜', '일자', '시간', '일시', '측정일', '측정시간', 'lot', 'lotid', 'wafer', 'waferid', 'no', '번호', 'sample', '시료'];
   var DEFAULT_OCAP = {
@@ -251,7 +251,7 @@
     });
     var spcForm = normed.indexOf(SPC_FORMAT.value) >= 0 && normed.indexOf(SPC_FORMAT.needs) >= 0 && kinds[normed.indexOf(SPC_FORMAT.value)] === 'num';
     table = {sheet: sheet ? sheet.name : '', sheets: book.map(function (s) { return s.name; }), headers: headers, data: data, kinds: kinds, roles: roles,
-      spcForm: spcForm, path: sheet && sheet.path, rows: rows, head: h, fmts: sheet && sheet.fmts || [], hidden: sheet && sheet.hidden || {}};
+      spcForm: spcForm, sysCol: spcForm ? resultCol(normed, data) : -1, path: sheet && sheet.path, rows: rows, head: h, fmts: sheet && sheet.fmts || [], hidden: sheet && sheet.hidden || {}};
 
     var cols = settings.cols || {};
     var has = function (n) { return headers.indexOf(n) >= 0; };
@@ -324,7 +324,7 @@
         });
         var vals = rows.map(function (d) { return gone[d.excelRow] ? null : toNum(cell(d, vi, withEdits)); });
         if (!vals.some(function (v) { return v !== null; })) return;
-        var sigma = null, lots = null;
+        var sigma = null, lots = null, sys = null;
         if (t.spcForm && norm(vn) === SPC_FORMAT.value) {
           var col = function (w) {
             var i = t.headers.map(norm).indexOf(w);
@@ -337,9 +337,11 @@
           if (sigma && !sigma.values.some(function (v) { return v !== null; })) sigma = null;
           var lt = t.headers.map(norm).indexOf(SPC_FORMAT.lot);
           if (lt >= 0) lots = rows.map(function (d) { return cellText(d.cells[lt]); });
+          var rc = t.headers.map(norm).indexOf(SPC_FORMAT.result);
+          if (rc >= 0) sys = rows.map(function (d) { return cellText(d.cells[rc]).trim(); });
         }
         list.push({
-          spcForm: !!t.spcForm, sigma: sigma, lots: lots,
+          spcForm: !!t.spcForm, sigma: sigma, lots: lots, sys: sys,
           name: name, values: vals, cols: cols, col: vi, excelRows: rows.map(function (d) { return d.excelRow; }),
           labels: rows.map(function (d) { return li >= 0 ? fmtLabel(d.cells[li], d.excelRow) : d.excelRow + '행'; })
         });
@@ -373,10 +375,64 @@
   function isSigmaRule(id) { return /^SR\d$/.test(id); }
   function baseRule(id) { return isSigmaRule(id) ? id.slice(1) : id; }
 
-  // excelRow -> rule ids (OCAP / 7 run) of the points on that row
+  // ---------- SPC system judgment (#34) ----------
+  // The SPC system export carries the system's own verdict per row in RESULT: 7R(S) = 7 run on the SIGMA chart,
+  // 6T(S) = 6 trend, 7R(X) / O(X) = run / OCAP on the XBAR chart, CutOff = new limits (no alarm). The system judges
+  // each row when it comes in, with rows the export no longer shows (EXT_MS / EXT_MA tell the point before it),
+  // so the program cannot compute the same from the rows; the file's RESULT is the judgment shown.
+  function sysCodes(text) {
+    return String(text || '').split(/[\s,;/]+/).filter(function (c) { return /^\d*[A-Za-z]+\((X|S)\)$/i.test(c); });
+  }
+  function sysRule(code) {
+    var m = /^(\d*)([A-Za-z]+)\((X|S)\)$/i.exec(code), k = m[2].toUpperCase().charAt(0);
+    var id = k === 'R' ? 'R2' : k === 'T' ? 'R3' : k === 'O' ? 'R1' : 'R1';
+    return (m[3].toUpperCase() === 'S' ? 'S' : '') + id;
+  }
+  // RESULT used only when the system wrote something in it (an alarm or CutOff); an empty column = program judgment
+  function resultCol(normed, data) {
+    var i = normed.indexOf(SPC_FORMAT.result);
+    return i >= 0 && data.some(function (d) { return d.cells[i] !== null && d.cells[i] !== undefined && String(d.cells[i]).trim() !== ''; }) ? i : -1;
+  }
+  function useSystem() { return !!(table && table.sysCol >= 0 && settings.sysJudge !== false); }
+  function systemJudge(res) {
+    if (!res.sys || !useSystem()) return;
+    var x = {}, sg = {}, codes = {};
+    res.points.forEach(function (p, i) {
+      p.rows.forEach(function (k) {
+        sysCodes(res.sys[k]).forEach(function (c) {
+          var id = sysRule(c), to = id.charAt(0) === 'S' ? sg : x;
+          to[id] = to[id] || [];
+          if (to[id].indexOf(i) < 0) to[id].push(i);
+          (codes[i] = codes[i] || []).push(c);
+        });
+      });
+    });
+    res.calc = {flags: res.flags, sigmaFlags: res.sigmaFlags, events: res.events};
+    res.system = true;
+    res.sysByPoint = codes;
+    res.flags = x;
+    res.sigmaFlags = sg;
+    res.rangeFlags = sg.SR1 || [];
+    var evs = SPC.events(x, res.points);
+    if (res.sigma) evs = evs.concat(SPC.events(sg, res.points.map(function (p, i) { return {label: p.label, value: res.sigma.values[i]}; })));
+    evs.forEach(function (ev) { ev.code = (codes[ev.start] || []).filter(function (c) { return sysRule(c) === ev.rule; })[0] || ''; });
+    res.events = evs.sort(function (a, b) { return a.start - b.start; });
+  }
+
+  // excelRow -> rule ids (OCAP / 7 run) of the points on that row; the system's codes (SYS:7R(S)) for a system judgment
   function rowFlags(list) {
     var out = {}, rules = fixRules();
     list.forEach(function (res) {
+      if (res.system) {
+        Object.keys(res.sysByPoint).forEach(function (i) {
+          res.points[i].rows.forEach(function (k) {
+            var row = res.excelRows[k];
+            out[row] = out[row] || [];
+            res.sysByPoint[i].forEach(function (c) { if (out[row].indexOf('SYS:' + c) < 0) out[row].push('SYS:' + c); });
+          });
+        });
+        return;
+      }
       var mark = function (id) {
         return function (i) {
           res.points[i].rows.forEach(function (k) {
@@ -401,16 +457,22 @@
         res.col = it.col;
         res.spcForm = it.spcForm;
         res.lots = it.lots;
+        res.sys = it.sys;
         if (it.sigma && res.size === 1) sigmaChart(res, it);
         return res;
       });
     };
+    var asRead = function (list) { list.forEach(systemJudge); return list; };
     delPlan = delMode ? (mixPlan ? mixDelPlan() : planDeletes()) : null;
     // The deletion is judged on the file's own values, so its charts leave the recommended values out
     // ([최소 행 변경] keeps them: its new values are the edits).
     fixItems = items(!delMode || !!mixPlan);
     results = run(fixItems);
-    yellow = rowFlags(Object.keys(edits).length || delPlan ? run(items(false, true)) : results);
+    // The file as read is judged like the SPC system: its RESULT column (#34). Edits and simulations are
+    // judged by the program (the system judges a row once, when it comes in).
+    var plain = !Object.keys(edits).length && !delPlan;
+    if (plain) asRead(results);
+    yellow = rowFlags(plain ? results : asRead(run(items(false, true))));
     nowFlags = rowFlags(results);
     // New out-of-control events since the last read raise the alarm (not on the first read of a file).
     var keys = {}, fresh = [];
@@ -632,6 +694,8 @@
     var lastFlags = Object.keys(res.flags).filter(function (id) { return res.flags[id].indexOf(last) >= 0; });
     if (lastFlags.indexOf('OOS') >= 0) return {cls: 'bad', text: '규격 이탈'};
     if (lastFlags.length || res.rangeFlags.indexOf(last) >= 0 || sigmaFlagMap(res)[last]) return {cls: 'warn', text: '관리 이탈'};
+    // a fixed period (#24): an alarm anywhere in it shows, not only on the last point (#34 "알림조차 안떠")
+    if (res.events.length) return {cls: 'warn', text: (res.system ? '시스템 경고 ' : '이상 ') + res.events.length + '건'};
     return {cls: 'ok', text: '정상'};
   }
 
@@ -743,11 +807,14 @@
 
   function renderValueSum() {
     var t = table;
+    $('sysJudgeBox').classList.toggle('hidden', !(t.sysCol >= 0));
+    $('sysJudge').checked = settings.sysJudge !== false;
     $('valueSum').innerHTML = '<b>' + esc(t.values.join(', ') || '(없음)') + '</b> <span class="muted small">(' + t.values.length + ' / ' + t.numeric.length + '개 · 눌러서 ' +
       ($('valueFold').open ? '접기' : '펼치기') + ')</span>' + (t.spcForm ? ' <span class="badge ok">SPC 시스템 양식</span>' : '') +
       (Object.keys(t.roles).length ? ' <span class="muted small">한계 열: ' + esc(ROLES.filter(function (r) { return t.roles[r]; }).map(function (r) { return r + '=' + t.roles[r]; }).join(', ')) + '</span>' : '');
   }
   function shortRule(id) {
+    if (/^SYS:/.test(id)) return '시스템 ' + id.slice(4);
     return {OOS: '규격 이탈', R1: '관리한계 이탈', SR1: 'SIGMA 관리한계 이탈'}[id] || ruleName(id);
   }
 
@@ -780,7 +847,9 @@
       if (only && !y && !now && !del) return;
       count++;
       var cls = (y || now ? 'y' : '') + (del ? ' del' : '') + (row === selectedRow ? ' sel' : '');
-      var verdict = now ? now.map(shortRule).join(', ') : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
+      var touched = vcols.some(function (c) { return edits[row + ':' + c]; });
+      var sysOnly = y && !now && y.every(function (id) { return /^SYS:/.test(id); }) && !touched;
+      var verdict = now ? now.map(shortRule).join(', ') : sysOnly ? esc(y.map(shortRule).join(', ')) : (y ? '<span class="okfix">수정됨 ✓</span> <s>' + esc(y.map(shortRule).join(', ')) + '</s>' : '');
       if (now) verdict = esc(verdict);
       if (del) verdict = '<span class="deltag r' + Math.min(del, 3) + '">' + (mixPlan ? '삭제 (최소 행 변경)' : '삭제 ' + del + '차') + '</span> ' + esc(delRules(row).map(shortRule).join(', '));
       h += '<tr data-row="' + row + '"' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '><td class="rn">' + row + '</td><td class="l verdict">' + verdict + '</td>' +
@@ -1410,7 +1479,7 @@
       var log = ocapLog[ev.key] || {};
       var where = ev.label === ev.endLabel ? ev.label : ev.label + ' ~ ' + ev.endLabel;
       h += '<tr class="click' + (newKeys[ev.key] ? ' new' : '') + (log.done ? ' done' : '') + '" data-key="' + esc(ev.key) + '"><td>' + esc(ev.item) + '</td><td class="l">' + esc(where) +
-        '</td><td>' + fmt(ev.value) + '</td><td class="l"><span class="rule ' + baseRule(ev.rule) + '">' + esc(ruleName(ev.rule)) + '</span></td><td class="l">' +
+        '</td><td>' + fmt(ev.value) + '</td><td class="l"><span class="rule ' + baseRule(ev.rule) + '">' + esc(ev.code ? '시스템 ' + ev.code + ' (' + ruleName(ev.rule) + ')' : ruleName(ev.rule)) + '</span></td><td class="l">' +
         esc((settings.ocap[baseRule(ev.rule)] || '').split('\n')[0]) + ' …</td><td class="l">' + (log.done ? '조치 완료' : '<b>미조치</b>') + '</td><td class="l">' + esc(log.note || '') + '</td></tr>';
     });
     if (!rows.length) h += '<tr><td colspan="7" class="l muted">' + (openOnly ? '미조치 이상 없음' : '이상 없음') + '</td></tr>';
@@ -2117,6 +2186,13 @@
   }
   $('sheetSel').onchange = function () { settings.sheet = $('sheetSel').value; settings.cols = {}; edits = {}; selectedRow = null; buildTable(); recompute(); };
   $('flagOnly').onchange = renderData;
+  $('sysJudge').onchange = function () {
+    settings.sysJudge = $('sysJudge').checked;
+    save();
+    if (!table) return;
+    analyzeAll(true);
+    render();
+  };
   $('dataTable').addEventListener('click', function (e) {
     var tr = e.target.closest('tr[data-row]');
     if (!tr) return;

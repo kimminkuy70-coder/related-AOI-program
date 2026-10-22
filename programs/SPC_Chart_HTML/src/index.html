@@ -67,8 +67,9 @@
   <section id="cards" class="cards"></section>
   <section id="dataBox" class="databox hidden">
     <div class="dhead"><h2>데이터 표</h2>
-      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 <i class="sw r"></i>값을 고친 칸 (추천값 · 시뮬레이션) <i class="sw d"></i>시뮬레이션에서 지운 행</span>
+      <span class="legend"><i class="sw y"></i>OCAP · 7run 발생 행 (RESULT 열이 있으면 시스템 판정) <i class="sw r"></i>값을 고친 칸 (추천값 · 시뮬레이션) <i class="sw d"></i>시뮬레이션에서 지운 행</span>
       <label class="chk"><input type="checkbox" id="flagOnly"> 노란 행만</label>
+      <label class="chk hidden" id="sysJudgeBox" title="SPC 시스템 export의 RESULT 열(시스템이 데이터가 들어올 때 판정한 7R(S) · 6T(S) · 7R(X) · O(X))을 노란 행 · 주황 점 · 이상 목록으로 보여 줍니다. 끄면 프로그램 계산."><input type="checkbox" id="sysJudge"> 시스템 판정(RESULT) 기준</label>
       <span id="dataInfo" class="muted small"></span>
       <span class="spacer"></span>
       <button id="fixOneBtn" class="fix-one" disabled>선택 행 추천값 입력</button>

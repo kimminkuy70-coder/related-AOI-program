@@ -757,6 +757,28 @@ class SpcChartTest(unittest.TestCase):
         self.page.wait_for_function('() => !!window.__spc.results()[0].sigma.cl')
         self.assertIn('SR3', self.js('() => window.__spc.results()[0].sigmaFlags'))
 
+    def test_system_result_is_the_judgment(self):  # issue #34: yellow rows = the RESULT column of the SPC system
+        rows = spc_rows()
+        rc = SPC_HEADERS.index('RESULT')
+        rows[3 + 1][rc] = '7R(S)'   # a row the program itself does not flag
+        rows[6 + 1][rc] = 'CutOff'  # new limits, no alarm
+        rows[33 + 1][rc] = '7R(X)'
+        self.open_file('sys.xlsx', workbook(rows))
+        self.assertEqual(sorted(self.js('() => window.__spc.yellow()'), key=int), ['5', '35'])
+        self.assertEqual(self.js('() => window.__spc.yellow()')['5'], ['SYS:7R(S)'])
+        verdict = self.js("() => document.querySelector('#dataTable tr[data-row=\"5\"] .verdict').textContent")
+        self.assertEqual(verdict, '시스템 7R(S)')
+        res = self.js('() => { const r = window.__spc.results()[0]; return {s: r.sigmaFlags, x: r.flags, ev: r.events.map(e => e.code)}; }')
+        self.assertEqual(res['s'], {'SR2': [3]})
+        self.assertEqual(res['x'], {'R2': [33]})
+        self.assertEqual(sorted(res['ev']), ['7R(S)', '7R(X)'])
+        self.assertEqual(self.js("() => document.querySelector('#cards .badge').textContent"), '시스템 경고 2건')
+        # off: the program's own judgment again (the OCAP point and the 7 run of the test data)
+        self.page.uncheck('#sysJudge')
+        yellow = self.js('() => window.__spc.yellow()')
+        self.assertIn(str(SPC_OUT + 2), yellow)
+        self.assertNotIn('5', yellow)
+
     def test_cl_drawn_blue_dashed(self):  # issue #34 follow-up: the CL as a blue dashed line on the XBAR and SIGMA charts
         self.js("""() => { window.__cl = [];
             const st = CanvasRenderingContext2D.prototype.stroke;
