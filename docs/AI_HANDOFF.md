@@ -1,6 +1,6 @@
 # AI 인수인계 (related-AOI-program)
 
-마지막 갱신: 2026-10-22 · 기준 커밋 `82c0422` 위 #33 커밋 (SPC 브랜치 `claude/loving-curie-79nq5k`) · #33 (SPC v17: SIGMA 차트에 CL(EXT_SIGMA_CENTER)이 없으면 Run·Trend를 판정하지 않음 — 전에는 UCL/LCL 가운데를 CL로 계산해 시스템에 없는 7run·6 Trend가 나옴)
+마지막 갱신: 2026-10-22 · 기준 커밋 `1dacd89` (SPC 브랜치 `claude/loving-curie-79nq5k`) / `94ec3dd` (기본 브랜치) · #34 (SIGMA CL 0.644가 있는 실제 파일로 계산 재검토: 코드 수정 없음, 프로그램 계산은 표준 규칙대로 맞음, 시스템과 다른 점 4개를 소유자에게 확인 요청)
 
 ## 지금 상태
 - **SPC 프로그램(#21~#25)은 브랜치 `claude/loving-curie-79nq5k`에만 있음** (#21 이슈 제목 "새 브랜치에 작성"; #22~#24도 그 파일 수정이라 같은 브랜치에서 이어 작업). 기본 브랜치에는 이 문서만 같은 내용으로 올림. 합칠지는 소유자 결정 (아래 남은 일).
@@ -11,6 +11,7 @@
   - `programs/SPC_Chart_HTML/` **SPC Chart HTML v17** (`SPC_Chart_HTML_v17.html`, 브랜치 `claude/loving-curie-79nq5k`; v1→v2(#22)→v3(#23)→v4(#24)→v5(#25)→v6(#25 후속)→v7(#25 후속 2)→v8(#25 후속 4)→v9(#27)→v10(#28)→v11(#27 후속)→v12(#27 후속 3)→v13(#29)→v14(#30)→v15(#31)→v16(#32)→v17(#33), 옛 파일은 git history에 남음). v17: SIGMA 차트에 EXT_SIGMA_CENTER 숫자가 없으면 SIGMA Run·Trend 판정 안 함 (관리한계 이탈만), 차트 제목에 "CL 없음" (아래 #33 내용). v16: 양식 저장 이름 `(양식제목)_(SPEC_SEQ)_yyyymmddhhmm.xlsx`, [양식 2개 엑셀 저장]은 고른 폴더 안에 SPEC_SEQ 폴더를 만들어 그 안에 두 파일, 위쪽 "보고 있는 파일: …" 표시, [최근 파일 다시 열기] 삭제 (아래 #32 내용). v15: 측정값 열 접기(기본 접힘), 버튼 [선택 행 추천값 입력] | [시뮬레이션 ▾] → 행 삭제만 · 행 수정만 · 최소 행 변경(삭제+수정), 모드별 양식 저장(삭제 = OCAP 삭제 양식, 수정 = RAW_DATA 수정 양식, 최소 = 둘 다 한 번에 각각의 파일), [수정 모두 취소]·[수정본 엑셀 저장]·[수정 양식 저장]은 표 아래, 데이터 표 드래그 → Ctrl+C → 엑셀에 화면 색 그대로 (아래 #31 내용). v14: [설정 저장]/[설정 불러오기], [최소 행 변경](삭제+값 수정 섞어 바꾸는 행 수 최소), OCAP 삭제 양식을 소유자 양식 파일대로(Sheet1 하나, 지울 행마다 한 줄), [수정 양식 저장](RAW_DATA 수정 양식) (아래 #30 내용). v13: 판정 규칙을 XBAR·SIGMA 차트별로 따로 설정, 기본값 XBAR = OCAP·7run(Run 7), SIGMA = OCAP·7run·Trend 6, [자동 새로고침] 삭제 (아래 #29 내용). v12: OCAP 삭제 양식을 소유자 엑셀 사진대로 (아래 #27 후속 3). v11: 삭제 시뮬레이션을 한 행씩(가장 앞 행부터, 지울 때마다 다시 판정) + Trend 기본 7→6점 (아래 #27 후속 2). v10: [OCAP 삭제 양식 저장] (아래 #28 내용). v9: [삭제 시뮬레이션] (아래 #27 내용). v8: 2/3>2σ(R4)·4/5>1σ(R5) 기본 꺼짐. v7: 점 하나로 안 풀리는 Run/Trend는 같은 런의 다른 점을 고침. v6: SIGMA 차트도 OCAP·7run 판정, 추천값은 XBAR·SIGMA 두 칸을 같이 (아래 #25 후속). v5(#25): 다른 프로그램이 만든 .xlsx(zip 안 부분 이름이 엑셀과 다름)를 읽음 + .ods 읽기 + 못 읽을 때 파일 안 이름을 오류 글에 보여 줌 (아래 #25 내용). **실시간 감시가 아니라 정해진 기간의 데이터를 보는 프로그램** (소유자 #24). v4 추가(#24): 기간 전체를 그리고 가로 스크롤 (`표시 점 수` 기본 0 = 전체, `점 간격` 기본 16 px / 화면에 맞춤), XBAR와 SIGMA(MR)가 같이 스크롤, Y축 고정, 표의 행을 누르면 차트가 그 점으로 넘어감, [자동 새로고침](옛 [실시간]) 기본 꺼짐, 예제는 300점 고정 기간. v3 추가(#23): SPC 시스템 양식이면 SPC 시스템 화면처럼 XBAR 차트(EXT_MV, UCL/LCL 선만) 바로 아래 SIGMA 차트(EXT_SIGMA, EXT_SIGMA_UCL/LCL 선), X축 날짜·시간 두 줄(TRAN_TIME → 수정일시 → LOT_ID 순), 히스토그램 = 도수 글자 + 정규분포 곡선 + USL/LSL + 평균±3σ(모든 양식 공통, CL 선은 뺌). v2 추가(#22): SPC 시스템 양식 자동 인식(EXT_MV, EXT_MV_UCL/CENTER/LCL), HTML 표 파일 읽기, 차트 아래 데이터 표(OCAP·7run 행 노랑), 차트 점 더블클릭 → 표의 그 행, 추천값 입력(선택 행 / 전체 일괄), 수정본 xlsx 저장(원본 복사 + 고친 칸 빨강). 나머지는 v1과 같음: 엑셀(.xlsx/.xlsm/.csv)을 골라 I-MR / Xbar-R 관리도, MR/R 차트, 히스토그램, Cp/Cpk/Ppk를 그림. File System Access API 파일 handle을 2초마다 확인(lastModified·size)해 엑셀 저장 시 자동 갱신. 판정 규칙(규격 이탈, 관리한계 이탈, Run 7, Trend 7, 2/3>2σ, 4/5>1σ, 선택: 14 교대, 15 hugging, 8 1σ 밖), 새 이상 알림(배너+소리), OCAP 조치 표(규칙별 조치 문구 편집, 조치 완료·메모는 localStorage), CSV 저장, 예제 데이터. 소스 `src/` (`xlsx.js` 자체 xlsx 읽기 + pako, `spc.js` 계산, `app.js` 화면), 빌드 `python tools/build_html.py --program SPC_Chart_HTML`.
   - 속도 시험 페이지: `experiments/browser_speed_test/AOI_Browser_Speed_Test.html`.
 - 시험 (2026-10-19~22, Linux):
+  - #34 (코드 수정 없음): `python3 -m unittest tests.e2e_spc_chart` 44개 통과 (v17 그대로). 소유자 실제 파일 `129459.xlsx`(대화 업로드, scratchpad에서만, 저장소에 넣지 않음)를 headless Chromium의 v17에 열어 노란 행 확인 (아래 #34 내용).
   - #33 v17: `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 55개 통과 (SPC 44 = 43 + `test_sigma_without_center_has_no_run_or_trend`). `tools/build_html.py --program SPC_Chart_HTML --check` ok. `test_startup`/`test_wafer_engine` 11개 오류는 전과 같음. 소유자 실제 파일로는 확인 못 함 (이슈에 첨부 없음), Windows Edge 확인 못 함.
   - #32 v16: `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 54개 통과 (SPC 43 = 42 + `test_current_file_at_top`; 양식 이름 시험 3개를 새 이름으로, `test_mix_mode_saves_both_forms`는 OPFS `129588/` 폴더 안 두 파일로, `GET_FILE`이 `폴더/파일`을 읽게 고침). `python3 tools/build_html.py --program SPC_Chart_HTML --check` ok. headless Chromium 스크린샷으로 위쪽 표시 확인. Edge 폴더 선택 창 · 실제 폴더 만들기는 확인 못 함 (시험은 OPFS).
   - #31 v15: `python3 -m unittest tests.e2e_spc_chart tests.e2e_html_sorter` 53개 통과 (SPC 42 = 38 + `test_layout_value_fold_and_buttons`, `test_fix_mode_saves_raw_form`, `test_mix_mode_saves_both_forms`, `test_drag_copy_keeps_colours`; 기존 시험은 `self.sim('#…Btn')`으로 [시뮬레이션] 메뉴를 열고 누르게, 행 수정만이 켜짐 상태(끄면 전 수정으로)인 것에 맞게 고침). `test_startup`/`test_wafer_engine` 11개 오류는 전과 같음. headless Chromium 스크린샷(예제 + 최소 행 변경)으로 버튼 배치 · 결과 상자 · 표 아래 버튼 · 접힌 측정값 열 확인. 실제 Excel에 붙여 넣기, Edge 폴더 선택 창은 확인 못 함 (시험은 합성 copy 이벤트의 text/html · text/plain, OPFS 폴더로 확인).
@@ -35,6 +36,7 @@
 ## 이슈 이력
 | 날짜 | 이슈 | 요청 | 결과 |
 |---|---|---|---|
+| 2026-10-22 | #34 | "시그마 차트에 CL 0.644가 있는데 프로그램에서는 (오류가) 뜬다, 계산방식 재검토" + 실제 파일 129459.xlsx (이슈 첨부는 403, 같은 파일을 session 대화로 받음) | 코드 수정 없음. 파일의 EXT_SIGMA_CENTER 0.643636을 v17이 그대로 읽고 표준 Run 7·Trend 6으로 판정 → SIGMA 노란 행 4개(엑셀 11·13·14·704행)는 정의상 맞는 판정. 시스템 RESULT 열은 980행 중 2개만(7R(X) 1, CutOff 1)이라 시스템 판정 기준을 파일로 확정 못 함 → 소유자에게 그 4점이 시스템 SIGMA 차트에 뜨는지, 시스템 SIGMA Run·Trend 점 수 설정 확인 요청. 릴리스 없음 |
 | 2026-10-22 | #33 | SPC 차트에서 sigma 차트가 CL이 없어 6 trend·7 run 오류가 나는 것 같다, 확인·수정 (실제 데이터(시스템)에서는 오류 없음) | 원인 확인: EXT_SIGMA_CENTER가 비면 `SPC.analyze`가 CL을 UCL/LCL 가운데(LCL 0이면 UCL/2)로 계산해 Run·Trend를 판정 → 시스템에 없는 경고. SPC Chart HTML v17 (브랜치 `claude/loving-curie-79nq5k`): SIGMA는 파일의 CL만 쓰고 없으면 Run·Trend 판정 안 함. 시험 1개 추가, 55개 통과. 릴리스 없음 |
 | 2026-10-21 | #32 | SPC 엑셀 저장 양식 이름 = (양식제목)_(SPEC_SEQ)_yyyymmddhhmm, 2개 파일을 같이 저장할 때는 상위 폴더 이름 = (SPEC_SEQ) + 안의 파일은 같은 이름 양식, 위쪽에 지금 보는 파일 표시, [최근 파일 다시 열기] 삭제 | SPC Chart HTML v16 (브랜치 `claude/loving-curie-79nq5k`). 시험 1개 추가, 54개 통과. 릴리스 없음 |
 | 2026-10-21 | #31 | 가독성: 측정값 열 접기(기본 접힘), [선택 행 추천값 입력]을 1번째 + 짧은 세로선 + 나머지 묶음, [수정 모두 취소]/[수정본 엑셀 저장]은 엑셀 차트(데이터 표) 아래, 표를 드래그 복사 → 엑셀에 화면 그대로, 나머지 묶음 = [시뮬레이션] 상위 버튼 + 하위 행 삭제만 / 행 수정만 / 최소 행 변경(삭제+수정), 모드별 결과를 양식 엑셀로 저장(최소는 2개 한 번에 각각), 데이터 표 문구 수정 | SPC Chart HTML v15 (브랜치 `claude/loving-curie-79nq5k`, `0598545`). 시험 4개 추가, 53개 통과. 릴리스 없음 |
@@ -101,6 +103,13 @@
 - `app.js`: `delMode`(버튼 `#delBtn` 켜기/끄기), `delPlan` = `planDeletes()` (파일 원래 값 `items(false, true)`, XBAR는 `fixRules()`, SIGMA는 `sigmaItem`·`sigmaOpts`·`sigmaRules()` tag `S`, subgroup 1일 때만 SIGMA). 켜 있으면 `items()`가 `delPlan.round`의 행을 null로 → 차트·`nowFlags`는 지운 뒤 모습, `yellow`는 파일 그대로. 표: 지운 행 class `del`(회색 취소선) + "삭제 N차" 표시, 표 위 `#delBox`에 차수별 행 번호(누르면 그 행), 결론 글, [삭제 목록 CSV](`delCsv`: 차수, 엑셀 행, X축, LOT_ID, 판정). 켜 있는 동안 추천값 버튼 꺼짐. 시험용 `window.__spc.delPlan()`.
 - 시험 (`tests/e2e_spc_chart.py`): 엔진 차수 시험(OCAP 점을 지우면 6점+6점 런이 이어져 12점 런 → 2차 6행), SPC 양식 화면 시험(1차 = 노란 행, 켜면 XBAR·SIGMA 이상 0, 점 수 감소, CSV, 끄면 원래대로).
 
+## #34 내용 (계산 재검토, 코드 수정 없음)
+- 파일: SPC 시스템 export 980행 (2026-07-01~10-21, 한 Item·한 SPEC_SEQ). zip 안 이름이 `xl\worksheets\sheet1.xml`, `[content_types].xml`처럼 역슬래시·소문자라 openpyxl은 못 열지만 v17은 열림 (#25 처리 덕분). 한계 열은 모든 행이 같음: XBAR UCL 67.42 / CL 65.46 / LCL 63.51, SIGMA UCL 2.60 / CL 0.643636 / LCL 0. SIGMA 평균 0.59, 980점 중 624점이 CL 아래.
+- v17이 이 파일에서 고른 SIGMA CL = 파일의 0.643636 (`엑셀 열`), XBAR CL = 65.463896. #33 변경(CL 없을 때만)은 이 파일과 상관없음 → v16과 같은 결과.
+- 노란 행 (엑셀 행 = 데이터 순번 + 2): SIGMA SR3 Trend 6 하강 11행(6~11행), SR2 Run 7 CL 아래 13·14행(7~13행, 8행 연속), SR3 Trend 6 상승 704행(699~704행). XBAR R2 Run 7: 66~69, 360, 533~535, 964, 972행. 같은 계산을 Python으로 따로 해도 똑같음 → 계산 오류 아님 (표준 정의 그대로).
+- 시스템 RESULT 열에는 `7R(X)` 972행(2026-10-20, 프로그램도 같은 점) 과 `CutOff` 920행(2026-10-14) 둘만 있음. 그런데 XBAR 964행(958~964행 7점 연속 CL 위)도 RESULT가 비어 있어서, RESULT 열이 시스템이 띄운 경고를 모두 담는 열이 아님 (조치된 건이 지워졌거나 판정 당시의 데이터·한계가 지금과 달랐을 수 있음) → 파일만으로는 시스템이 SIGMA를 어떻게 판정하는지 확정 못 함. CNT 열 = 1006, 보이는 행 980 (26행은 이 파일에 없음).
+- 가능성 (확인 전): ① 시스템은 SIGMA를 위쪽(산포 증가: CL 위 Run, 상승 Trend)만 판정 → 11·13·14행은 빠지고 704행만 남음. ② 시스템 SIGMA 점 수가 다름 (Trend 7이면 11·704행 둘 다 안 걸림, Run 9면 13·14행 안 걸림). 설정 창의 SIGMA 칸 점 수로 바로 맞출 수 있음. ③ 시스템은 판정 당시(그때 있던 행·그때 한계)로 한 번 판정하고 나중에 행을 지워도 다시 판정하지 않음. 소유자 답에 따라 고침.
+
 ## #33 내용 (SPC Chart HTML v17)
 - 원인: `spc.js` `analyze`는 CL 열이 비면 CL을 UCL/LCL 가운데(없으면 평균)로 계산하고, `rulesFor`는 CL이 있을 때만 Run(R2)·Trend(R3)를 판정함. SIGMA 차트(EXT_SIGMA_CENTER 빈칸, EXT_SIGMA_LCL 0)는 가운데 = UCL/2라 값이 거의 다 그 아래 → 7run이 줄줄이 걸림, Trend도 CL이 생겨서 판정됨.
 - 고침: `analyze`에 `opts.fileCl` — CL은 파일(또는 직접 입력)의 것만, 없으면 CL 없음 → Run·Trend 판정 안 함 (R1 관리한계 이탈은 그대로; UCL/LCL 열도 없을 때만 평균 기준 계산 한계). `app.js` `sigmaOpts()`에 `fileCl: true` → 노란 행·이상 목록·추천값·삭제 시뮬레이션·최소 행 변경 모두 같은 판정. 추천값의 중심은 CL이 없으면 SIGMA 평균(`valueFor`의 기존 대체). `drawSigma` 제목 "SIGMA 차트 (CL 없음: Run · Trend 판정 안 함)", 설정 창 SIGMA 칸 설명 글.
@@ -162,6 +171,7 @@
 - 데이터 표: 판정 오른쪽 값 열에 EXT_SIGMA도 (SPC 양식일 때).
 
 ## 내가 정한 해석 (확인 전)
+- #34: 소유자 말 "프로그램에서는 되는데?" = 프로그램에는 SIGMA 경고가 뜨는데 시스템에는 안 뜬다로 봄. 시스템 판정 기준을 모르는 채로 규칙을 바꾸지 않고 확인부터 함.
 - #33: "CL이 없어서 6 trend·7 run 오류" = SIGMA에 CL 숫자가 없으면 SPC 시스템처럼 Run·Trend 둘 다 판정하지 않음 (Trend는 CL이 없어도 계산은 되지만 시스템이 안 띄운다는 소유자 말에 맞춤). EXT_SIGMA_CENTER에 숫자가 있으면 v16과 같음. 설정에서 SIGMA Run·Trend를 켜 두어도 CL이 없으면 판정 안 함 (따로 끄는 옵션 없음).
 - #32: "엑셀 저장하는 양식" = OCAP 삭제 양식 · RAW_DATA 수정 양식 저장 (수정본 · CSV 이름은 안 바꿈). SPEC_SEQ가 여러 개면 `+`로 이음, 없으면 시트 이름. 시간은 저장한 시각(분까지). 상위 폴더는 고른 폴더 안에 새로 만듦 (이미 있으면 그 폴더에 씀). 현재 파일 표시는 파일 이름(+ 시트 여러 개면 시트).
 - #31 "측정값 열" = 위쪽 설정 줄의 [측정값 열] 체크 상자 묶음 (SPC 양식이면 숫자 열이 100개 넘어 줄을 많이 차지함). 데이터 표의 열을 접는 뜻이었으면 고쳐야 함. 접힘 상태는 저장하지 않고 열 때마다 접힘.
@@ -194,7 +204,8 @@
 - 수정 뒤 이름을 v2로 올림 (sorter는 이슈마다 버전을 올려 옴).
 
 ## 남은 일 / 소유자에게 물은 것
-- **#33 (확인 요청)**: v17로 실제 파일을 열어 SIGMA 7run·6 Trend 노란 행이 SPC 시스템처럼 없어지는지 확인 요청. 실제 파일의 EXT_SIGMA_CENTER가 비어 있지 않은데도 오류가 남으면 그 파일(또는 해당 구간 값)을 알려 달라고 함 (그 경우 원인이 다름). XBAR 차트도 CL 없는 파일이면 같은 처리를 할지 물음.
+- **#34 (확인 요청)**: 129459.xlsx에서 SIGMA 노란 행 4개(엑셀 11행 Trend 하강, 13·14행 Run CL 아래, 704행 Trend 상승)가 SPC 시스템 SIGMA 차트에 경고로 뜨는지, 시스템의 SIGMA Run·Trend 점 수와 아래쪽(산포 감소)도 판정하는지 물음. XBAR 66~69·360·533~535·964행 Run 7도 시스템에서 뜨는지 같이 물음.
+- **#33 (확인 요청, #34에서 일부 답)**: 소유자 실제 파일에는 SIGMA CL(0.644)이 있음 (#34) → #33의 "CL 없음" 처리는 이 파일과 상관없음 (지울지 소유자 답 기다림, 남겨도 CL 있는 파일에는 영향 없음). v17로 실제 파일을 열어 SIGMA 7run·6 Trend 노란 행이 SPC 시스템처럼 없어지는지 확인 요청. 실제 파일의 EXT_SIGMA_CENTER가 비어 있지 않은데도 오류가 남으면 그 파일(또는 해당 구간 값)을 알려 달라고 함 (그 경우 원인이 다름). XBAR 차트도 CL 없는 파일이면 같은 처리를 할지 물음.
 - **#32 (확인 요청)**: v16을 Edge에서 [양식 2개 엑셀 저장] → 고른 폴더 안 SPEC_SEQ 폴더와 두 파일 이름, 위쪽 파일 표시 확인. [수정본 엑셀 저장] 이름도 같은 양식으로 바꿀지, SPEC_SEQ가 여러 개일 때 `+` 이음이 괜찮은지 물음.
 - **#31 (확인 요청)**: v15를 Edge에서 ① 측정값 열이 맞는 곳인지 (데이터 표 열 접기를 원했는지), ② 표 드래그 → 엑셀 붙여 넣기 모양, ③ [양식 2개 엑셀 저장]의 폴더 선택 · 두 파일, ④ 행 수정만을 끄면 수정이 되돌아가는 동작이 괜찮은지 확인 요청.
 - **#30 (확인 요청)**: v14로 ① [설정 저장] 뒤 Edge를 껐다 켜서 설정이 남는지 (안 남으면 회사 정책으로 지워지는 것 → [설정 불러오기]), ② [최소 행 변경] 결과 행 수, ③ OCAP 삭제 양식 · RAW_DATA 수정 양식이 회사 시스템에 그대로 올라가는지 (Data seq# 칸에 DATA_SEQ를 넣은 것, Raw Value 만드는 방법, MAX~STD를 수식으로 원하는지) 확인 요청.
