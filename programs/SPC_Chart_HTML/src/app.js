@@ -1466,6 +1466,7 @@
   }
 
   // Limit line across the visible points; label at the right end.
+  var CL_BLUE = '#2563eb';  // CL of the SPC system charts: blue dashed (#34)
   function limitLine(g, X, Y, vals, from, to, color, dash, label) {
     if (!vals) return;
     var ctx = g.ctx;
@@ -1558,8 +1559,8 @@
     var n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0;
     var sp = xspan(canvas, n, from), g = setup(canvas);
     var labels = r.points.map(function (p) { return p.label; });
-    // SPC system format: an XBAR chart with the UCL/LCL lines only, as the SPC system draws it.
-    var lines = r.spcForm ? ['UCL', 'LCL'] : ROLES;
+    // SPC system format: an XBAR chart with the UCL/LCL lines and the CL as a blue dashed line (owner, #34).
+    var lines = r.spcForm ? ['UCL', 'LCL', 'CL'] : ROLES;
     var left = g.left = LEFT, right = g.right = RIGHT, top = r.spcForm ? 18 : 10, bottom = twoLine(labels, from, n) ? 36 : 26;
     var L = r.limits, vis = r.x.slice(from);
     lines.forEach(function (k) { if (L[k].values) vis = vis.concat(L[k].values.slice(from)); });
@@ -1572,6 +1573,7 @@
     if (r.spcForm) {
       limitLine(g, X, Y, L.UCL.values, from, n, '#ea580c', [6, 4], 'UCL');
       limitLine(g, X, Y, L.LCL.values, from, n, '#ea580c', [6, 4], 'LCL');
+      limitLine(g, X, Y, L.CL.values, from, n, CL_BLUE, [5, 4], 'CL');
     } else if (L.CL.values && L.UCL.values && L.LCL.values) {
       // ±1σ, ±2σ guide lines from the control limits.
       [1, 2].forEach(function (k) {
@@ -1628,7 +1630,7 @@
     return m;
   }
 
-  // SIGMA chart (SPC system format): EXT_SIGMA with its UCL/LCL lines, date and time under it like the XBAR chart.
+  // SIGMA chart (SPC system format): EXT_SIGMA with its UCL/LCL lines and the blue dashed CL, date and time under it like the XBAR chart.
   function drawSigma(canvas, r) {
     var n = r.points.length, from = settings.window > 0 ? Math.max(0, n - settings.window) : 0, S = r.sigma;
     var sp = xspan(canvas, n, from), g = setup(canvas);
@@ -1637,6 +1639,7 @@
     var vis = S.values.slice(from);
     if (S.ucl) vis = vis.concat(S.ucl.slice(from));
     if (S.lcl) vis = vis.concat(S.lcl.slice(from));
+    if (S.cl) vis = vis.concat(S.cl.slice(from));
     var dm = domain(vis), Y = frame(g, dm[0], dm[1], left, right, top, bottom);
     var step = sp.step, X = sp.X, a = sp.a, b = sp.b;
     chartTitle(g, S.cl ? 'SIGMA 차트' : 'SIGMA 차트 (CL 없음: Run · Trend 판정 안 함)', left);
@@ -1644,6 +1647,7 @@
     if (!n) return;
     limitLine(g, X, Y, S.ucl, from, n, '#ea580c', [6, 4], 'UCL');
     limitLine(g, X, Y, S.lcl, from, n, '#ea580c', [6, 4], 'LCL');
+    limitLine(g, X, Y, S.cl, from, n, CL_BLUE, [5, 4], 'CL');
     ctx.save();
     clipPlot(g);
     ctx.strokeStyle = '#475569';

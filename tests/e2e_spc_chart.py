@@ -448,7 +448,7 @@ class SpcChartTest(unittest.TestCase):
         self.assertIn('2026-07-02', texts)
         self.assertIn('11:06', texts)  # labels counted from the first point since #24 (02:06 + 3 h steps)
         self.assertIn('XBAR 차트', texts)
-        self.assertNotIn('CL', [t.split(' ')[0] for t in texts])
+        self.assertIn('CL', [t.split(' ')[0] for t in texts])  # CL drawn again since v20 (#34, blue dashed)
         self.assertNotIn('USL', [t.split(' ')[0] for t in texts])
 
     def test_double_click_point_goes_to_its_row(self):
@@ -756,6 +756,23 @@ class SpcChartTest(unittest.TestCase):
         self.open_file('withcl.xlsx', workbook(rows))
         self.page.wait_for_function('() => !!window.__spc.results()[0].sigma.cl')
         self.assertIn('SR3', self.js('() => window.__spc.results()[0].sigmaFlags'))
+
+    def test_cl_drawn_blue_dashed(self):  # issue #34 follow-up: the CL as a blue dashed line on the XBAR and SIGMA charts
+        self.js("""() => { window.__cl = [];
+            const st = CanvasRenderingContext2D.prototype.stroke;
+            CanvasRenderingContext2D.prototype.stroke = function () {
+                if (this.strokeStyle === '#2563eb') window.__cl.push(this.getLineDash().join(','));
+                return st.apply(this, arguments); };
+            const ft = CanvasRenderingContext2D.prototype.fillText;
+            CanvasRenderingContext2D.prototype.fillText = function (t) {
+                if (/^CL /.test(t)) window.__cl.push(t);
+                return ft.apply(this, arguments); }; }""")
+        self.open_file('cl.xlsx', workbook(spc_rows()))
+        self.page.wait_for_function('() => window.__cl.length >= 4')
+        got = self.js('() => window.__cl')
+        self.assertIn('CL 6.52', got)    # XBAR: EXT_MV_CENTER
+        self.assertIn('CL 0.564', got)   # SIGMA: EXT_SIGMA_CENTER
+        self.assertIn('5,4', got)        # dashed
 
     def test_table_shows_cells_like_excel(self):  # issue #34: the data table must match the sheet as Excel shows it
         rows = spc_rows()
